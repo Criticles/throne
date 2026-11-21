@@ -75,6 +75,9 @@ targets:
     dependencies:
       - framework: Frameworks/Libbox.xcframework
         embed: false
+      # Новый libbox обращается к UIDevice (определение платформы), а расширение
+      # не линкует UIKit само по себе: без этого arm64-линковка падала на _OBJC_CLASS_$_UIDevice.
+      - sdk: UIKit.framework
     info:
       path: PacketTunnel/Info.plist
       properties:
