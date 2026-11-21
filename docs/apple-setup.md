@@ -19,7 +19,7 @@ developer.apple.com → Account → Membership → **Team ID** (10 символ�
 Certificates, Identifiers & Profiles → **Identifiers** → фильтр *App Groups* → **+**:
 
 ```
-group.com.egor.orbita
+group.com.criticles.throne
 ```
 
 (если меняете bundle id — меняйте и здесь, и в трёх местах проекта: `ios/project.yml`,
@@ -28,11 +28,11 @@ group.com.egor.orbita
 ## 3. Два App ID
 
 **App ID приложения:** Identifiers → App IDs → **+** → App
-- Bundle ID: `com.egor.orbita` (Explicit)
-- Capabilities: ✅ **App Groups** (выбрать `group.com.egor.orbita`)
+- Bundle ID: `com.criticles.throne` (Explicit)
+- Capabilities: ✅ **App Groups** (выбрать `group.com.criticles.throne`)
 
 **App ID расширения:** Identifiers → App IDs → **+** → App
-- Bundle ID: `com.egor.orbita.tunnel` (Explicit)
+- Bundle ID: `com.criticles.throne.tunnel` (Explicit)
 - Capabilities: ✅ **App Groups** (та же группа), ✅ **Network Extensions**
   и внутри отметить **Packet Tunnel**
 
@@ -41,21 +41,21 @@ group.com.egor.orbita
 Создаём CSR без Mac:
 
 ```bash
-openssl genrsa -out orbita.key 2048
-openssl req -new -key orbita.key -out orbita.csr \
-  -subj "/CN=Orbita/emailAddress=ВАШ_APPLE_ID/C=RU"
+openssl genrsa -out throne.key 2048
+openssl req -new -key throne.key -out throne.csr \
+  -subj "/CN=Throne/emailAddress=ВАШ_APPLE_ID/C=RU"
 ```
 
 Certificates → **+** → *Apple Distribution* (или *Apple Development*, если ставите только на свой
-телефон по кабелю/Ad Hoc) → загрузить `orbita.csr` → скачать `distribution.cer` → собрать `.p12`:
+телефон по кабелю/Ad Hoc) → загрузить `throne.csr` → скачать `distribution.cer` → собрать `.p12`:
 
 ```bash
 openssl x509 -in distribution.cer -inform DER -out distribution.pem -outform PEM
-openssl pkcs12 -export -inkey orbita.key -in distribution.pem -out orbita.p12
+openssl pkcs12 -export -inkey throne.key -in distribution.pem -out throne.p12
 # пароль экспорта запомните — он пойдёт в секрет APPLE_CERT_PASSWORD
 ```
 
-`orbita.key` и `orbita.p12` **не коммитить**.
+`throne.key` и `throne.p12` **не коммитить**.
 
 ## 5. Provisioning profiles — НЕ НУЖНЫ (по умолчанию)
 
@@ -65,8 +65,8 @@ CI подписывает сборку **автоматически** по кл�
 сертификат (п. 4) и ключ API (п. 6).
 
 Если автоматическая подпись не заведётся (например, Apple потребует ручного профиля),
-тогда: Profiles → **+** → *App Store Connect* для `com.egor.orbita` и для
-`com.egor.orbita.tunnel`, и добавьте их base64 в секреты `PROFILE_APP` / `PROFILE_TUNNEL` —
+тогда: Profiles → **+** → *App Store Connect* для `com.criticles.throne` и для
+`com.criticles.throne.tunnel`, и добавьте их base64 в секреты `PROFILE_APP` / `PROFILE_TUNNEL` —
 это резервный путь, workflow его пока не использует.
 
 ## 5a. Установка на телефон без TestFlight
@@ -85,9 +85,9 @@ Users and Access → **Integrations** → App Store Connect API → **+**
 Settings → Secrets and variables → Actions → New repository secret. Значения — base64:
 
 ```bash
-base64 -w0 orbita.p12 > p12.b64
-base64 -w0 orbita_app.mobileprovision > app.b64
-base64 -w0 orbita_tunnel.mobileprovision > tunnel.b64
+base64 -w0 throne.p12 > p12.b64
+base64 -w0 throne_app.mobileprovision > app.b64
+base64 -w0 throne_tunnel.mobileprovision > tunnel.b64
 base64 -w0 AuthKey_XXXX.p8 > key.b64
 ```
 
@@ -106,5 +106,5 @@ base64 -w0 AuthKey_XXXX.p8 > key.b64
 
 ## 8. Что прислать мне
 
-Только: Team ID (не секрет), подтверждение что bundle id остаётся `com.egor.orbita`,
+Только: Team ID (не секрет), подтверждение что bundle id остаётся `com.criticles.throne`,
 и скриншот лога CI после первого запуска. Пароли, `.p12` и `.p8` мне не нужны и присылать их не надо.

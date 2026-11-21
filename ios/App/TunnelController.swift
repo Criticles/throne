@@ -72,7 +72,7 @@ final class TunnelController: ObservableObject {
         proto.serverAddress = "127.0.0.1"
         proto.providerConfiguration = [Shared.configKey: P0Config.json]
         manager.protocolConfiguration = proto
-        manager.localizedDescription = "Orbita"
+        manager.localizedDescription = "Throne"
         manager.isEnabled = true
         try await manager.saveToPreferences()
         try await manager.loadFromPreferences()

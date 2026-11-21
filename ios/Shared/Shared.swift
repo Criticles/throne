@@ -3,8 +3,8 @@ import Foundation
 /// Общие константы приложения и расширения.
 /// При смене bundle id меняйте здесь, в ios/project.yml и в docs/apple-setup.md.
 enum Shared {
-    static let appGroup = "group.com.egor.orbita"
-    static let tunnelBundleID = "com.egor.orbita.tunnel"
+    static let appGroup = "group.com.criticles.throne"
+    static let tunnelBundleID = "com.criticles.throne.tunnel"
     static let logFileName = "tunnel.log"
     static let configFileName = "p0-config.json"
 

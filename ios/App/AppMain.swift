@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct OrbitaApp: App {
+struct ThroneApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -50,7 +50,7 @@ struct ContentView: View {
                 .background(Color.secondary.opacity(0.08))
             }
             .padding()
-            .navigationTitle("Orbita P0")
+            .navigationTitle("Throne P0")
         }
         .onAppear { Task { await tunnel.reload() } }
         .onReceive(timer) { _ in log = TunnelLog.read() }

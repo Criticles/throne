@@ -119,8 +119,8 @@ jobs:
           set -euo pipefail
           mkdir -p build
           xcodebuild \
-            -project Orbita.xcodeproj \
-            -scheme Orbita \
+            -project Throne.xcodeproj \
+            -scheme Throne \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -128,18 +128,18 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build > build/xcodebuild.log 2>&1 || STATUS=$?
           grep -E "error:|Undefined symbols|referenced from|\*\* BUILD" build/xcodebuild.log | head -100 || true
-          test -d "build/dd/Build/Products/Release-iphoneos/Orbita.app"
+          test -d "build/dd/Build/Products/Release-iphoneos/Throne.app"
           echo "DD=$PWD/build/dd" >> "$GITHUB_OUTPUT"
 
       - name: Упаковать неподписанный .ipa
         working-directory: ios
         run: |
           set -euo pipefail
-          rm -rf build/Payload build/Orbita-unsigned.ipa
+          rm -rf build/Payload build/Throne-unsigned.ipa
           mkdir -p build/Payload
-          cp -R build/dd/Build/Products/Release-iphoneos/Orbita.app build/Payload/
-          (cd build && zip -qry Orbita-unsigned.ipa Payload)
-          ls -lh build/Orbita-unsigned.ipa
+          cp -R build/dd/Build/Products/Release-iphoneos/Throne.app build/Payload/
+          (cd build && zip -qry Throne-unsigned.ipa Payload)
+          ls -lh build/Throne-unsigned.ipa
 
       - name: Лог сборки
         if: always()
@@ -153,8 +153,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Orbita-unsigned
-          path: ios/build/Orbita-unsigned.ipa
+          name: Throne-unsigned
+          path: ios/build/Throne-unsigned.ipa
 
       # ---------- подпись и TestFlight: только если заданы секреты ----------
       - name: Есть ли секреты Apple
@@ -175,7 +175,7 @@ jobs:
         run: |
           set -euo pipefail
           CERT_PATH="$RUNNER_TEMP/cert.p12"
-          KEYCHAIN="$RUNNER_TEMP/orbita.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/throne.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)"
           echo -n "$CERT_P12" | base64 --decode > "$CERT_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
@@ -204,11 +204,11 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild archive \
-            -project Orbita.xcodeproj \
-            -scheme Orbita \
+            -project Throne.xcodeproj \
+            -scheme Throne \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath build/Orbita.xcarchive \
+            -archivePath build/Throne.xcarchive \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
             -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
@@ -235,7 +235,7 @@ jobs:
           </plist>
           PLIST
           xcodebuild -exportArchive \
-            -archivePath build/Orbita.xcarchive \
+            -archivePath build/Throne.xcarchive \
             -exportPath build/export \
             -exportOptionsPlist build/export.plist \
             -allowProvisioningUpdates \
@@ -249,7 +249,7 @@ jobs:
         if: steps.sign.outputs.enabled == '1'
         uses: actions/upload-artifact@v4
         with:
-          name: Orbita-signed
+          name: Throne-signed
           path: ios/build/export/*.ipa
 
       - name: Загрузить в TestFlight

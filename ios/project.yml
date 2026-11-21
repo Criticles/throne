@@ -2,13 +2,13 @@
 # Генерация: cd ios && xcodegen generate
 #
 # Два таргета:
-#   Orbita        — приложение (SwiftUI), создаёт VPN-профиль и управляет им.
+#   Throne        — приложение (SwiftUI), создаёт VPN-профиль и управляет им.
 #   PacketTunnel  — NEPacketTunnelProvider: запускает libbox и отдаёт ядру дескриптор utun.
 #
 # Libbox.xcframework собирается из форка throneproj/sing-box (см. core/singbox-ref.txt)
 # и кладётся в ios/Frameworks/ — в git он не входит.
 
-name: Orbita
+name: Throne
 
 options:
   deploymentTarget:
@@ -31,7 +31,7 @@ settings:
       - "-lresolv"
 
 targets:
-  Orbita:
+  Throne:
     type: application
     platform: iOS
     sources:
@@ -45,7 +45,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: Orbita
+        CFBundleDisplayName: Throne
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         UILaunchScreen: {}
@@ -53,14 +53,14 @@ targets:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
     entitlements:
-      path: App/Orbita.entitlements
+      path: App/Throne.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.egor.orbita
+          - group.com.criticles.throne
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.egor.orbita
-        PRODUCT_NAME: Orbita
+        PRODUCT_BUNDLE_IDENTIFIER: com.criticles.throne
+        PRODUCT_NAME: Throne
 
   PacketTunnel:
     type: app-extension
@@ -74,7 +74,7 @@ targets:
     info:
       path: PacketTunnel/Info.plist
       properties:
-        CFBundleDisplayName: Orbita Tunnel
+        CFBundleDisplayName: Throne Tunnel
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         NSExtension:
@@ -84,12 +84,12 @@ targets:
       path: PacketTunnel/PacketTunnel.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.egor.orbita
+          - group.com.criticles.throne
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.egor.orbita.tunnel
+        PRODUCT_BUNDLE_IDENTIFIER: com.criticles.throne.tunnel
         PRODUCT_NAME: PacketTunnel
         # libbox — обычная библиотека, а не extension-safe код; в P0 это допустимо,
         # к релизу проверим по логу линковки.

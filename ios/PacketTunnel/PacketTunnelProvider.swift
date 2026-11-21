@@ -72,7 +72,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var serverError: NSError?
         guard let server = LibboxNewCommandServer(platform, platform, &serverError) else {
             throw serverError ?? NSError(
-                domain: "org.orbita.tunnel",
+                domain: "com.criticles.throne.tunnel",
                 code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "не удалось создать command server"]
             )
@@ -104,7 +104,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func startService(config: String) throws {
         guard let commandServer else {
             throw NSError(
-                domain: "org.orbita.tunnel",
+                domain: "com.criticles.throne.tunnel",
                 code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "command server не создан"]
             )

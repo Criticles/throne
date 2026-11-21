@@ -46,8 +46,8 @@ xcodegen generate
 echo "== xcodebuild"
 mkdir -p build
 xcodebuild \
-  -project Orbita.xcodeproj \
-  -scheme Orbita \
+  -project Throne.xcodeproj \
+  -scheme Throne \
   -configuration Release \
   -sdk iphoneos \
   -destination 'generic/platform=iOS' \
@@ -56,8 +56,8 @@ xcodebuild \
   build | tee build/xcodebuild.log
 
 echo "== .ipa"
-rm -rf build/Payload build/Orbita-unsigned.ipa
+rm -rf build/Payload build/Throne-unsigned.ipa
 mkdir -p build/Payload
-cp -R build/dd/Build/Products/Release-iphoneos/Orbita.app build/Payload/
-(cd build && zip -qry Orbita-unsigned.ipa Payload)
-echo "готово: $ROOT/ios/build/Orbita-unsigned.ipa"
+cp -R build/dd/Build/Products/Release-iphoneos/Throne.app build/Payload/
+(cd build && zip -qry Throne-unsigned.ipa Payload)
+echo "готово: $ROOT/ios/build/Throne-unsigned.ipa"

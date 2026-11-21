@@ -1,6 +1,6 @@
-# Orbita for iOS — клиент на ядре ThroneCore + Turnable
+# Throne for iOS — клиент на ядре ThroneCore + Turnable
 
-Рабочее имя проекта — **Orbita** (не «Throne», чтобы не смешивать с апстримом).
+Рабочее имя проекта — **Throne** (не «Throne», чтобы не смешивать с апстримом).
 Продукт: iOS-клиент прокси/VPN с тем же ядром, что у Throne (sing-box-форк + Xray) и с
 дополнительным транспортом Turnable.
 
@@ -30,7 +30,7 @@ P0 использует `experimental/libbox` из форка `throneproj/sing-b
 ## Приёмка P0
 
 1. `xcodegen generate` собирает проект без ручных правок.
-2. CI отдаёт артефакт `Orbita-unsigned.ipa`.
+2. CI отдаёт артефакт `Throne-unsigned.ipa`.
 3. На устройстве: приложение ставится, туннель поднимается, в логе видно версию sing-box
    и строку `tunnel started`.
 4. Трафик идёт в обход: `curl https://ifconfig.me` через туннель возвращает IP сервера провайдера

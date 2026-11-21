@@ -1,10 +1,10 @@
 # Xcode / build
 ios/build/
-ios/Orbita.xcodeproj/
+ios/Throne.xcodeproj/
 ios/Frameworks/
 ios/App/Info.plist
 ios/PacketTunnel/Info.plist
-ios/App/Orbita.entitlements
+ios/App/Throne.entitlements
 ios/PacketTunnel/PacketTunnel.entitlements
 DerivedData/
 *.xcarchive

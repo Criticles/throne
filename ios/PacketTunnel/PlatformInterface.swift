@@ -23,7 +23,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
 
     func openTun(_ options: LibboxTunOptionsProtocol?, ret0_: UnsafeMutablePointer<Int32>?) throws {
         guard let options, let ret0_ else {
-            throw NSError(domain: "org.orbita.tunnel", code: 10,
+            throw NSError(domain: "com.criticles.throne.tunnel", code: 10,
                           userInfo: [NSLocalizedDescriptionKey: "openTun: пустые аргументы"])
         }
 
@@ -147,7 +147,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
         }
 
         TunnelLog.write("openTun: дескриптор utun не найден")
-        throw NSError(domain: "org.orbita.tunnel", code: 11,
+        throw NSError(domain: "com.criticles.throne.tunnel", code: 11,
                       userInfo: [NSLocalizedDescriptionKey: "не найден файловый дескриптор utun"])
     }
 
@@ -163,7 +163,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
     func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32,
                              destinationAddress _: String?, destinationPort _: Int32) throws -> LibboxConnectionOwner
     {
-        throw NSError(domain: "org.orbita.tunnel", code: 12,
+        throw NSError(domain: "com.criticles.throne.tunnel", code: 12,
                       userInfo: [NSLocalizedDescriptionKey: "findConnectionOwner недоступен на iOS"])
     }
 
@@ -190,7 +190,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
     }
 
     func getInterfaces() throws -> LibboxNetworkInterfaceIteratorProtocol {
-        throw NSError(domain: "org.orbita.tunnel", code: 13,
+        throw NSError(domain: "com.criticles.throne.tunnel", code: 13,
                       userInfo: [NSLocalizedDescriptionKey: "getInterfaces не реализован в P0"])
     }
 
@@ -217,12 +217,12 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
     }
 
     func getSystemProxyStatus() throws -> LibboxSystemProxyStatus {
-        throw NSError(domain: "org.orbita.tunnel", code: 14,
+        throw NSError(domain: "com.criticles.throne.tunnel", code: 14,
                       userInfo: [NSLocalizedDescriptionKey: "системный прокси на iOS недоступен"])
     }
 
     func setSystemProxyEnabled(_: Bool) throws {
-        throw NSError(domain: "org.orbita.tunnel", code: 15,
+        throw NSError(domain: "com.criticles.throne.tunnel", code: 15,
                       userInfo: [NSLocalizedDescriptionKey: "системный прокси на iOS недоступен"])
     }
 

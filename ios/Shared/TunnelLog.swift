@@ -4,7 +4,7 @@ import Foundation
 /// Отдельный файл выбран специально — network-extension не может держать UI,
 /// а обмен сообщениями `handleAppMessage` теряет строки при остановке туннеля.
 enum TunnelLog {
-    private static let queue = DispatchQueue(label: "orbita.tunnel.log")
+    private static let queue = DispatchQueue(label: "throne.tunnel.log")
 
     static func write(_ line: String) {
         guard let url = Shared.logURL else { return }
