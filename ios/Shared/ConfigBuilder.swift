@@ -78,7 +78,9 @@ enum ConfigBuilder {
     /// не резолвит имена из SOCKS-запросов, и проверка трафика падает с «bad URL»/ошибкой прокси.
     private static func dnsConfig() -> [String: Any] {
         [
-            "servers": [["tag": "dns-local", "address": "local"]],
+            // Формат 1.12+: у сервера есть тип. Старый вид {"address": "local"} удалён в 1.14,
+            // и ядро отказывается разбирать конфиг целиком.
+            "servers": [["type": "local", "tag": "dns-local"]],
             "final": "dns-local",
         ]
     }
