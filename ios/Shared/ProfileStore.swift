@@ -39,6 +39,17 @@ final class ProfileStore: ObservableObject {
         status = "добавлено профилей: \(parsed.count)"
     }
 
+    /// Одно поле ввода на всё: http(s) — подписка, иначе — одна или несколько share-ссылок.
+    func importAny(_ input: String) async {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
+            await importFromURL(trimmed)
+        } else {
+            importFromText(trimmed)
+        }
+    }
+
     func importFromURL(_ raw: String) async {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme,
@@ -52,8 +63,11 @@ final class ProfileStore: ObservableObject {
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
-        // Многие панели отдают разное в зависимости от User-Agent; этот — как у Throne.
-        request.setValue("Throne/0.1 (iOS)", forHTTPHeaderField: "User-Agent")
+        // Панель решает по User-Agent, что отдать: «клиентский» UA получает готовый
+        // конфиг sing-box, а v2ray-подобный — список share-ссылок (в base64).
+        // Нам нужен список: из него получаются отдельные профили для проверки протоколов.
+        request.setValue("v2rayNG/1.8.5", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -64,6 +78,10 @@ final class ProfileStore: ObservableObject {
             }
             guard let text = String(data: data, encoding: .utf8) else {
                 status = "ответ подписки не в UTF-8"
+                return
+            }
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
+                status = "сервер вернул HTML вместо подписки (403 или страница-заглушка)"
                 return
             }
             importFromText(text)

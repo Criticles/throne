@@ -53,6 +53,8 @@ enum ConfigBuilder {
             ))
         case .wireturn:
             config = try wireturnConfig(profile.payload)
+        case .custom:
+            config = try customConfig(profile.payload)
         }
 
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
@@ -235,6 +237,31 @@ enum ConfigBuilder {
             peerHost: host,
             peerPort: port
         ))
+        return config
+    }
+
+    /// Готовый конфиг sing-box из подписки: подменяем только `inbounds` (TUN в приложении недоступен)
+    /// и гарантируем `route.final`, иначе sing-box не выберет исходящее.
+    private static func customConfig(_ payload: String) throws -> [String: Any] {
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              var config = object as? [String: Any]
+        else { throw BuildError.badPayload("sing-box JSON") }
+
+        config["inbounds"] = [inbound()]
+        if config["log"] == nil {
+            config["log"] = ["level": "info", "timestamp": true]
+        }
+
+        var route = (config["route"] as? [String: Any]) ?? [:]
+        if route["final"] == nil {
+            let outbounds = (config["outbounds"] as? [[String: Any]]) ?? []
+            let endpoints = (config["endpoints"] as? [[String: Any]]) ?? []
+            if let tag = (outbounds.first?["tag"] as? String) ?? (endpoints.first?["tag"] as? String) {
+                route["final"] = tag
+            }
+        }
+        config["route"] = route
         return config
     }
 }

@@ -13,15 +13,15 @@ struct DevView: View {
 
     var body: some View {
         List {
-            Section("Подписка") {
-                TextField("https://…/sub/…", text: $subscriptionURL)
+            Section("Подписка или ссылка") {
+                TextField("URL подписки или vless:// hy2:// mierus:// wg://", text: $subscriptionURL)
                     .textFieldStyle(.roundedBorder)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
 
                 HStack {
-                    Button(store.loading ? "Загрузка…" : "Загрузить") {
-                        Task { await store.importFromURL(subscriptionURL) }
+                    Button(store.loading ? "Загрузка…" : "Добавить") {
+                        Task { await store.importAny(subscriptionURL) }
                     }
                     .disabled(store.loading)
 

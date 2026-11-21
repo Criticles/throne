@@ -4,10 +4,15 @@ import Foundation
 /// либо JSON-массив формата wireturn (Throne: turnable + wgConfig).
 enum ProfileParser {
     static func parse(text: String) -> [Profile] {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let decoded = decodeBase64IfNeeded(text)
+        let trimmed = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("[") || trimmed.hasPrefix("{") {
             if let profiles = parseWireturn(trimmed), !profiles.isEmpty {
                 return profiles
+            }
+            // Панель с «клиентским» User-Agent отдаёт готовый конфиг sing-box целиком.
+            if let custom = parseCustomConfig(trimmed) {
+                return [custom]
             }
         }
         var result: [Profile] = []
@@ -19,6 +24,29 @@ enum ProfileParser {
             }
         }
         return result
+    }
+
+    /// Панели часто отдают список ссылок в base64 (формат v2rayN). Разворачиваем,
+    /// если после декодирования появляется схема вида `vless://`.
+    static func decodeBase64IfNeeded(_ text: String) -> String {
+        let compact = text
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        if compact.contains("://") || compact.hasPrefix("{") || compact.hasPrefix("[") {
+            return text
+        }
+        var normalized = compact
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while normalized.count % 4 != 0 {
+            normalized += "="
+        }
+        guard let data = Data(base64Encoded: normalized, options: .ignoreUnknownCharacters),
+              let decoded = String(data: data, encoding: .utf8),
+              decoded.contains("://")
+        else { return text }
+        return decoded
     }
 
     static func parse(link: String) -> Profile? {
@@ -42,8 +70,27 @@ enum ProfileParser {
         return nil
     }
 
-    // MARK: - wireturn (Throne)
+    /// Полноценный конфиг sing-box (панель отдаёт его, если User-Agent похож на клиент Throne).
+    /// Используем как один профиль: outbounds/endpoints/dns/route берём как есть,
+    /// а inbounds подменяем на локальный SOCKS — TUN в приложении недоступен.
+    static func parseCustomConfig(_ text: String) -> Profile? {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let config = object as? [String: Any],
+              let outbounds = config["outbounds"] as? [[String: Any]],
+              !outbounds.isEmpty
+        else { return nil }
 
+        let tag = (config["remarks"] as? String) ?? (outbounds.first?["tag"] as? String) ?? "config"
+        return Profile(
+            name: "sing-box: \(tag)",
+            kind: .custom,
+            payload: text,
+            note: "конфиг из подписки; inbounds заменяются на локальный SOCKS"
+        )
+    }
+
+    // MARK: - wireturn (Throne)
     /// Формат: массив объектов `{kernelConfig:{type:"turnable",config:{…}}, wgConfig:{…}}`.
     /// Из него собирается цепочка «WireGuard → локальный порт Turnable → WARP».
     static func parseWireturn(_ text: String) -> [Profile]? {
