@@ -107,10 +107,12 @@ struct DevView: View {
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
+        // На iOS константы kCFNetworkProxiesSOCKS* не экспортируются (они macOS-only),
+        // но connectionProxyDictionary их принимает строковыми ключами.
         configuration.connectionProxyDictionary = [
-            kCFNetworkProxiesSOCKSEnable as String: 1,
-            kCFNetworkProxiesSOCKSProxy as String: "127.0.0.1",
-            kCFNetworkProxiesSOCKSPort as String: Int(DevConfig.listenPort),
+            "SOCKSEnable": 1,
+            "SOCKSProxy": "127.0.0.1",
+            "SOCKSPort": Int(DevConfig.listenPort),
         ]
         let session = URLSession(configuration: configuration)
         let started = Date()
