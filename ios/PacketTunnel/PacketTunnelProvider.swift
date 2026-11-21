@@ -47,39 +47,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let base = container.appendingPathComponent("libbox", isDirectory: true)
         let working = base.appendingPathComponent("working", isDirectory: true)
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("libbox-temp", isDirectory: true)
-        for url in [base, working, temp] {
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        }
 
-        let options = LibboxSetupOptions()
-        options.basePath = base.path
-        options.workingPath = working.path
-        options.tempPath = temp.path
-        options.logMaxLines = 2000
-        options.debug = true
-        options.commandServerSecret = ""
-
-        var setupError: NSError?
-        LibboxSetup(options, &setupError)
-        if let setupError {
-            throw setupError
-        }
         // 45 МБ и GC 10% на iOS — ровно то, что делает сам sing-box под Network Extension.
         LibboxSetMemoryLimit(true)
 
         let platform = PlatformInterface(provider: self)
         self.platform = platform
 
-        var serverError: NSError?
-        guard let server = LibboxNewCommandServer(platform, platform, &serverError) else {
-            throw serverError ?? NSError(
-                domain: "com.criticles.throne.tunnel",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "не удалось создать command server"]
-            )
-        }
-        try server.start()
-        commandServer = server
+        // Через LibboxBoot: control-сокет libbox переведён на loopback-TCP,
+        // иначе unix-путь упирается в лимит sun_path.
+        commandServer = try LibboxBoot.start(base: base, working: working, temp: temp,
+                                             debug: true, platform: platform)
         TunnelLog.write("setupCore: command server started")
     }
 

@@ -57,23 +57,7 @@ final class DevEngine: ObservableObject {
         let base = container.appendingPathComponent("libbox", isDirectory: true)
         let working = base.appendingPathComponent("working", isDirectory: true)
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("libbox-temp", isDirectory: true)
-        for url in [base, working, temp] {
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        }
 
-        let options = LibboxSetupOptions()
-        options.basePath = base.path
-        options.workingPath = working.path
-        options.tempPath = temp.path
-        options.logMaxLines = 2000
-        options.debug = true
-        options.commandServerSecret = ""
-
-        var setupError: NSError?
-        _ = LibboxSetup(options, &setupError)
-        if let setupError {
-            throw setupError
-        }
         // В приложении лимит памяти расширения не нужен — ведём себя как обычный клиент.
         LibboxSetMemoryLimit(false)
 
@@ -82,13 +66,9 @@ final class DevEngine: ObservableObject {
         }
         self.platform = platform
 
-        var serverError: NSError?
-        guard let server = LibboxNewCommandServer(platform, platform, &serverError) else {
-            throw serverError ?? NSError(domain: "com.criticles.throne.dev", code: 10,
-                                         userInfo: [NSLocalizedDescriptionKey: "не удалось создать command server"])
-        }
-        try server.start()
-        self.server = server
+        // Через LibboxBoot: внутри LiveContainer unix-сокет libbox не влезает в лимит пути.
+        server = try LibboxBoot.start(base: base, working: working, temp: temp,
+                                      debug: true, platform: platform)
         append("ядро: \(LibboxVersion())")
     }
 
