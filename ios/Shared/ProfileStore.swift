@@ -86,6 +86,16 @@ final class ProfileStore: ObservableObject {
             problems.append("конфиг: \(Self.describe(error))")
         }
 
+        // Панель отдаёт AmneziaWG только клиенту YPtun (проверено: 3 ссылки вместо 2).
+        do {
+            let yptunList = try await fetch(url, userAgent: "YPtun/3.7.0")
+            if !yptunList.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
+                added += importParsed(ProfileParser.parse(text: yptunList))
+            }
+        } catch {
+            problems.append("AWG: \(Self.describe(error))")
+        }
+
         if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
         } else {
