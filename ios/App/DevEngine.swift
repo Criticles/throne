@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Libbox
 
@@ -62,6 +63,27 @@ final class DevEngine: ObservableObject {
         running = false
         activeName = nil
         append("остановлено")
+    }
+
+    /// Слушает ли ядро локальный порт. Если нет — «bad URL» и ошибки прокси
+    /// относятся к неудачному старту ядра, а не к серверу.
+    func isListening() -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(ConfigBuilder.listenPort).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                connect(fd, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return result == 0
     }
 
     func clearLog() {

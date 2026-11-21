@@ -156,6 +156,12 @@ struct DevView: View {
             return
         }
         engine.start(profile: profile)
+        if engine.running && !engine.isListening() {
+            // Ядро сообщило «старт», но порт не слушается: чаще всего остался прошлый
+            // экземпляр или в конфиге ошибка — тогда проверка трафика врёт про сервер.
+            probeResult = "ядро не слушает 127.0.0.1:\(ConfigBuilder.listenPort) — смотрите лог ядра"
+            return
+        }
         if engine.running {
             probeResult = "проверяю…"
             Task {

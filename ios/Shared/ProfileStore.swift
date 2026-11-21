@@ -77,14 +77,20 @@ final class ProfileStore: ObservableObject {
             problems.append("список: \(Self.describe(error))")
         }
 
-        do {
-            let configText = try await fetch(url, userAgent: "Throne/0.1 (iOS)")
-            if configText.contains("\"outbounds\"") {
+        // Панель ориентируется на User-Agent. Десктопный Throne шлёт «Throne/<версия>»,
+        // поэтому пробуем его UA первым: с ним выдача совпадает с тем, что видно в Throne на ПК
+        // (в частности, там появляется Mieru).
+        for userAgent in ["Throne/1.1.0", "Throne/0.1 (iOS)"] {
+            do {
+                let configText = try await fetch(url, userAgent: userAgent)
+                guard configText.contains("\"outbounds\"") else { continue }
                 added += importParsed(ProfileParser.parse(text: configText))
+                break
+            } catch {
+                problems.append("конфиг (\(userAgent)): \(Self.describe(error))")
             }
-        } catch {
-            problems.append("конфиг: \(Self.describe(error))")
         }
+
 
         // Панель отдаёт AmneziaWG только клиенту YPtun (проверено: 3 ссылки вместо 2).
         do {

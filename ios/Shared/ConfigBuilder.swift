@@ -74,6 +74,15 @@ enum ConfigBuilder {
 
     // MARK: - Обвязка
 
+    /// Явный DNS через системный резолвер. Без блока `dns` sing-box в приложении
+    /// не резолвит имена из SOCKS-запросов, и проверка трафика падает с «bad URL»/ошибкой прокси.
+    private static func dnsConfig() -> [String: Any] {
+        [
+            "servers": [["tag": "dns-local", "address": "local"]],
+            "final": "dns-local",
+        ]
+    }
+
     private static func inbound() -> [String: Any] {
         [
             "type": "mixed",
@@ -87,6 +96,7 @@ enum ConfigBuilder {
         guard let tag = outbound["tag"] as? String else { throw BuildError.encodingFailed }
         return [
             "log": ["level": "info", "timestamp": true],
+            "dns": dnsConfig(),
             "inbounds": [inbound()],
             "outbounds": [outbound],
             "route": ["final": tag],
@@ -97,6 +107,7 @@ enum ConfigBuilder {
         let tag = (endpoint["tag"] as? String) ?? "wg-out"
         return [
             "log": ["level": "info", "timestamp": true],
+            "dns": dnsConfig(),
             "inbounds": [inbound()],
             "endpoints": [endpoint],
             "route": ["final": tag],
@@ -293,6 +304,9 @@ enum ConfigBuilder {
         config["inbounds"] = [inbound()]
         if config["log"] == nil {
             config["log"] = ["level": "info", "timestamp": true]
+        }
+        if config["dns"] == nil {
+            config["dns"] = dnsConfig()
         }
 
         var route = (config["route"] as? [String: Any]) ?? [:]
