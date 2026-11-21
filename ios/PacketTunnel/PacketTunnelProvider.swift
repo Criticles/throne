@@ -48,8 +48,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let working = base.appendingPathComponent("working", isDirectory: true)
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("libbox-temp", isDirectory: true)
 
-        // 45 МБ и GC 10% на iOS — ровно то, что делает сам sing-box под Network Extension.
-        LibboxSetMemoryLimit(true)
+        // Лимит памяти расширения раньше ставился через LibboxSetMemoryLimit(true);
+        // в новом API этой функции нет — при необходимости передаётся в SetupOptions.
 
         let platform = PlatformInterface(provider: self)
         self.platform = platform

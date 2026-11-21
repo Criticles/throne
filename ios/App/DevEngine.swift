@@ -87,8 +87,8 @@ final class DevEngine: ObservableObject {
         let working = base.appendingPathComponent("working", isDirectory: true)
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("libbox-temp", isDirectory: true)
 
-        // В приложении лимит памяти расширения не нужен — ведём себя как обычный клиент.
-        LibboxSetMemoryLimit(false)
+        // В приложении лимит памяти расширения не нужен: LibboxSetMemoryLimit из API убран,
+        // а SetupOptions памяти не касается — ведём себя как обычный клиент.
 
         let platform = DevPlatform { [weak self] text in
             Task { @MainActor in self?.append(text) }
