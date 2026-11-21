@@ -153,8 +153,8 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
     func useProcFS() -> Bool { false }
 
     /// Владельца соединения на iOS определить нельзя — отсюда нет правил «по приложению».
-    func findConnectionOwner(_: Int32, sourceAddress _: String, sourcePort _: Int32,
-                             destinationAddress _: String, destinationPort _: Int32) throws -> LibboxConnectionOwner
+    func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32,
+                             destinationAddress _: String?, destinationPort _: Int32) throws -> LibboxConnectionOwner
     {
         throw NSError(domain: "com.criticles.throne.tunnel", code: 12,
                       userInfo: [NSLocalizedDescriptionKey: "findConnectionOwner недоступен на iOS"])
@@ -182,10 +182,12 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
         lastPathDescription = ""
     }
 
-    func getInterfaces() throws -> LibboxNetworkInterfaceIteratorProtocol {
+    func getInterfaces() throws -> (any LibboxNetworkInterfaceIteratorProtocol)? {
         throw NSError(domain: "com.criticles.throne.tunnel", code: 13,
                       userInfo: [NSLocalizedDescriptionKey: "getInterfaces не реализован в P0"])
     }
+
+    func localDNSTransport() -> (any LibboxLocalDNSTransportProtocol)? { nil }
 
     func underNetworkExtension() -> Bool { true }
 
@@ -210,7 +212,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
         TunnelLog.write("commandServer: serviceReload")
     }
 
-    func getSystemProxyStatus() throws -> LibboxSystemProxyStatus {
+    func getSystemProxyStatus() throws -> LibboxSystemProxyStatus? {
         throw NSError(domain: "com.criticles.throne.tunnel", code: 14,
                       userInfo: [NSLocalizedDescriptionKey: "системный прокси на iOS недоступен"])
     }

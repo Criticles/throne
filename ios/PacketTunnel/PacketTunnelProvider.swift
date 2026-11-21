@@ -57,6 +57,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         options.tempPath = temp.path
         options.logMaxLines = 2000
         options.debug = true
+        options.commandServerSecret = ""
 
         var setupError: NSError?
         LibboxSetup(options, &setupError)
