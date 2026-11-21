@@ -29,14 +29,16 @@ final class ProfileStore: ObservableObject {
         defaults.set(id.uuidString, forKey: selectedKey)
     }
 
-    func importFromText(_ text: String) {
+    @discardableResult
+    func importFromText(_ text: String) -> Int {
         let parsed = ProfileParser.parse(text: text)
         guard !parsed.isEmpty else {
             status = "в тексте не нашлось поддерживаемых профилей"
-            return
+            return 0
         }
-        merge(parsed)
-        status = "добавлено профилей: \(parsed.count)"
+        let added = merge(parsed)
+        status = "добавлено профилей: \(added) (всего \(profiles.count))"
+        return added
     }
 
     /// Одно поле ввода на всё: http(s) — подписка, иначе — одна или несколько share-ссылок.
@@ -61,33 +63,35 @@ final class ProfileStore: ObservableObject {
         loading = true
         defer { loading = false }
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        // Панель решает по User-Agent, что отдать: «клиентский» UA получает готовый
-        // конфиг sing-box, а v2ray-подобный — список share-ссылок (в base64).
-        // Нам нужен список: из него получаются отдельные профили для проверки протоколов.
-        request.setValue("v2rayNG/1.8.5", forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        var added = 0
+        var problems: [String] = []
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            guard code == 200 else {
-                status = "подписка вернула HTTP \(code)"
-                return
+            let list = try await fetch(url, userAgent: "v2rayNG/1.8.5")
+            if list.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
+                problems.append("вместо подписки пришёл HTML")
+            } else {
+                added += importParsed(ProfileParser.parse(text: list))
             }
-            guard let text = String(data: data, encoding: .utf8) else {
-                status = "ответ подписки не в UTF-8"
-                return
-            }
-            if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
-                status = "сервер вернул HTML вместо подписки (403 или страница-заглушка)"
-                return
-            }
-            importFromText(text)
         } catch {
-            let ns = error as NSError
-            status = "ошибка загрузки: \(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
+            problems.append("список: \(Self.describe(error))")
+        }
+
+        do {
+            let configText = try await fetch(url, userAgent: "Throne/0.1 (iOS)")
+            if configText.contains("\"outbounds\"") {
+                added += importParsed(ProfileParser.parse(text: configText))
+            }
+        } catch {
+            problems.append("конфиг: \(Self.describe(error))")
+        }
+
+        if added > 0 {
+            status = "добавлено профилей: \(added) (всего \(profiles.count))"
+        } else {
+            status = problems.isEmpty
+                ? "в подписке не нашлось поддерживаемых профилей"
+                : problems.joined(separator: " · ")
         }
     }
 
@@ -101,19 +105,54 @@ final class ProfileStore: ObservableObject {
 
     // MARK: - Внутреннее
 
-    private func merge(_ incoming: [Profile]) {
+    private func fetch(_ url: URL, userAgent: String) async throws -> String {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard code == 200 else {
+            throw NSError(domain: "orbita.subscription", code: code,
+                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(code)"])
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw NSError(domain: "orbita.subscription", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "ответ не в UTF-8"])
+        }
+        return text
+    }
+
+    @discardableResult
+    private func importParsed(_ parsed: [Profile]) -> Int {
+        guard !parsed.isEmpty else { return 0 }
+        return merge(parsed)
+    }
+
+    private static func describe(_ error: Error) -> String {
+        let ns = error as NSError
+        return "\(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
+    }
+
+    @discardableResult
+    private func merge(_ incoming: [Profile]) -> Int {
         var seen = Set(profiles.map { "\($0.kind.rawValue)|\($0.name)|\($0.payload)" })
+        var added = 0
         for profile in incoming {
             let key = "\(profile.kind.rawValue)|\(profile.name)|\(profile.payload)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
             profiles.append(profile)
+            added += 1
         }
         if selectedID == nil {
             selectedID = profiles.first?.id
             defaults.set(selectedID?.uuidString, forKey: selectedKey)
         }
-        save()
+        if added > 0 {
+            save()
+        }
+        return added
     }
 
     private func save() {

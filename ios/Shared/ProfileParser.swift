@@ -15,8 +15,8 @@ enum ProfileParser {
                 return profiles
             }
             // Панель с «клиентским» User-Agent отдаёт готовый конфиг sing-box целиком.
-            if let custom = parseCustomConfig(trimmed) {
-                return [custom]
+            if let profiles = parseSingboxConfig(trimmed), !profiles.isEmpty {
+                return profiles
             }
         }
         var result: [Profile] = []
@@ -74,10 +74,12 @@ enum ProfileParser {
         return nil
     }
 
-    /// Полноценный конфиг sing-box (панель отдаёт его, если User-Agent похож на клиент Throne).
-    /// Используем как один профиль: outbounds/endpoints/dns/route берём как есть,
-    /// а inbounds подменяем на локальный SOCKS — TUN в приложении недоступен.
-    static func parseCustomConfig(_ text: String) -> Profile? {
+    /// Полноценный конфиг sing-box (панель отдаёт его на «клиентский» User-Agent).
+    ///
+    /// Из него достаём не один профиль, а все: по одному на каждый outbound (vless/hysteria2/mieru/…)
+    /// и на каждый endpoint (wireguard), плюс отдельный профиль «как есть» с urltest/selector.
+    /// Именно так в подписку попадают Mieru и WireGuard — в v2ray-списке их нет.
+    static func parseSingboxConfig(_ text: String) -> [Profile]? {
         guard let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
               let config = object as? [String: Any],
@@ -85,13 +87,96 @@ enum ProfileParser {
               !outbounds.isEmpty
         else { return nil }
 
-        let tag = (config["remarks"] as? String) ?? (outbounds.first?["tag"] as? String) ?? "config"
-        return Profile(
-            name: "sing-box: \(tag)",
-            kind: .custom,
-            payload: text,
-            note: "конфиг из подписки; inbounds заменяются на локальный SOCKS"
-        )
+        var profiles: [Profile] = []
+        let inbound: [String: Any] = [
+            "type": "mixed",
+            "tag": "mixed-in",
+            "listen": "127.0.0.1",
+            "listen_port": ConfigBuilder.listenPort,
+        ]
+
+        for outbound in outbounds {
+            guard let type = outbound["type"] as? String,
+                  let tag = outbound["tag"] as? String,
+                  outbound["server"] != nil
+            else { continue }
+            let mini: [String: Any] = [
+                "log": ["level": "info", "timestamp": true],
+                "inbounds": [inbound],
+                "outbounds": [outbound],
+                "route": ["final": tag],
+            ]
+            guard let json = encode(mini) else { continue }
+            profiles.append(Profile(
+                name: "\(protocolTitle(type)) · \(tag)",
+                kind: .custom,
+                payload: json,
+                note: nil
+            ))
+        }
+
+        if let endpoints = config["endpoints"] as? [[String: Any]] {
+            for endpoint in endpoints {
+                guard let type = endpoint["type"] as? String,
+                      let tag = endpoint["tag"] as? String
+                else { continue }
+                let mini: [String: Any] = [
+                    "log": ["level": "info", "timestamp": true],
+                    "inbounds": [inbound],
+                    "endpoints": [endpoint],
+                    "route": ["final": tag],
+                ]
+                guard let json = encode(mini) else { continue }
+                profiles.append(Profile(
+                    name: "\(protocolTitle(type)) · \(tag)",
+                    kind: .custom,
+                    payload: json,
+                    note: nil
+                ))
+            }
+        }
+
+        // Плюс профиль целиком: там urltest/selector и правила маршрутизации панели.
+        var whole = config
+        whole["inbounds"] = [inbound]
+        var route = (whole["route"] as? [String: Any]) ?? [:]
+        if route["final"] == nil, let tag = outbounds.first?["tag"] as? String {
+            route["final"] = tag
+            whole["route"] = route
+        }
+        if let json = encode(whole) {
+            profiles.append(Profile(
+                name: "auto · конфиг панели целиком",
+                kind: .custom,
+                payload: json,
+                note: "urltest/selector из подписки, inbounds заменены на локальный SOCKS"
+            ))
+        }
+
+        return profiles
+    }
+
+    private static func encode(_ object: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func protocolTitle(_ type: String) -> String {
+        switch type {
+        case "vless": return "VLESS"
+        case "hysteria2": return "Hysteria2"
+        case "mieru": return "Mieru"
+        case "wireguard": return "WireGuard"
+        case "tuic": return "TUIC"
+        case "trojan": return "Trojan"
+        case "shadowsocks": return "Shadowsocks"
+        case "anytls": return "AnyTLS"
+        case "ssh": return "SSH"
+        case "hysteria": return "Hysteria"
+        default: return type
+        }
     }
 
     // MARK: - wireturn (Throne)
