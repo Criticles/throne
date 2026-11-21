@@ -58,7 +58,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ios/Frameworks/Libbox.xcframework
-          key: libbox-ios-${{ env.SINGBOX_REF }}-${{ env.IOS_TAGS }}
+          # Ключ — хеш файла с закреплённым коммитом ядра и тегами:
+          # в ключах actions/cache нельзя запятые, а теги сборки их содержат.
+          key: libbox-ios-${{ hashFiles('core/singbox-ref.txt') }}
 
       - name: Клонировать ядро
         if: steps.cache-core.outputs.cache-hit != 'true'
