@@ -146,9 +146,9 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
 
     // MARK: - Прочее из PlatformInterface
 
-    func usePlatformAutoDetectInterfaceControl() -> Bool { false }
+    func usePlatformAutoDetectControl() -> Bool { false }
 
-    func autoDetectInterfaceControl(_: Int32) throws {}
+    func autoDetectControl(_: Int32) throws {}
 
     func usePlatformShell() -> Bool { false }
 
@@ -157,14 +157,14 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
                       userInfo: [NSLocalizedDescriptionKey: "shell на iOS недоступен"])
     }
 
+    // nil вместо throw: у @objc-требования с Optional-возвратом nil и есть «не удалось».
     func openShellSession(_ user: LibboxPlatformUser?, command: String?, environ: (any LibboxStringIteratorProtocol)?,
-                          term: String?, rows: Int32, cols: Int32) throws -> (any LibboxShellSessionProtocol)?
+                          term: String?, rows: Int32, cols: Int32) -> (any LibboxShellSessionProtocol)?
     {
-        throw NSError(domain: "com.criticles.throne.tunnel", code: 21,
-                      userInfo: [NSLocalizedDescriptionKey: "shell на iOS недоступен"])
+        nil
     }
 
-    func lookupUser(_ username: String?) throws -> LibboxPlatformUser? { nil }
+    func lookupUser(_ username: String?) -> LibboxPlatformUser? { nil }
 
     /// SFTP-сервер и SSH-хост-ключ нужны только для встроенного shell — на iOS их нет.
     func lookupSFTPServer() throws -> String {
@@ -181,17 +181,11 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
 
     func usePlatformBridge() -> Bool { false }
 
-    func createBridge(_ options: LibboxBridgeOptions?) throws -> (any LibboxBridgeSessionProtocol)? {
-        throw NSError(domain: "com.criticles.throne.tunnel", code: 24,
-                      userInfo: [NSLocalizedDescriptionKey: "bridge на iOS недоступен"])
-    }
+    func createBridge(_ options: LibboxBridgeOptions?) -> (any LibboxBridgeSessionProtocol)? { nil }
 
     func usePlatformAutoRedirect() -> Bool { false }
 
-    func createAutoRedirect(_ options: Data?, handler: (any LibboxAutoRedirectHandlerProtocol)?) throws -> (any LibboxAutoRedirectSessionProtocol)? {
-        throw NSError(domain: "com.criticles.throne.tunnel", code: 25,
-                      userInfo: [NSLocalizedDescriptionKey: "auto-redirect на iOS недоступен"])
-    }
+    func createAutoRedirect(_ options: Data?, handler: (any LibboxAutoRedirectHandlerProtocol)?) -> (any LibboxAutoRedirectSessionProtocol)? { nil }
 
     func startNeighborMonitor(_ listener: (any LibboxNeighborUpdateListenerProtocol)?) throws {
         throw NSError(domain: "com.criticles.throne.tunnel", code: 26,
