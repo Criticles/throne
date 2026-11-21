@@ -4,7 +4,19 @@ import SwiftUI
 struct ThroneApp: App {
     var body: some Scene {
         WindowGroup {
+            RootView()
+        }
+    }
+}
+
+struct RootView: View {
+    var body: some View {
+        TabView {
             ContentView()
+                .tabItem { Label("VPN", systemImage: "shield.lefthalf.filled") }
+            NavigationView { DevView() }
+                .navigationViewStyle(.stack)
+                .tabItem { Label("Dev", systemImage: "hammer") }
         }
     }
 }
@@ -50,7 +62,7 @@ struct ContentView: View {
                 .background(Color.secondary.opacity(0.08))
             }
             .padding()
-            .navigationTitle("Throne P0")
+            .navigationTitle("Throne")
         }
         .onAppear { Task { await tunnel.reload() } }
         .onReceive(timer) { _ in log = TunnelLog.read() }
