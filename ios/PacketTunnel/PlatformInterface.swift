@@ -170,15 +170,18 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
                       userInfo: [NSLocalizedDescriptionKey: "пользователи на iOS недоступны"])
     }
 
-    /// SFTP-сервер и SSH-хост-ключ нужны только для встроенного shell — на iOS их нет.
-    func lookupSFTPServer() throws -> String {
-        throw NSError(domain: "com.criticles.throne.tunnel", code: 22,
-                      userInfo: [NSLocalizedDescriptionKey: "sftp на iOS недоступен"])
+    /// SFTP-сервер и SSH-хост-ключ нужны только встроенному shell десктопа: на iOS их нет,
+    /// ошибку отдаём через NSErrorPointer — Swift импортировал эти методы без throws.
+    func lookupSFTPServer(_ error: NSErrorPointer) -> String {
+        error?.pointee = NSError(domain: "com.criticles.throne.tunnel", code: 22,
+                                 userInfo: [NSLocalizedDescriptionKey: "sftp на iOS недоступен"])
+        return ""
     }
 
-    func readSystemSSHHostKey() throws -> String {
-        throw NSError(domain: "com.criticles.throne.tunnel", code: 23,
-                      userInfo: [NSLocalizedDescriptionKey: "ssh на iOS недоступен"])
+    func readSystemSSHHostKey(_ error: NSErrorPointer) -> String {
+        error?.pointee = NSError(domain: "com.criticles.throne.tunnel", code: 23,
+                                 userInfo: [NSLocalizedDescriptionKey: "ssh на iOS недоступен"])
+        return ""
     }
 
     func tailscaleHostname() -> String { "" }
@@ -287,7 +290,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
     }
 
     /// Агент SSH и аварийный крэш-репорт нужны только десктопной обвязке.
-    func connectSSHAgent() throws -> Int32 {
+    func connectSSHAgent(_ ret0_: UnsafeMutablePointer<Int32>?) throws {
         throw NSError(domain: "com.criticles.throne.tunnel", code: 27,
                       userInfo: [NSLocalizedDescriptionKey: "ssh-agent на iOS недоступен"])
     }
