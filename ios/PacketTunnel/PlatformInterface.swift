@@ -11,7 +11,7 @@ import NetworkExtension
 /// невозможны, либо нужны только для правил по приложениям; см. комментарии.
 final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, LibboxCommandServerHandlerProtocol {
     private let provider: NEPacketTunnelProvider
-    private var pathMonitor: NWPathMonitor?
+    private var pathMonitor: Network.NWPathMonitor?
     private var lastPathDescription = ""
 
     init(provider: NEPacketTunnelProvider) {
@@ -31,16 +31,9 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
         settings.mtu = NSNumber(value: options.getMTU())
 
         if options.getAutoRoute() {
-            // DNS, которые ядро просит прописать в туннеле
-            if let dnsMode = options.getDNSMode(), dnsMode.value != LibboxDNSModeDisabled,
-               let iterator = options.getDNSServerAddress() {
-                var servers: [String] = []
-                while iterator.hasNext() {
-                    servers.append(iterator.next())
-                }
-                if !servers.isEmpty {
-                    settings.dnsSettings = NEDNSSettings(servers: servers)
-                }
+            // В libbox нет getDNSMode: ядро отдаёт один адрес DNS-хайджека (адрес TUN + 1).
+            if let dnsBox = try? options.getDNSServerAddress() {
+                settings.dnsSettings = NEDNSSettings(servers: [dnsBox.value])
             }
 
             // IPv4
@@ -160,8 +153,8 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
     func useProcFS() -> Bool { false }
 
     /// Владельца соединения на iOS определить нельзя — отсюда нет правил «по приложению».
-    func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32,
-                             destinationAddress _: String?, destinationPort _: Int32) throws -> LibboxConnectionOwner
+    func findConnectionOwner(_: Int32, sourceAddress _: String, sourcePort _: Int32,
+                             destinationAddress _: String, destinationPort _: Int32) throws -> LibboxConnectionOwner
     {
         throw NSError(domain: "com.criticles.throne.tunnel", code: 12,
                       userInfo: [NSLocalizedDescriptionKey: "findConnectionOwner недоступен на iOS"])
@@ -169,7 +162,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
 
     func startDefaultInterfaceMonitor(_ listener: LibboxInterfaceUpdateListenerProtocol?) throws {
         guard let listener else { return }
-        let monitor = NWPathMonitor()
+        let monitor = Network.NWPathMonitor()
         pathMonitor = monitor
         let semaphore = DispatchSemaphore(value: 0)
         monitor.pathUpdateHandler = { [weak self] path in
@@ -204,7 +197,8 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
 
     func clearDNSCache() {}
 
-    func sendNotification(_: LibboxNotification?) throws {}
+    // gomobile генерирует для Go-метода SendNotification селектор send(_:)
+    func send(_: LibboxNotification?) throws {}
 
     // MARK: - CommandServerHandler
 
@@ -234,7 +228,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
 
     // MARK: - Сеть
 
-    private func publish(_ path: NWPath, to listener: LibboxInterfaceUpdateListenerProtocol) {
+    private func publish(_ path: Network.NWPath, to listener: LibboxInterfaceUpdateListenerProtocol) {
         let description = describe(path)
         if description == lastPathDescription {
             return
@@ -251,7 +245,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
                                         isConstrained: path.isConstrained)
     }
 
-    private func describe(_ path: NWPath) -> String {
+    private func describe(_ path: Network.NWPath) -> String {
         var parts: [String] = []
         parts.append(path.status == .satisfied ? "satisfied" : "unsatisfied")
         if let interface = path.availableInterfaces.first {

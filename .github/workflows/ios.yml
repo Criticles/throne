@@ -127,9 +127,24 @@ jobs:
             -derivedDataPath build/dd \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build > build/xcodebuild.log 2>&1 || STATUS=$?
+          STATUS=${STATUS:-0}
           grep -E "error:|Undefined symbols|referenced from|\*\* BUILD" build/xcodebuild.log | head -100 || true
+          # Раньше здесь стоял только test -d: xcodebuild успевал создать .app до падения,
+          # и упавшая сборка выглядела успешной.
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::xcodebuild failed with exit code $STATUS"
+            exit "$STATUS"
+          fi
           test -d "build/dd/Build/Products/Release-iphoneos/Throne.app"
           echo "DD=$PWD/build/dd" >> "$GITHUB_OUTPUT"
+
+      - name: Заголовки Libbox (для точных имён API)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libbox-headers
+          path: ios/Frameworks/Libbox.xcframework/**/Headers/*.h
+          if-no-files-found: ignore
 
       - name: Упаковать неподписанный .ipa
         working-directory: ios
