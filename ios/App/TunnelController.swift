@@ -53,9 +53,17 @@ final class TunnelController: ObservableObject {
             let manager = try await prepareManager()
             try manager.connection.startVPNTunnel()
         } catch {
-            statusText = "Ошибка запуска: \(error.localizedDescription)"
-            TunnelLog.write("start failed: \(error.localizedDescription)")
+            let described = Self.describe(error)
+            statusText = "Ошибка запуска: \(described)"
+            TunnelLog.write("start failed: \(described)")
         }
+    }
+
+    /// Домен и код важны: именно они отличают «нет entitlement Network Extension»
+    /// от «не зарегистрирован провайдер» и от обычной ошибки конфигурации.
+    private static func describe(_ error: Error) -> String {
+        let ns = error as NSError
+        return "\(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
     }
 
     var isConnecting: Bool {
@@ -74,8 +82,13 @@ final class TunnelController: ObservableObject {
         manager.protocolConfiguration = proto
         manager.localizedDescription = "Throne"
         manager.isEnabled = true
-        try await manager.saveToPreferences()
-        try await manager.loadFromPreferences()
+        do {
+            try await manager.saveToPreferences()
+            try await manager.loadFromPreferences()
+        } catch {
+            TunnelLog.write("saveToPreferences failed: \(Self.describe(error))")
+            throw error
+        }
         self.manager = manager
         refreshStatus()
         return manager

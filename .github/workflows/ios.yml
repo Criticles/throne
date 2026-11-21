@@ -58,9 +58,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ios/Frameworks/Libbox.xcframework
-          # Ключ — хеш файла с закреплённым коммитом ядра и тегами:
-          # в ключах actions/cache нельзя запятые, а теги сборки их содержат.
-          key: libbox-ios-${{ hashFiles('core/singbox-ref.txt') }}
+          # Ключ — хеш файла с закреплённым коммитом ядра, тегами и самого workflow:
+          # в ключах actions/cache нельзя запятые, а теги сборки их содержат,
+          # а флаги gomobile (например -ldflags с версией) меняют результат, поэтому их хеш тоже в ключе.
+          key: libbox-ios-${{ hashFiles('core/singbox-ref.txt', '.github/workflows/ios.yml') }}
 
       - name: Клонировать ядро
         if: steps.cache-core.outputs.cache-hit != 'true'
@@ -88,6 +89,9 @@ jobs:
           set -euo pipefail
           export PATH="$(go env GOPATH)/bin:$PATH"
           cd .core/sing-box
+          # Версию ядра вшиваем в constant.Version: без этого LibboxVersion() возвращает "unknown"
+          # (именно это показало приложение на устройстве).
+          CORE_VER="$(git rev-parse --short HEAD)"
           mkdir -p "$GITHUB_WORKSPACE/ios/Frameworks"
           gomobile init
           gomobile bind -v \
@@ -96,7 +100,7 @@ jobs:
             -libname=Libbox \
             -iosversion "${{ env.IOS_MIN }}" \
             -tags "${{ env.IOS_TAGS }}" \
-            -ldflags "-s -w -checklinkname=0" \
+            -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=dev-${CORE_VER}" \
             ./experimental/libbox
 
       - name: Проверить фреймворк
