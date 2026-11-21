@@ -1,0 +1,96 @@
+# XcodeGen-спека: единственный источник истины для Xcode-проекта.
+# Генерация: cd ios && xcodegen generate
+#
+# Два таргета:
+#   Orbita        — приложение (SwiftUI), создаёт VPN-профиль и управляет им.
+#   PacketTunnel  — NEPacketTunnelProvider: запускает libbox и отдаёт ядру дескриптор utun.
+#
+# Libbox.xcframework собирается из форка throneproj/sing-box (см. core/singbox-ref.txt)
+# и кладётся в ios/Frameworks/ — в git он не входит.
+
+name: Orbita
+
+options:
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_BITCODE: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+    "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+    # DEVELOPMENT_TEAM не задаём здесь: для неподписанной сборки он не нужен,
+    # а для подписи CI передаёт его аргументом (см. .github/workflows/ios.yml).
+    OTHER_LDFLAGS:
+      - "$(inherited)"
+      - "-lresolv"
+
+targets:
+  Orbita:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      - path: Shared
+    dependencies:
+      - target: PacketTunnel
+        embed: true
+      - framework: Frameworks/Libbox.xcframework
+        embed: false
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Orbita
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: App/Orbita.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.egor.orbita
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.egor.orbita
+        PRODUCT_NAME: Orbita
+
+  PacketTunnel:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PacketTunnel
+      - path: Shared
+    dependencies:
+      - framework: Frameworks/Libbox.xcframework
+        embed: false
+    info:
+      path: PacketTunnel/Info.plist
+      properties:
+        CFBundleDisplayName: Orbita Tunnel
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).PacketTunnelProvider"
+    entitlements:
+      path: PacketTunnel/PacketTunnel.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.egor.orbita
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.egor.orbita.tunnel
+        PRODUCT_NAME: PacketTunnel
+        # libbox — обычная библиотека, а не extension-safe код; в P0 это допустимо,
+        # к релизу проверим по логу линковки.
+        APPLICATION_EXTENSION_API_ONLY: NO

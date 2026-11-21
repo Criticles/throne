@@ -1,0 +1,29 @@
+# Xcode / build
+ios/build/
+ios/Orbita.xcodeproj/
+ios/Frameworks/
+ios/App/Info.plist
+ios/PacketTunnel/Info.plist
+ios/App/Orbita.entitlements
+ios/PacketTunnel/PacketTunnel.entitlements
+DerivedData/
+*.xcarchive
+*.ipa
+
+# Ядро и зависимости
+.core/
+Pods/
+.swiftpm/
+
+# Секреты и ключи — никогда
+*.p12
+*.p8
+*.mobileprovision
+*.csr
+*.key
+*.pem
+.env
+
+# macOS / Windows
+.DS_Store
+Thumbs.db

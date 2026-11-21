@@ -1,0 +1,12 @@
+# Закреплённое ядро
+# libbox берётся из форка, на котором работает Throne.
+SINGBOX_REPO=https://github.com/throneproj/sing-box
+SINGBOX_REF=062ccfea4d089cf31a687fb96b1b65ef8637288d
+SINGBOX_BRANCH=stable
+# Пакет для gomobile bind:
+SINGBOX_PACKAGE=./experimental/libbox
+# Теги сборки для iOS. with_low_memory — низкий лимит памяти Network Extension,
+# with_gvisor нужен sing-tun, with_quic — Hysteria2/TUIC, with_wireguard — WG,
+# with_utls — uTLS-фингерпринты, badlinkname — обязательные Go-патчи sing-box.
+IOS_TAGS=with_gvisor,with_dhcp,with_wireguard,with_utls,with_clash_api,with_quic,with_openvpn,with_low_memory,badlinkname,tfogo_checklinkname0
+IOS_MIN_VERSION=15.0
