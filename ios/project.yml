@@ -24,6 +24,10 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
     "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+    # Версию и номер сборки подставляет CI: TestFlight требует уникальный CFBundleVersion
+    # у каждой загрузки, поэтому он собирается из номера прогона.
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
     # DEVELOPMENT_TEAM не задаём здесь: для неподписанной сборки он не нужен,
     # а для подписи CI передаёт его аргументом (см. .github/workflows/ios.yml).
     OTHER_LDFLAGS:
@@ -46,8 +50,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Throne
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -75,8 +79,8 @@ targets:
       path: PacketTunnel/Info.plist
       properties:
         CFBundleDisplayName: Throne Tunnel
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).PacketTunnelProvider"
