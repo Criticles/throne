@@ -40,7 +40,7 @@ jobs:
       - name: Ядро из core/singbox-ref.txt
         run: |
           set -euo pipefail
-          grep -v '^[[:space:]]*#' core/singbox-ref.txt | tr -d '' >> "$GITHUB_ENV"
+          grep -v '^[[:space:]]*#' core/singbox-ref.txt | tr -d '\r' >> "$GITHUB_ENV"
           grep '^SINGBOX_REF=' core/singbox-ref.txt
 
       - name: Toolchain
