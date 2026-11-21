@@ -91,6 +91,5 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.criticles.throne.tunnel
         PRODUCT_NAME: PacketTunnel
-        # libbox — обычная библиотека, а не extension-safe код; в P0 это допустимо,
-        # к релизу проверим по логу линковки.
-        APPLICATION_EXTENSION_API_ONLY: NO
+        # Xcode требует YES для любого таргета-расширения и всех библиотек, которые он линкует.
+        APPLICATION_EXTENSION_API_ONLY: YES
