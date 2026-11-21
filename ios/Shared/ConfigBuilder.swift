@@ -41,6 +41,11 @@ enum ConfigBuilder {
             guard let link = WireGuardLink.parse(profile.payload) else {
                 throw BuildError.badPayload("wg://")
             }
+            if link.amnezia {
+                // Это не «WireGuard с настройками», а другой протокол: сервер ждёт AWG-обфускацию,
+                // и обычный WG-хендшейк ему не подойдёт. Честнее сказать сразу.
+                throw BuildError.unsupported(link.note ?? "AmneziaWG требует отдельного движка")
+            }
             config = endpointConfig(endpoint: wireguardEndpoint(
                 tag: "wg-out",
                 privateKey: link.privateKey,
@@ -53,6 +58,8 @@ enum ConfigBuilder {
             ))
         case .wireturn:
             config = try wireturnConfig(profile.payload)
+        case .turnable:
+            throw BuildError.unsupported("движок Turnable в этой сборке не встроен — профиль импортирован, но запустить его нечем")
         case .custom:
             config = try customConfig(profile.payload)
         }

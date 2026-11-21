@@ -10,6 +10,10 @@ enum ProfileParser {
             if let profiles = parseWireturn(trimmed), !profiles.isEmpty {
                 return profiles
             }
+            // `?format=turnable`: «сырые» конфиги Turnable без WireGuard-обвязки.
+            if let profiles = parseTurnable(trimmed), !profiles.isEmpty {
+                return profiles
+            }
             // Панель с «клиентским» User-Agent отдаёт готовый конфиг sing-box целиком.
             if let custom = parseCustomConfig(trimmed) {
                 return [custom]
@@ -91,6 +95,27 @@ enum ProfileParser {
     }
 
     // MARK: - wireturn (Throne)
+    /// Формат `?format=turnable`: массив конфигов клиента Turnable.
+    /// Движка в сборке нет, поэтому профили добавляются только для наглядности.
+    static func parseTurnable(_ text: String) -> [Profile]? {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let array = object as? [[String: Any]]
+        else { return nil }
+
+        var profiles: [Profile] = []
+        for item in array {
+            guard item["platform_id"] != nil, item["call_id"] != nil else { continue }
+            guard let encoded = try? JSONSerialization.data(withJSONObject: item),
+                  let json = String(data: encoded, encoding: .utf8)
+            else { continue }
+            let name = (item["name"] as? String) ?? "turnable"
+            profiles.append(Profile(name: name, kind: .turnable, payload: json,
+                                    note: "движок Turnable в этой сборке не встроен"))
+        }
+        return profiles
+    }
+
     /// Формат: массив объектов `{kernelConfig:{type:"turnable",config:{…}}, wgConfig:{…}}`.
     /// Из него собирается цепочка «WireGuard → локальный порт Turnable → WARP».
     static func parseWireturn(_ text: String) -> [Profile]? {
@@ -124,6 +149,81 @@ enum ProfileParser {
     }
 }
 
+// MARK: - Разбор authority
+
+/// Ручной разбор ссылки: `URLComponents` не принимает порт вида `56096-56121`,
+/// а панели отдают именно диапазоны, поэтому authority режем сами.
+struct LinkParts {
+    let user: String
+    let password: String
+    let host: String
+    let portText: String
+    let query: [String: String]
+    let fragment: String?
+
+    var firstPort: Int? {
+        Int(portText.split(separator: "-").first.map(String.init) ?? "")
+    }
+
+    var portRange: String? {
+        portText.contains("-") ? portText : nil
+    }
+
+    static func parse(_ raw: String) -> LinkParts? {
+        guard let schemeRange = raw.range(of: "://") else { return nil }
+        var rest = String(raw[schemeRange.upperBound...])
+
+        var fragment: String?
+        if let hash = rest.firstIndex(of: "#") {
+            fragment = String(rest[rest.index(after: hash)...]).removingPercentEncoding
+            rest = String(rest[..<hash])
+        }
+
+        var query: [String: String] = [:]
+        if let question = rest.firstIndex(of: "?") {
+            let queryText = String(rest[rest.index(after: question)...])
+            rest = String(rest[..<question])
+            for pair in queryText.split(separator: "&") {
+                let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard parts.count == 2 else { continue }
+                let key = String(parts[0]).lowercased()
+                let value = String(parts[1]).removingPercentEncoding ?? String(parts[1])
+                query[key] = value
+            }
+        }
+
+        if let slash = rest.firstIndex(of: "/") {
+            rest = String(rest[..<slash])
+        }
+
+        var user = ""
+        var password = ""
+        if let at = rest.lastIndex(of: "@") {
+            let auth = String(rest[..<at])
+            rest = String(rest[rest.index(after: at)...])
+            if let colon = auth.firstIndex(of: ":") {
+                user = String(auth[..<colon]).removingPercentEncoding ?? String(auth[..<colon])
+                password = String(auth[auth.index(after: colon)...]).removingPercentEncoding
+                    ?? String(auth[auth.index(after: colon)...])
+            } else {
+                user = auth
+            }
+        }
+
+        var host = rest
+        var portText = ""
+        if let colon = rest.lastIndex(of: ":") {
+            host = String(rest[..<colon])
+            portText = String(rest[rest.index(after: colon)...])
+        }
+        host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+
+        guard !host.isEmpty else { return nil }
+        return LinkParts(user: user, password: password, host: host,
+                         portText: portText, query: query, fragment: fragment)
+    }
+}
+
 // MARK: - Hysteria2
 
 struct Hysteria2Link {
@@ -140,36 +240,30 @@ struct Hysteria2Link {
     let insecure: Bool
 
     static func parse(_ raw: String) -> Hysteria2Link? {
-        guard let components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let host = components.host, let port = components.port
+        // Порт в ссылке бывает диапазоном (`56096-56121`), поэтому разбираем authority сами.
+        guard let parts = LinkParts.parse(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let port = parts.firstPort
         else { return nil }
-
-        var query: [String: String] = [:]
-        for item in components.queryItems ?? [] {
-            if let value = item.value { query[item.name.lowercased()] = value }
-        }
 
         // В ссылке user:pass, а sing-box ждёт одну строку "user:pass" (см. документацию
         // по hysteria2: userpass-аутентификация не поддерживается отдельно).
-        let user = components.user ?? ""
-        let secret = components.password ?? ""
-        let password = secret.isEmpty ? user : "\(user):\(secret)"
+        let password = parts.password.isEmpty ? parts.user : "\(parts.user):\(parts.password)"
 
-        let name = components.fragment?.removingPercentEncoding ?? "\(host):\(port)"
-        let portRange = query["mport"] ?? query["ports"]
+        let name = parts.fragment ?? "\(parts.host):\(port)"
+        let portRange = parts.portRange ?? parts.query["mport"] ?? parts.query["ports"]
 
         return Hysteria2Link(
             name: name,
-            host: host,
+            host: parts.host,
             port: port,
             portRange: portRange,
             password: password,
-            serverName: query["sni"],
-            alpn: (query["alpn"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty },
-            obfsType: query["obfs"],
-            obfsPassword: query["obfs-password"],
-            hopInterval: query["hop_interval"],
-            insecure: (query["insecure"] ?? "") == "1" || (query["allowinsecure"] ?? "") == "1"
+            serverName: parts.query["sni"],
+            alpn: (parts.query["alpn"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty },
+            obfsType: parts.query["obfs"],
+            obfsPassword: parts.query["obfs-password"],
+            hopInterval: parts.query["hop_interval"],
+            insecure: (parts.query["insecure"] ?? "") == "1" || (parts.query["allowinsecure"] ?? "") == "1"
         )
     }
 }
@@ -266,7 +360,9 @@ struct WireGuardLink {
             mtu: Int(query["mtu"] ?? "") ?? 1280,
             keepAlive: Int(query["persistent_keepalive_interval"] ?? "") ?? 25,
             amnezia: amnezia,
-            note: amnezia ? "AmneziaWG (s1/s2/h1–h4/i1) требует отдельного движка; здесь будет обычный WireGuard" : nil
+            note: amnezia
+                ? "AmneziaWG 3.1: sing-box не умеет обфускацию s1/s2/h1–h4/i1 — как обычный WireGuard к этому серверу не подключиться, нужен движок amneziawg-go"
+                : nil
         )
     }
 }

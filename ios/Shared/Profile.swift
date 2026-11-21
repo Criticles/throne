@@ -6,6 +6,7 @@ enum ProfileKind: String, Codable, CaseIterable {
     case mieru
     case wireguard
     case wireturn
+    case turnable
     case custom
 
     var title: String {
@@ -13,8 +14,9 @@ enum ProfileKind: String, Codable, CaseIterable {
         case .vless: return "VLESS"
         case .hysteria2: return "Hysteria2"
         case .mieru: return "Mieru"
-        case .wireguard: return "WireGuard"
+        case .wireguard: return "AmneziaWG"
         case .wireturn: return "Turnable + WG"
+        case .turnable: return "Turnable"
         case .custom: return "sing-box JSON"
         }
     }
