@@ -91,6 +91,14 @@ struct DevView: View {
         do {
             let link = try VLESSLink.parse(linkText)
             engine.start(link: link)
+            // Сразу проверяем трафик: иначе непонятно, поднялся прокси или только инбаунд.
+            if engine.running {
+                probeResult = "проверяю…"
+                Task {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    await probe()
+                }
+            }
         } catch {
             probeResult = ""
             engine.report("разбор ссылки: \((error as NSError).localizedDescription)")

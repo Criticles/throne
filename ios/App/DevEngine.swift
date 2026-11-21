@@ -74,7 +74,14 @@ final class DevEngine: ObservableObject {
 
     private func append(_ line: String) {
         let stamp = ISO8601DateFormatter().string(from: Date())
-        log += "[\(stamp)] \(line)\n"
+        log += "[\(stamp)] \(Self.stripANSI(line))\n"
+    }
+
+    /// sing-box пишет логи с ANSI-последовательностями — в Text их видно как `[36mINFO[0m`.
+    private static func stripANSI(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{001B}\\[[0-9;]*m",
+                                  with: "",
+                                  options: .regularExpression)
     }
 
     private static func describe(_ error: Error) -> String {
