@@ -23,7 +23,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         TunnelLog.write("stopTunnel: reason \(reason.rawValue)")
-        try? commandServer?.close()
+        commandServer?.close()
         commandServer = nil
         platform = nil
         completionHandler()
