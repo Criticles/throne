@@ -1,0 +1,15 @@
+# Единые переводы строк: сборка идёт на macOS, а проект пишется на Windows.
+# Без этого CRLF в scripts/*.sh ломает bash на раннере.
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.swift text eol=lf
+*.md    text eol=lf
+*.py    text eol=lf
+
+*.png   binary
+*.ipa   binary
+*.p12   binary
+*.p8    binary
