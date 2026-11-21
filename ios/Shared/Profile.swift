@@ -14,7 +14,7 @@ enum ProfileKind: String, Codable, CaseIterable {
         case .vless: return "VLESS"
         case .hysteria2: return "Hysteria2"
         case .mieru: return "Mieru"
-        case .wireguard: return "AmneziaWG"
+        case .wireguard: return "WireGuard / AWG"
         case .wireturn: return "Turnable + WG"
         case .turnable: return "Turnable"
         case .custom: return "sing-box JSON"

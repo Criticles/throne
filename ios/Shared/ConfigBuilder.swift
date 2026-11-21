@@ -38,26 +38,21 @@ enum ConfigBuilder {
             }
             config = try directConfig(outbound: mieruOutbound(link))
         case .wireguard:
-            if profile.payload.lowercased().hasPrefix("amneziawg://") {
-                throw BuildError.unsupported("AmneziaWG: нужен движок amneziawg-go — в ядре sing-box нет обфускации (S1/S2/H1–H4/I1)")
-            }
-            guard let link = WireGuardLink.parse(profile.payload) else {
-                throw BuildError.badPayload("wg://")
-            }
-            if link.amnezia {
-                // Это не «WireGuard с настройками», а другой протокол: сервер ждёт AWG-обфускацию,
-                // и обычный WG-хендшейк ему не подойдёт. Честнее сказать сразу.
-                throw BuildError.unsupported(link.note ?? "AmneziaWG требует отдельного движка")
+            // Форк Трона умеет AmneziaWG нативно: endpoint wireguard + вложенный amnezia_wg.
+            guard let wg = WireGuardConfig.parse(profile.payload) else {
+                throw BuildError.badPayload(profile.payload.lowercased().hasPrefix("amneziawg://")
+                    ? "amneziawg:// (base64 wg-quick)" : "wg://")
             }
             config = endpointConfig(endpoint: wireguardEndpoint(
                 tag: "wg-out",
-                privateKey: link.privateKey,
-                publicKey: link.publicKey,
-                addresses: link.addresses,
-                mtu: link.mtu,
-                keepAlive: link.keepAlive,
-                peerHost: link.host,
-                peerPort: link.port
+                privateKey: wg.privateKey,
+                publicKey: wg.publicKey,
+                addresses: wg.addresses,
+                mtu: wg.mtu,
+                keepAlive: wg.keepAlive,
+                peerHost: wg.host,
+                peerPort: wg.port,
+                amnezia: wg.amnezia
             ))
         case .wireturn:
             config = try wireturnConfig(profile.payload)
@@ -198,9 +193,10 @@ enum ConfigBuilder {
         mtu: Int,
         keepAlive: Int,
         peerHost: String,
-        peerPort: Int
+        peerPort: Int,
+        amnezia: [String: Any]? = nil
     ) -> [String: Any] {
-        [
+        var endpoint: [String: Any] = [
             "type": "wireguard",
             "tag": tag,
             "system": false,
@@ -217,6 +213,10 @@ enum ConfigBuilder {
                 ]
             ],
         ]
+        if let amnezia, !amnezia.isEmpty {
+            endpoint["amnezia_wg"] = amnezia
+        }
+        return endpoint
     }
 
     /// wireturn: WG-эндпоинт смотрит в локальный порт Turnable (в подписке это `127.0.0.1:9000`).
@@ -255,8 +255,19 @@ enum ConfigBuilder {
     private static func sanitize(_ value: Any) -> Any {
         if let dict = value as? [String: Any] {
             var result: [String: Any] = [:]
-            for (key, item) in dict where !key.hasPrefix("amnezia_wg_") {
-                result[key] = sanitize(item)
+            for (key, item) in dict {
+                if key == "amnezia_wg", let amnezia = item as? [String: Any] {
+                    // Ядро знает не все поля AWG 3.x: random_trailers и disable_cookies ему неизвестны,
+                    // а на неизвестном поле парсер отказывается читать весь конфиг.
+                    var filtered: [String: Any] = [:]
+                    for (field, fieldValue) in amnezia
+                    where WireGuardConfig.knownAmneziaFields.contains(field) {
+                        filtered[field] = fieldValue
+                    }
+                    result[key] = filtered
+                } else {
+                    result[key] = sanitize(item)
+                }
             }
             return result
         }
