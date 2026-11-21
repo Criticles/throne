@@ -20,7 +20,17 @@ final class DevEngine: ObservableObject {
         do {
             let config = try ConfigBuilder.build(profile: profile)
             try boot()
-            try server?.startOrReloadService(config, options: LibboxOverrideOptions())
+            guard let server else {
+                throw NSError(domain: "orbita.engine", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "command server не создан"])
+            }
+            // checkConfig даёт человеческую ошибку парсинга до запуска сервиса.
+            do {
+                _ = try server.checkConfig(config)
+            } catch {
+                append("конфиг не прошёл проверку: \(Self.describe(error))")
+            }
+            try server.startOrReloadService(config, options: LibboxOverrideOptions())
             running = true
             lastError = nil
             activeName = profile.name
@@ -38,11 +48,24 @@ final class DevEngine: ObservableObject {
     }
 
     func stop() {
-        server?.close()
-        server = nil
-        platform = nil
+        guard let server else {
+            running = false
+            activeName = nil
+            return
+        }
+        // close() закрывает только command-сервер; сам sing-box продолжает работать и держать
+        // порт 7891 — поэтому сначала гасим сервис, иначе следующая смена сервера падает.
+        do {
+            _ = try server.closeService()
+        } catch {
+            append("стоп сервиса: \(Self.describe(error))")
+        }
+        server.close()
+        self.server = nil
+        self.platform = nil
         running = false
         activeName = nil
+        append("остановлено")
     }
 
     func clearLog() {

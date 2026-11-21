@@ -39,6 +39,9 @@ struct DevView: View {
                         .foregroundColor(.red)
                 }
                 .font(.callout)
+                // Без этого в List несколько кнопок в строке конфликтуют: нажатие уходит
+                // в первую («Добавить»), а «Очистить» не срабатывает.
+                .buttonStyle(.borderless)
 
                 if !store.status.isEmpty {
                     Text(store.status)
@@ -65,7 +68,7 @@ struct DevView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(profile.name).font(.callout)
                                 HStack(spacing: 6) {
-                                    Text(profile.kind.title)
+                                    Text(badge(for: profile))
                                         .font(.caption2)
                                         .padding(.horizontal, 5)
                                         .padding(.vertical, 1)
@@ -163,8 +166,11 @@ struct DevView: View {
     }
 
     private func probe() async {
-        guard let url = URL(string: probeURL) else {
-            probeResult = "некорректный URL"
+        let raw = probeURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: raw), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", url.host != nil
+        else {
+            probeResult = "некорректный URL: «\(raw)»"
             return
         }
         probing = true
@@ -189,7 +195,23 @@ struct DevView: View {
             probeResult = "HTTP \(code) за \(millis) мс\n\(body)"
         } catch {
             let ns = error as NSError
-            probeResult = "ошибка: \(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
+            var detail = "\(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
+            if let failing = ns.userInfo[NSURLErrorFailingURLStringErrorKey] as? String {
+                detail += " · \(failing)"
+            }
+            if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+                detail += " ← \(underlying.localizedDescription) [\(underlying.domain) \(underlying.code)]"
+            }
+            probeResult = "ошибка: \(detail)"
         }
+    }
+
+    /// «sing-box JSON» ничего не говорит о протоколе — показываем протокол, а формат уточняем.
+    private func badge(for profile: Profile) -> String {
+        guard profile.kind == .custom else { return profile.kind.title }
+        if let separator = profile.name.range(of: " · ") {
+            return String(profile.name[..<separator.lowerBound]) + " · JSON"
+        }
+        return "JSON панели"
     }
 }

@@ -144,12 +144,23 @@ final class ProfileStore: ObservableObject {
         return "\(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
     }
 
+    /// `?format=turnable` и `?format=wireturn` отдают одни и те же серверы в двух обёртках —
+    /// поэтому Turnable-профили сравниваем по имени, иначе список удваивается.
+    private func dedupeKey(_ profile: Profile) -> String {
+        switch profile.kind {
+        case .turnable, .wireturn:
+            return "turnable|\(profile.name)"
+        default:
+            return "\(profile.kind.rawValue)|\(profile.name)|\(profile.payload)"
+        }
+    }
+
     @discardableResult
     private func merge(_ incoming: [Profile]) -> Int {
-        var seen = Set(profiles.map { "\($0.kind.rawValue)|\($0.name)|\($0.payload)" })
+        var seen = Set(profiles.map { dedupeKey($0) })
         var added = 0
         for profile in incoming {
-            let key = "\(profile.kind.rawValue)|\(profile.name)|\(profile.payload)"
+            let key = dedupeKey(profile)
             guard !seen.contains(key) else { continue }
             seen.insert(key)
             profiles.append(profile)
