@@ -40,11 +40,8 @@ jobs:
       - name: Ядро из core/singbox-ref.txt
         run: |
           set -euo pipefail
-          while IFS='=' read -r key value; do
-            case "$key" in ''|'#'*) continue ;; esac
-            echo "$key=$value" >> "$GITHUB_ENV"
-          done < core/singbox-ref.txt
-          echo "собираем ядро: $SINGBOX_REF"
+          grep -v '^[[:space:]]*#' core/singbox-ref.txt | tr -d '' >> "$GITHUB_ENV"
+          grep '^SINGBOX_REF=' core/singbox-ref.txt
 
       - name: Toolchain
         uses: actions/setup-go@v5
