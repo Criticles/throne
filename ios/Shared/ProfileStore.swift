@@ -146,12 +146,82 @@ final class ProfileStore: ObservableObject {
 
     /// `?format=turnable` и `?format=wireturn` отдают одни и те же серверы в двух обёртках —
     /// поэтому Turnable-профили сравниваем по имени, иначе список удваивается.
+    ///
+    /// Остальные — по «личности сервера» (протокол + хост + порт): панель присылает один и тот же
+    /// сервер дважды, ссылкой в base64-списке и куском JSON-конфига, и без этого в списке
+    /// оказывались два одинаковых VLESS и две одинаковые Hysteria2.
     private func dedupeKey(_ profile: Profile) -> String {
         switch profile.kind {
         case .turnable, .wireturn:
             return "turnable|\(profile.name)"
         default:
+            if let identity = Self.serverIdentity(profile.payload) {
+                return identity
+            }
             return "\(profile.kind.rawValue)|\(profile.name)|\(profile.payload)"
+        }
+    }
+
+    /// Один сервер из payload профиля: либо share-ссылка, либо мини-конфиг с единственным выходом.
+    private static func serverIdentity(_ payload: String) -> String? {
+        fromMiniConfig(payload) ?? fromLink(payload)
+    }
+
+    private static func fromMiniConfig(_ payload: String) -> String? {
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let config = object as? [String: Any]
+        else { return nil }
+
+        // Профиль «конфиг панели целиком» содержит urltest/selector и несколько выходов —
+        // это не один сервер, у него своей личности быть не должно.
+        let outbounds = (config["outbounds"] as? [[String: Any]] ?? []).filter { $0["server"] != nil }
+        let endpoints = config["endpoints"] as? [[String: Any]] ?? []
+        guard outbounds.count + endpoints.count == 1 else { return nil }
+
+        if let outbound = outbounds.first,
+           let type = outbound["type"] as? String,
+           let server = outbound["server"] as? String,
+           let port = (outbound["server_port"] ?? outbound["port"]) as? Int {
+            return "\(family(type))|\(server)|\(port)"
+        }
+        if let endpoint = endpoints.first,
+           let type = endpoint["type"] as? String,
+           let peers = endpoint["peers"] as? [[String: Any]],
+           let peer = peers.first,
+           let server = peer["address"] as? String,
+           let port = peer["port"] as? Int {
+            return "\(family(type))|\(server)|\(port)"
+        }
+        return nil
+    }
+
+    private static func fromLink(_ payload: String) -> String? {
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let schemeEnd = trimmed.range(of: "://") else { return nil }
+        let scheme = String(trimmed[..<schemeEnd.lowerBound]).lowercased()
+        var rest = String(trimmed[schemeEnd.upperBound...])
+        if let hash = rest.firstIndex(of: "#") { rest = String(rest[..<hash]) }
+        if let query = rest.firstIndex(of: "?") { rest = String(rest[..<query]) }
+        guard let at = rest.lastIndex(of: "@") else { return nil }
+
+        let authority = String(rest[rest.index(after: at)...])
+        let parts = authority.split(separator: ":")
+        guard parts.count >= 2 else { return nil }
+        let port = parts[1].split(separator: "-").first.map(String.init) ?? ""
+        return "\(family(scheme))|\(String(parts[0]))|\(port)"
+    }
+
+    /// Имена протоколов в ссылке и в JSON не совпадают (`mierus` против `mieru`, `wg` против `wireguard`).
+    private static func family(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "vless": return "vless"
+        case "hysteria2", "hy2": return "hysteria2"
+        case "mieru", "mierus": return "mieru"
+        case "wg", "wireguard": return "wireguard"
+        case "trojan": return "trojan"
+        case "shadowsocks", "ss": return "shadowsocks"
+        default: return raw.lowercased()
         }
     }
 

@@ -25,8 +25,6 @@ permissions:
 
 env:
   SINGBOX_REPO: https://github.com/throneproj/sing-box
-  SINGBOX_REF: 062ccfea4d089cf31a687fb96b1b65ef8637288d
-  IOS_TAGS: with_gvisor,with_dhcp,with_wireguard,with_utls,with_clash_api,with_quic,with_openvpn,with_low_memory,badlinkname,tfogo_checklinkname0
   IOS_MIN: "15.0"
 
 jobs:
@@ -37,11 +35,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Единственный источник правды о ядре — core/singbox-ref.txt. Раньше значения дублировались
+      # в env этого файла, и правка одного места ничего не меняла: CI собирал старое ядро.
+      - name: Ядро из core/singbox-ref.txt
+        run: |
+          set -euo pipefail
+          while IFS='=' read -r key value; do
+            case "$key" in ''|'#'*) continue ;; esac
+            echo "$key=$value" >> "$GITHUB_ENV"
+          done < core/singbox-ref.txt
+          echo "собираем ядро: $SINGBOX_REF"
+
       - name: Toolchain
         uses: actions/setup-go@v5
         with:
-          # Форк sing-box собирается стабильным Go — версию не пиним, пока не упрёмся в несовместимость.
-          go-version: stable
+          # badlinkname в тегах sing-box ссылается на символы crypto/tls, которые есть в Go 1.26,
+          # но удалены в 1.27 — поэтому версия закреплена, а не «stable».
+          go-version: '1.26.x'
           cache: false
 
       - name: Xcode + XcodeGen
