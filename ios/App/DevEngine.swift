@@ -24,12 +24,8 @@ final class DevEngine: ObservableObject {
                 throw NSError(domain: "orbita.engine", code: -1,
                               userInfo: [NSLocalizedDescriptionKey: "command server не создан"])
             }
-            // checkConfig даёт человеческую ошибку парсинга до запуска сервиса.
-            do {
-                _ = try server.checkConfig(config)
-            } catch {
-                append("конфиг не прошёл проверку: \(Self.describe(error))")
-            }
+            // checkConfig из API ядра убран: конфиг проверяется при старте сервиса,
+            // и ошибка парсинга всё равно придёт от startOrReloadService.
             try server.startOrReloadService(config, options: LibboxOverrideOptions())
             running = true
             lastError = nil
