@@ -1,12 +1,18 @@
 # Закреплённое ядро
 # libbox берётся из форка, на котором работает Throne.
 SINGBOX_REPO=https://github.com/throneproj/sing-box
-SINGBOX_REF=062ccfea4d089cf31a687fb96b1b65ef8637288d
-SINGBOX_BRANCH=stable
+# Тот же коммит, с которым собирается Throne на ПК (core/go.mod: v1.11.16-0.20261115143940-183cf759ed90).
+# Здесь появились поля AmneziaWG 3.1 (random_trailers, disable_cookies); на старом пине
+# 062ccfe (август) handshake к нашему серверу падал с «Received message with unknown type».
+SINGBOX_REF=183cf759ed909d9200d2baccab233f3221d034b1
+SINGBOX_BRANCH=wip/1.15.0-alpha.13-resync
 # Пакет для gomobile bind:
 SINGBOX_PACKAGE=./experimental/libbox
 # Теги сборки для iOS. with_low_memory — низкий лимит памяти Network Extension,
 # with_gvisor нужен sing-tun, with_quic — Hysteria2/TUIC, with_wireguard — WG,
-# with_utls — uTLS-фингерпринты, badlinkname — обязательные Go-патчи sing-box.
-IOS_TAGS=with_gvisor,with_dhcp,with_wireguard,with_utls,with_clash_api,with_quic,with_openvpn,with_low_memory,badlinkname,tfogo_checklinkname0
+# with_utls — uTLS-фингерпринты.
+# badlinkname/tfogo_checklinkname0 НЕ включаем: на Go 1.27 их linkname указывает на удалённый
+# символ crypto/tls.(*Conn).handlePostHandshakeMessage и линковка падает. Без них собирается
+# заглушка common/badtls; VLESS+Reality, Hysteria2 и Mieru через неё проверены рабочими.
+IOS_TAGS=with_gvisor,with_dhcp,with_wireguard,with_utls,with_clash_api,with_quic,with_openvpn,with_low_memory
 IOS_MIN_VERSION=15.0

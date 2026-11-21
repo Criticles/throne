@@ -29,6 +29,8 @@ struct WireGuardConfig {
         "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5",
         "header_protection_key", "content_padding_addition", "rekey_after_time",
         "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts",
+        // AmneziaWG 3.1 (есть в ядре начиная с коммита 183cf759 — то, что использует Throne PC).
+        "random_trailers", "disable_cookies",
     ]
 
     static func parse(_ raw: String) -> WireGuardConfig? {
@@ -89,15 +91,17 @@ struct WireGuardConfig {
             .filter { !$0.isEmpty }
 
         var amnezia: [String: Any] = [:]
-        var dropped: [String] = []
+        let dropped: [String] = []
         for (key, value) in values {
             switch key {
             case "jc", "jmin", "jmax", "s1", "s2", "s3", "s4":
                 if let number = Int(value), number != 0 { amnezia[key] = number }
             case "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5":
                 if !value.isEmpty { amnezia[key] = value }
-            case "randomtrailers", "disablecookies":
-                dropped.append(key == "randomtrailers" ? "random_trailers" : "disable_cookies")
+            case "randomtrailers":
+                if value != "0" && !value.isEmpty { amnezia["random_trailers"] = true }
+            case "disablecookies":
+                if value != "0" && !value.isEmpty { amnezia["disable_cookies"] = true }
             default:
                 break
             }
