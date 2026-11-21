@@ -8,21 +8,26 @@ final class DevEngine: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var log: String = ""
     @Published private(set) var lastError: String?
+    @Published private(set) var activeName: String?
 
     private var server: LibboxCommandServer?
     private var platform: DevPlatform?
 
-    var socksAddress: String { "127.0.0.1:\(DevConfig.listenPort)" }
+    var socksAddress: String { "127.0.0.1:\(ConfigBuilder.listenPort)" }
 
-    func start(link: VLESSLink) {
+    func start(profile: Profile) {
         stop()
         do {
-            let config = try DevConfig.build(link: link)
+            let config = try ConfigBuilder.build(profile: profile)
             try boot()
             try server?.startOrReloadService(config, options: LibboxOverrideOptions())
             running = true
             lastError = nil
-            append("старт: \(link.name) → \(link.host):\(link.port), локально \(socksAddress)")
+            activeName = profile.name
+            append("старт: \(profile.name) [\(profile.kind.title)] → локально \(socksAddress)")
+            if let note = profile.note {
+                append("внимание: \(note)")
+            }
         } catch {
             let described = Self.describe(error)
             lastError = described
@@ -37,6 +42,7 @@ final class DevEngine: ObservableObject {
         server = nil
         platform = nil
         running = false
+        activeName = nil
     }
 
     func clearLog() {
