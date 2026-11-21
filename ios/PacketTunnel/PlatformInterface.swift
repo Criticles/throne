@@ -182,7 +182,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
         lastPathDescription = ""
     }
 
-    func getInterfaces() throws -> (any LibboxNetworkInterfaceIteratorProtocol)? {
+    func getInterfaces() throws -> LibboxNetworkInterfaceIteratorProtocol {
         throw NSError(domain: "com.criticles.throne.tunnel", code: 13,
                       userInfo: [NSLocalizedDescriptionKey: "getInterfaces не реализован в P0"])
     }
@@ -212,7 +212,7 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Libbox
         TunnelLog.write("commandServer: serviceReload")
     }
 
-    func getSystemProxyStatus() throws -> LibboxSystemProxyStatus? {
+    func getSystemProxyStatus() throws -> LibboxSystemProxyStatus {
         throw NSError(domain: "com.criticles.throne.tunnel", code: 14,
                       userInfo: [NSLocalizedDescriptionKey: "системный прокси на iOS недоступен"])
     }
