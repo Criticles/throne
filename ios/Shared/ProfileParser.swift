@@ -67,6 +67,19 @@ enum ProfileParser {
             guard let parsed = MieruLink.parse(link) else { return nil }
             return Profile(name: parsed.name, kind: .mieru, payload: link, note: nil)
         }
+        if lower.hasPrefix("amneziawg://") {
+            let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+            var name = "AmneziaWG"
+            if let hash = trimmed.firstIndex(of: "#") {
+                name = String(trimmed[trimmed.index(after: hash)...]).removingPercentEncoding ?? name
+            }
+            return Profile(
+                name: name,
+                kind: .wireguard,
+                payload: trimmed,
+                note: "AmneziaWG 3.x (S1/S2/H1–H4/I1, RandomTrailers): нужен движок amneziawg-go — sing-box такую обфускацию не умеет"
+            )
+        }
         if lower.hasPrefix("wg://") {
             guard let parsed = WireGuardLink.parse(link) else { return nil }
             return Profile(name: parsed.name, kind: .wireguard, payload: link, note: parsed.note)
@@ -127,11 +140,14 @@ enum ProfileParser {
                     "route": ["final": tag],
                 ]
                 guard let json = encode(mini) else { continue }
+                let hasAmnezia = endpoint.keys.contains { $0.hasPrefix("amnezia_wg_") }
                 profiles.append(Profile(
                     name: "\(protocolTitle(type)) · \(tag)",
                     kind: .custom,
                     payload: json,
-                    note: nil
+                    note: hasAmnezia
+                        ? "AmneziaWG: панель прислала amnezia_wg_* — ядро их не знает, параметры срезаются, обычный WG к этому серверу не подключится"
+                        : nil
                 ))
             }
         }

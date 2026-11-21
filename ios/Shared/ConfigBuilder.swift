@@ -38,6 +38,9 @@ enum ConfigBuilder {
             }
             config = try directConfig(outbound: mieruOutbound(link))
         case .wireguard:
+            if profile.payload.lowercased().hasPrefix("amneziawg://") {
+                throw BuildError.unsupported("AmneziaWG: нужен движок amneziawg-go — в ядре sing-box нет обфускации (S1/S2/H1–H4/I1)")
+            }
             guard let link = WireGuardLink.parse(profile.payload) else {
                 throw BuildError.badPayload("wg://")
             }
@@ -247,13 +250,34 @@ enum ConfigBuilder {
         return config
     }
 
+    /// Убирает ключи, которых нет в ядре: панель дописывает `amnezia_wg_*` в wireguard-endpoint,
+    /// а sing-box на неизвестном поле отказывается разбирать конфиг целиком.
+    private static func sanitize(_ value: Any) -> Any {
+        if let dict = value as? [String: Any] {
+            var result: [String: Any] = [:]
+            for (key, item) in dict where !key.hasPrefix("amnezia_wg_") {
+                result[key] = sanitize(item)
+            }
+            return result
+        }
+        if let array = value as? [Any] {
+            return array.map { sanitize($0) }
+        }
+        return value
+    }
+
     /// Готовый конфиг sing-box из подписки: подменяем только `inbounds` (TUN в приложении недоступен)
     /// и гарантируем `route.final`, иначе sing-box не выберет исходящее.
     private static func customConfig(_ payload: String) throws -> [String: Any] {
         guard let data = payload.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
-              var config = object as? [String: Any]
+              let raw = object as? [String: Any]
         else { throw BuildError.badPayload("sing-box JSON") }
+
+        // Панель кладёт в wireguard-endpoint поля amnezia_wg_* — ядро их не знает и
+        // отказывается парсить конфиг целиком (`unknown field "disable_cookies"`).
+        // Срезаем их, чтобы конфиг хотя бы загрузился и было видно настоящую ошибку.
+        var config = sanitize(raw) as? [String: Any] ?? raw
 
         config["inbounds"] = [inbound()]
         if config["log"] == nil {
