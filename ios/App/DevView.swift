@@ -182,15 +182,30 @@ struct DevView: View {
         probing = true
         defer { probing = false }
 
+        // mixed-инбаунд понимает и HTTP CONNECT, и SOCKS5. CFNetwork для https через SOCKS
+        // часто отдаёт kCFErrorDomainCFNetwork 310 («не удалось соединение с прокси»),
+        // поэтому сначала идём через HTTP-прокси, а SOCKS оставляем вторым заходом.
+        let viaHTTP = await request(url, proxy: [
+            "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": Int(ConfigBuilder.listenPort),
+            "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": Int(ConfigBuilder.listenPort),
+        ])
+        if viaHTTP.hasPrefix("HTTP") {
+            probeResult = viaHTTP
+            return
+        }
+
+        let viaSOCKS = await request(url, proxy: [
+            "SOCKSEnable": 1, "SOCKSProxy": "127.0.0.1", "SOCKSPort": Int(ConfigBuilder.listenPort),
+        ])
+        probeResult = viaSOCKS.hasPrefix("HTTP")
+            ? viaSOCKS
+            : "HTTP-прокси: \(viaHTTP)\nSOCKS: \(viaSOCKS)"
+    }
+
+    private func request(_ url: URL, proxy: [AnyHashable: Any]) async -> String {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
-        // На iOS константы kCFNetworkProxiesSOCKS* не экспортируются (они macOS-only),
-        // но connectionProxyDictionary их принимает строковыми ключами.
-        configuration.connectionProxyDictionary = [
-            "SOCKSEnable": 1,
-            "SOCKSProxy": "127.0.0.1",
-            "SOCKSPort": Int(ConfigBuilder.listenPort),
-        ]
+        configuration.connectionProxyDictionary = proxy
         let session = URLSession(configuration: configuration)
         let started = Date()
         do {
@@ -198,17 +213,14 @@ struct DevView: View {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             let millis = Int(Date().timeIntervalSince(started) * 1000)
             let body = String(data: data.prefix(400), encoding: .utf8) ?? "<бинарные данные>"
-            probeResult = "HTTP \(code) за \(millis) мс\n\(body)"
+            return "HTTP \(code) за \(millis) мс\n\(body)"
         } catch {
             let ns = error as NSError
             var detail = "\(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
-            if let failing = ns.userInfo[NSURLErrorFailingURLStringErrorKey] as? String {
-                detail += " · \(failing)"
-            }
             if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
                 detail += " ← \(underlying.localizedDescription) [\(underlying.domain) \(underlying.code)]"
             }
-            probeResult = "ошибка: \(detail)"
+            return "ошибка: \(detail)"
         }
     }
 
