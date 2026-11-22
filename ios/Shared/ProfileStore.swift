@@ -110,6 +110,8 @@ final class ProfileStore: ObservableObject {
             problems.append("AWG: \(Self.describe(error))")
         }
 
+        log("  -- Turnable: сначала wireturn (с WARP-обвязкой), затем turnable как дополнение")
+
         // Turnable-узлы есть ТОЛЬКО в отдельных форматах: ни в xray-списке, ни в Clash,
         // ни в sing-box их не бывает (проверено: 2 / 4 / 4 узла против 6 здесь).
         // `wireturn` — профили Throne с WARP-обвязкой, `turnable` — их «сырые» конфиги;
@@ -122,7 +124,9 @@ final class ProfileStore: ObservableObject {
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") { continue }
                 log("  формат: \(ProfileParser.describe(text))")
                 added += importParsed(ProfileParser.parse(text: text))
-                break  // второй формат отдал бы те же узлы: дедупликация по имени их схлопнет
+                // Не break: запрашиваем оба формата. wireturn идёт первым, поэтому дедуп по имени
+                // оставляет именно его (в нём есть WG-обвязка), а turnable добавит только те узлы,
+                // которых в wireturn нет — если такие вообще найдутся.
             } catch {
                 if (error as NSError).code != 422 {
                     // 422 = у этого пользователя нет узлов в этом формате, это не ошибка.
