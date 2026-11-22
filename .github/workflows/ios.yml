@@ -68,7 +68,7 @@ jobs:
           # Ключ — хеш файла с закреплённым коммитом ядра, тегами и самого workflow:
           # в ключах actions/cache нельзя запятые, а теги сборки их содержат,
           # а флаги gomobile (например -ldflags с версией) меняют результат, поэтому их хеш тоже в ключе.
-          key: libbox-ios-${{ hashFiles('core/singbox-ref.txt', '.github/workflows/ios.yml') }}
+          key: libbox-ios-${{ hashFiles('core/singbox-ref.txt', 'core/turnable_overlay/**', '.github/workflows/ios.yml') }}
 
       - name: Клонировать ядро
         if: steps.cache-core.outputs.cache-hit != 'true'
@@ -81,6 +81,14 @@ jobs:
           git -C sing-box fetch -q --depth 1 origin "$SINGBOX_REF"
           git -C sing-box checkout -q --detach FETCH_HEAD
           git -C sing-box log -1 --format='core %h %ad %s'
+          # Оверлей: биндинг Turnable живёт в том же пакете libbox — второй gomobile-фреймворк
+          # нельзя линковать в тот же процесс (два Go runtime → падение на старте).
+          cp "$GITHUB_WORKSPACE/core/turnable_overlay/zz_turnable.go" sing-box/experimental/libbox/zz_turnable.go
+          cd sing-box
+          go mod edit -require=github.com/theairblow/turnable@v0.8.5
+          go mod tidy
+          grep -n "theairblow/turnable" go.mod
+          cd ..
 
       - name: gomobile
         if: steps.cache-core.outputs.cache-hit != 'true'
@@ -109,28 +117,6 @@ jobs:
             -tags "${{ env.IOS_TAGS }}" \
             -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=dev-${CORE_VER}" \
             ./experimental/libbox
-
-      - name: Кэш Turnable
-        id: cache-turnable
-        uses: actions/cache@v4
-        with:
-          path: ios/Frameworks/TurnableCore.xcframework
-          key: turnable-ios-${{ hashFiles('core/turnablecore/go.mod', 'core/turnablecore/go.sum', '.github/workflows/ios.yml') }}
-
-      - name: Turnable → TurnableCore.xcframework
-        if: steps.cache-turnable.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          # gomobile ставится в отдельном шаге, который пропускается при кэше ядра —
-          # поэтому проверяем и при необходимости ставим здесь.
-          if ! command -v gomobile >/dev/null 2>&1; then
-            go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
-            go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
-            export PATH="$(go env GOPATH)/bin:$PATH"
-          fi
-          cd core/turnablecore
-          gomobile bind -v             -target ios,iossimulator             -o "$GITHUB_WORKSPACE/ios/Frameworks/TurnableCore.xcframework"             -libname TurnableCore             -iosversion "$IOS_MIN_VERSION"             .
-          ls "$GITHUB_WORKSPACE/ios/Frameworks/TurnableCore.xcframework"
 
       - name: Проверить фреймворк
         run: |
@@ -179,7 +165,6 @@ jobs:
           # Заголовки обоих фреймворков: по ним сверяются имена методов в Swift.
           path: |
             ios/Frameworks/Libbox.xcframework/**/Headers/*.h
-            ios/Frameworks/TurnableCore.xcframework/**/Headers/*.h
           if-no-files-found: ignore
 
       - name: Упаковать неподписанный .ipa

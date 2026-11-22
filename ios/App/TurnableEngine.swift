@@ -1,5 +1,5 @@
 import Foundation
-import TurnableCore
+import Libbox
 
 /// Обёртка над Go-биндингом Turnable (TurnableCore.xcframework).
 ///
@@ -9,7 +9,7 @@ import TurnableCore
 ///
 /// gomobile импортировал функции как `(…, NSErrorPointer) -> Bool`, поэтому ошибки
 /// забираем через указатель, а не через `throws`.
-final class TurnableEngine: NSObject, TurnablecoreLogSinkProtocol {
+final class TurnableEngine: NSObject, LibboxLogSinkProtocol {
     private let onLog: (String) -> Void
     private(set) var running = false
     private(set) var listenAddress = ""
@@ -22,34 +22,34 @@ final class TurnableEngine: NSObject, TurnablecoreLogSinkProtocol {
     /// Каталог и неинтерактивный режим (капчи без браузера). Вызывать до старта.
     static func prepare(basePath: URL) throws {
         var error: NSError?
-        let ok = TurnablecoreSetup(basePath.path, &error)
+        let ok = LibboxTurnableSetup(basePath.path, &error)
         try raise(ok, error)
-        TunnelLog.write("turnable: \(TurnablecoreVersion())")
+        TunnelLog.write("turnable: биндинг в ядре \(LibboxVersion())")
     }
 
     /// Поднимает транспорт. configJSON — `kernelConfig.config` из wireturn-профиля.
     func start(configJSON: String, listen: String) throws {
         if running { stop() }
-        TurnablecoreSetLogSink(self)
+        LibboxTurnableSetLogSink(self)
 
         var error: NSError?
-        let ok = TurnablecoreStart(configJSON, listen, &error)
+        let ok = LibboxTurnableStart(configJSON, listen, &error)
         if !ok {
-            TurnablecoreSetLogSink(nil)
+            LibboxTurnableSetLogSink(nil)
             let ns = error ?? NSError(domain: "throne.turnable", code: -1,
                                       userInfo: [NSLocalizedDescriptionKey: "неизвестная ошибка"])
             throw NSError(domain: "throne.turnable", code: ns.code,
                           userInfo: [NSLocalizedDescriptionKey: "Turnable: \(ns.localizedDescription)"])
         }
         running = true
-        listenAddress = TurnablecoreListenAddress()
+        listenAddress = LibboxTurnableListenAddress()
         onLog("turnable: запущен, слушает \(listenAddress)")
     }
 
     func stop() {
         guard running else { return }
         var error: NSError?
-        let ok = TurnablecoreStop(&error)
+        let ok = LibboxTurnableStop(&error)
         if ok {
             onLog("turnable: остановлен")
         } else {
@@ -57,7 +57,7 @@ final class TurnableEngine: NSObject, TurnablecoreLogSinkProtocol {
         }
         running = false
         listenAddress = ""
-        TurnablecoreSetLogSink(nil)
+        LibboxTurnableSetLogSink(nil)
     }
 
     private static func raise(_ ok: Bool, _ error: NSError?) throws {
@@ -68,7 +68,7 @@ final class TurnableEngine: NSObject, TurnablecoreLogSinkProtocol {
                       userInfo: [NSLocalizedDescriptionKey: "Turnable: \(ns.localizedDescription)"])
     }
 
-    // MARK: - TurnablecoreLogSinkProtocol
+    // MARK: - LibboxLogSinkProtocol
 
     func writeLog(_ message: String?) {
         guard let message, !message.isEmpty else { return }
