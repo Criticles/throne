@@ -2,7 +2,10 @@ module github.com/criticles/throne/turnablecore
 
 go 1.25.0
 
-require github.com/theairblow/turnable v0.8.5
+require (
+	github.com/sagernet/gomobile v0.1.13
+	github.com/theairblow/turnable v0.8.5
+)
 
 require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect

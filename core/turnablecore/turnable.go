@@ -16,6 +16,10 @@ import (
 	"strings"
 	"sync"
 
+	// Фиксирует пакет bind в go.mod: gomobile bind ищет его через граф модуля таргета,
+	// а не через свой собственный — без этого «no Go package in github.com/sagernet/gomobile/bind».
+	_ "github.com/sagernet/gomobile"
+
 	"github.com/theairblow/turnable/pkg/common"
 	"github.com/theairblow/turnable/pkg/config"
 	"github.com/theairblow/turnable/pkg/engine"

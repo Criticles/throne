@@ -40,6 +40,8 @@ github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINE
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4/go.mod h1:xMI15A0UPsDsEKsMN9yxemIoYk6Tm2C1GtYGdfGttqA=
+github.com/sagernet/gomobile v0.1.13 h1:foTOGKJetah9VwaJl1XJx5TswIAVg8NfYmHOhrOc95I=
+github.com/sagernet/gomobile v0.1.13/go.mod h1:A8l3FlHi2D/+mfcd4HHvk5DGFPW/ShFb9jHP5VmSiDY=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/theairblow/turnable v0.8.5 h1:HGBH6/Qzgfeld+sZwHjYRRcJkiIIwen10EeVG0+OfoM=
