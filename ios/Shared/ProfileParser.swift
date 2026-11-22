@@ -74,6 +74,56 @@ enum ProfileParser {
         return nil
     }
 
+    /// Что именно пришло от панели — для журнала импорта. Без этого «добавлено 5 профилей»
+    /// не отличить от «панель отдала другой формат».
+    static func describe(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "пустой ответ" }
+        if trimmed.hasPrefix("<") {
+            return "HTML (\(trimmed.count) символов) — страница вместо подписки"
+        }
+
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            if let config = object as? [String: Any] {
+                let outbounds = (config["outbounds"] as? [[String: Any]] ?? [])
+                    .compactMap { $0["type"] as? String }
+                let endpoints = (config["endpoints"] as? [[String: Any]] ?? [])
+                    .compactMap { $0["type"] as? String }
+                return "sing-box JSON: outbounds [\(outbounds.joined(separator: ", "))], endpoints [\(endpoints.joined(separator: ", "))]"
+            }
+            if let array = object as? [Any] {
+                return "JSON-массив: \(array.count) элементов"
+            }
+        }
+
+        var base64 = trimmed
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 { base64 += "=" }
+        if base64.count > 16,
+           let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
+           let decoded = String(data: data, encoding: .utf8),
+           decoded.contains("://") {
+            var counts: [String: Int] = [:]
+            for line in decoded.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+                guard let schemeEnd = line.range(of: "://") else { continue }
+                let scheme = String(line[..<schemeEnd.lowerBound]).trimmingCharacters(in: .whitespaces)
+                guard !scheme.isEmpty else { continue }
+                counts[scheme, default: 0] += 1
+            }
+            let summary = counts.sorted { $0.key < $1.key }
+                .map { "\($0.key) \($0.value)" }
+                .joined(separator: ", ")
+            let total = counts.values.reduce(0, +)
+            return "base64-список: \(total) ссылок (\(summary))"
+        }
+
+        return "неизвестный формат (\(trimmed.count) символов)"
+    }
+
     /// Полноценный конфиг sing-box (панель отдаёт его на «клиентский» User-Agent).
     ///
     /// Из него достаём не один профиль, а все: по одному на каждый outbound (vless/hysteria2/mieru/…)

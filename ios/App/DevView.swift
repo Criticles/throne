@@ -91,6 +91,23 @@ struct DevView: View {
                 }
             }
 
+            if !store.importLog.isEmpty {
+                Section {
+                    HStack {
+                        Text("Журнал импорта").font(.caption).foregroundColor(.secondary)
+                        Spacer()
+                        Button("Копировать") {
+                            UIPasteboard.general.string = store.importLog
+                        }
+                        .font(.caption)
+                    }
+                    Text(store.importLog)
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
             Section("Подключение") {
                 HStack(spacing: 10) {
                     Button(engine.running ? "Перезапустить" : "Старт") { startSelected() }

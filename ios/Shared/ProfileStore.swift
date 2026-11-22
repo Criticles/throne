@@ -10,6 +10,8 @@ final class ProfileStore: ObservableObject {
     @Published private(set) var selectedID: UUID?
     @Published private(set) var status: String = ""
     @Published private(set) var loading = false
+    /// Полный журнал импорта: запрос → ответ панели → что распознали → что приняли/отбросили.
+    @Published private(set) var importLog: String = ""
 
     private let profilesKey = "dev.profiles"
     private let selectedKey = "dev.selectedProfile"
@@ -63,6 +65,9 @@ final class ProfileStore: ObservableObject {
         loading = true
         defer { loading = false }
 
+        importLog = ""
+        log("импорт подписки: \(trimmed)")
+
         var added = 0
         var problems: [String] = []
 
@@ -71,6 +76,7 @@ final class ProfileStore: ObservableObject {
             if list.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
                 problems.append("вместо подписки пришёл HTML")
             } else {
+                log("  формат: \(ProfileParser.describe(list))")
                 added += importParsed(ProfileParser.parse(text: list))
             }
         } catch {
@@ -84,6 +90,7 @@ final class ProfileStore: ObservableObject {
             do {
                 let configText = try await fetch(url, userAgent: userAgent)
                 guard configText.contains("\"outbounds\"") else { continue }
+                log("  формат: \(ProfileParser.describe(configText))")
                 added += importParsed(ProfileParser.parse(text: configText))
                 break
             } catch {
@@ -96,6 +103,7 @@ final class ProfileStore: ObservableObject {
         do {
             let yptunList = try await fetch(url, userAgent: "YPtun/3.7.0")
             if !yptunList.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
+                log("  формат: \(ProfileParser.describe(yptunList))")
                 added += importParsed(ProfileParser.parse(text: yptunList))
             }
         } catch {
@@ -112,6 +120,7 @@ final class ProfileStore: ObservableObject {
             do {
                 let text = try await fetch(turnableURL, userAgent: "Throne/1.1.0")
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") { continue }
+                log("  формат: \(ProfileParser.describe(text))")
                 added += importParsed(ProfileParser.parse(text: text))
                 break  // второй формат отдал бы те же узлы: дедупликация по имени их схлопнет
             } catch {
@@ -141,18 +150,30 @@ final class ProfileStore: ObservableObject {
 
     // MARK: - Внутреннее
 
+    private func log(_ line: String) {
+        importLog += line + "
+"
+    }
+
     private func fetch(_ url: URL, userAgent: String) async throws -> String {
+        log("GET \(url.absoluteString)")
+        log("    User-Agent: \(userAgent)")
+
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)
-        let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let http = response as? HTTPURLResponse
+        let code = http?.statusCode ?? -1
+        let type = http?.value(forHTTPHeaderField: "Content-Type") ?? "?"
+        log("    → HTTP \(code) · \(type) · \(data.count) Б")
         guard code == 200 else {
             throw NSError(domain: "orbita.subscription", code: code,
                           userInfo: [NSLocalizedDescriptionKey: "HTTP \(code)"])
         }
         guard let text = String(data: data, encoding: .utf8) else {
+            log("    → ответ не в UTF-8")
             throw NSError(domain: "orbita.subscription", code: -2,
                           userInfo: [NSLocalizedDescriptionKey: "ответ не в UTF-8"])
         }
@@ -161,7 +182,12 @@ final class ProfileStore: ObservableObject {
 
     @discardableResult
     private func importParsed(_ parsed: [Profile]) -> Int {
-        guard !parsed.isEmpty else { return 0 }
+        guard !parsed.isEmpty else {
+            log("  → профилей не найдено")
+            return 0
+        }
+        let names = parsed.map { "\($0.kind.title): \($0.name)" }.joined(separator: " | ")
+        log("  → разобрано \(parsed.count): \(names)")
         return merge(parsed)
     }
 
@@ -275,9 +301,13 @@ final class ProfileStore: ObservableObject {
         var added = 0
         for profile in incoming {
             let key = dedupeKey(profile)
-            guard !seen.contains(key) else { continue }
+            guard !seen.contains(key) else {
+                log("    дубль, пропущен: \(profile.name) [\(key)]")
+                continue
+            }
             seen.insert(key)
             profiles.append(profile)
+            log("    принят: \(profile.name) [\(key)]")
             added += 1
         }
         if selectedID == nil {
