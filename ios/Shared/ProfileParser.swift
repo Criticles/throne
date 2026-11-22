@@ -81,7 +81,7 @@ enum ProfileParser {
     /// Убирает из названия сервера слово протокола: панель называет узлы
     /// «🇷🇺 RU sushuri-madonna mieru · criticles», а протокол уже показан бейджем ниже.
     static func cleanName(_ raw: String) -> String {
-        let pattern = "\s+(vless|vmess|hy2|hysteria2|hysteria|mieru|mierus|wg|wireguard|amneziawg|trojan|shadowsocks|tuic|anytls)(\s|$)"
+        let pattern = "\\s+(vless|vmess|hy2|hysteria2|hysteria|mieru|mierus|wg|wireguard|amneziawg|trojan|shadowsocks|tuic|anytls)(\\s|$)"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
             return raw
         }
