@@ -10,7 +10,7 @@ PAIRS = {"{": "}", "(": ")", "[": "]"}
 CLOSE = {v: k for k, v in PAIRS.items()}
 
 
-def strip_code(src: str) -> str:
+def strip_code(src: str, problems: list) -> str:
     out = []
     i, n = 0, len(src)
     while i < n:
@@ -35,14 +35,23 @@ def strip_code(src: str) -> str:
             i = n if j == -1 else j + 2
             continue
         if c == '"':
+            start_line = src.count("\n", 0, i) + 1
             j = i + 1
             while j < n:
                 if src[j] == "\\":
                     j += 2
                     continue
+                if src[j] == "\n":
+                    # Однострочный литерал не может занимать две строки: Xcode ругается
+                    # «unterminated string literal». Обычно это `"\n"` вписанный как реальный
+                    # перевод строки при правке файла скриптом.
+                    problems.append(("перевод строки внутри строки", start_line))
+                    break
                 if src[j] == '"':
                     break
                 j += 1
+            if j >= n:
+                problems.append(("не закрыта кавычка", start_line))
             out.append('""')
             i = j + 1
             continue
@@ -52,7 +61,9 @@ def strip_code(src: str) -> str:
 
 
 def check(path: pathlib.Path) -> bool:
-    code = strip_code(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    problems: list = []
+    code = strip_code(text, problems)
     stack = []
     for pos, ch in enumerate(code):
         if ch in PAIRS:
@@ -60,13 +71,17 @@ def check(path: pathlib.Path) -> bool:
         elif ch in CLOSE:
             if not stack or stack[-1][0] != CLOSE[ch]:
                 line = code.count("\n", 0, pos) + 1
-                print(f"FAIL {path}: лишняя '{ch}' на строке {line}")
-                return False
+                problems.append((f"лишняя '{ch}'", line))
+                break
             stack.pop()
-    if stack:
-        ch, pos = stack[-1]
-        line = code.count("\n", 0, pos) + 1
-        print(f"FAIL {path}: не закрыта '{ch}' со строки {line}")
+    else:
+        if stack:
+            ch, pos = stack[-1]
+            problems.append((f"не закрыта '{ch}'", code.count("\n", 0, pos) + 1))
+
+    if problems:
+        for message, line in problems:
+            print(f"FAIL {path}:{line}: {message}")
         return False
     return True
 
