@@ -157,6 +157,19 @@ struct DevView: View {
                 HStack {
                     Text("Лог ядра").font(.caption).foregroundColor(.secondary)
                     Spacer()
+                    Button("Копировать всё") {
+                        UIPasteboard.general.string = [
+                            "=== журнал импорта ===",
+                            store.importLog,
+                            "=== лог ядра ===",
+                            engine.log,
+                            "=== проверка трафика ===",
+                            probeResult,
+                            "=== активный профиль ===",
+                            engine.activeName ?? "-",
+                        ].joined(separator: "\n")
+                    }
+                    .font(.caption)
                     Button("Очистить") { engine.clearLog() }.font(.caption)
                 }
                 Text(engine.log.isEmpty ? "пусто" : engine.log)
