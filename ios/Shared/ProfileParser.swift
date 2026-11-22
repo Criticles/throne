@@ -6,28 +6,32 @@ enum ProfileParser {
     static func parse(text: String) -> [Profile] {
         let decoded = decodeBase64IfNeeded(text)
         let trimmed = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("[") || trimmed.hasPrefix("{") {
-            if let profiles = parseWireturn(trimmed), !profiles.isEmpty {
-                return profiles
-            }
-            // `?format=turnable`: «сырые» конфиги Turnable без WireGuard-обвязки.
-            if let profiles = parseTurnable(trimmed), !profiles.isEmpty {
-                return profiles
-            }
-            // Панель с «клиентским» User-Agent отдаёт готовый конфиг sing-box целиком.
-            if let profiles = parseSingboxConfig(trimmed), !profiles.isEmpty {
-                return profiles
-            }
-        }
-        var result: [Profile] = []
+
+        var result: [Profile] = parseStructural(trimmed)
         for line in trimmed.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
             let candidate = String(line).trimmingCharacters(in: .whitespaces)
             guard !candidate.isEmpty, !candidate.hasPrefix("#") else { continue }
+            // Панель мешает форматы в одном ответе: строки-ссылки и строку с полным конфигом
+            // sing-box. Именно в такой строке живут mieru и wireguard — в списке ссылок их нет,
+            // и раньше они терялись молча.
+            if candidate.hasPrefix("{") || candidate.hasPrefix("[") {
+                result += parseStructural(candidate)
+                continue
+            }
             if let profile = parse(link: candidate) {
                 result.append(profile)
             }
         }
         return result
+    }
+
+    /// «Структурный» ответ: wireturn, turnable или конфиг sing-box целиком.
+    private static func parseStructural(_ text: String) -> [Profile] {
+        guard text.hasPrefix("{") || text.hasPrefix("[") else { return [] }
+        if let profiles = parseWireturn(text), !profiles.isEmpty { return profiles }
+        if let profiles = parseTurnable(text), !profiles.isEmpty { return profiles }
+        if let profiles = parseSingboxConfig(text), !profiles.isEmpty { return profiles }
+        return []
     }
 
     /// Панели часто отдают список ссылок в base64 (формат v2rayN). Разворачиваем,
@@ -95,6 +99,25 @@ enum ProfileParser {
             if let array = object as? [Any] {
                 return "JSON-массив: \(array.count) элементов"
             }
+        }
+
+        // Смешанный ответ: строки-ссылки плюс строка с JSON-конфигом (так отдаёт эта панель).
+        let lines = trimmed
+            .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        let jsonLines = lines.filter { $0.hasPrefix("{") || $0.hasPrefix("[") }
+        if !jsonLines.isEmpty {
+            var counts: [String: Int] = [:]
+            for line in lines where !jsonLines.contains(line) {
+                if let schemeEnd = line.range(of: "://") {
+                    counts[String(line[..<schemeEnd.lowerBound]), default: 0] += 1
+                }
+            }
+            let links = counts.sorted { $0.key < $1.key }
+                .map { "\($0.key) \($0.value)" }
+                .joined(separator: ", ")
+            let payloads = jsonLines.map { describe($0) }.joined(separator: " + ")
+            return "смешанный ответ: ссылки [\(links.isEmpty ? "нет" : links)] + \(payloads)"
         }
 
         var base64 = trimmed
