@@ -151,8 +151,7 @@ final class ProfileStore: ObservableObject {
     // MARK: - Внутреннее
 
     private func log(_ line: String) {
-        importLog += line + "
-"
+        importLog += line + "\n"
     }
 
     private func fetch(_ url: URL, userAgent: String) async throws -> String {
