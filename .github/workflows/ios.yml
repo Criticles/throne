@@ -176,7 +176,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: libbox-headers
-          path: ios/Frameworks/Libbox.xcframework/**/Headers/*.h
+          # Заголовки обоих фреймворков: по ним сверяются имена методов в Swift.
+          path: |
+            ios/Frameworks/Libbox.xcframework/**/Headers/*.h
+            ios/Frameworks/TurnableCore.xcframework/**/Headers/*.h
           if-no-files-found: ignore
 
       - name: Упаковать неподписанный .ipa
