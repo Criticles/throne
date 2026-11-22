@@ -102,6 +102,26 @@ final class ProfileStore: ObservableObject {
             problems.append("AWG: \(Self.describe(error))")
         }
 
+        // Turnable-узлы есть ТОЛЬКО в отдельных форматах: ни в xray-списке, ни в Clash,
+        // ни в sing-box их не бывает (проверено: 2 / 4 / 4 узла против 6 здесь).
+        // `wireturn` — профили Throne с WARP-обвязкой, `turnable` — их «сырые» конфиги;
+        // без WARP-аккаунта панель отвечает на wireturn 422, тогда берём второй формат.
+        // Движка Turnable в сборке нет, но ключи обязаны быть в списке — с пометкой.
+        for format in ["wireturn", "turnable"] {
+            guard let turnableURL = Self.withQuery(url, [("format", format)]) else { continue }
+            do {
+                let text = try await fetch(turnableURL, userAgent: "Throne/1.1.0")
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") { continue }
+                added += importParsed(ProfileParser.parse(text: text))
+                break  // второй формат отдал бы те же узлы: дедупликация по имени их схлопнет
+            } catch {
+                if (error as NSError).code != 422 {
+                    // 422 = у этого пользователя нет узлов в этом формате, это не ошибка.
+                    problems.append("\(format): \(Self.describe(error))")
+                }
+            }
+        }
+
         if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
         } else {
@@ -148,6 +168,18 @@ final class ProfileStore: ObservableObject {
     private static func describe(_ error: Error) -> String {
         let ns = error as NSError
         return "\(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
+    }
+
+    /// Копия URL подписки с подменёнными параметрами запроса: панель выбирает формат по `?format=`.
+    private static func withQuery(_ url: URL, _ pairs: [(String, String)]) -> URL? {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        var items = components.queryItems ?? []
+        for (name, value) in pairs {
+            items.removeAll { $0.name == name }
+            items.append(URLQueryItem(name: name, value: value))
+        }
+        components.queryItems = items
+        return components.url
     }
 
     /// `?format=turnable` и `?format=wireturn` отдают одни и те же серверы в двух обёртках —
@@ -207,8 +239,14 @@ final class ProfileStore: ObservableObject {
         guard let schemeEnd = trimmed.range(of: "://") else { return nil }
         let scheme = String(trimmed[..<schemeEnd.lowerBound]).lowercased()
         var rest = String(trimmed[schemeEnd.upperBound...])
+        // `amneziawg://<base64 от wg-quick>`: узла в authority нет, host и port лежат внутри INI.
+        if scheme == "amneziawg", let config = WireGuardConfig.parse(trimmed) {
+            return "wireguard|\(config.host)|\(config.port)"
+        }
         if let hash = rest.firstIndex(of: "#") { rest = String(rest[..<hash]) }
         if let query = rest.firstIndex(of: "?") { rest = String(rest[..<query]) }
+        // Хвостовой слэш (`hy2://user:pass@host:39518/`) иначе попадает в «порт»: 39518/ ≠ 39518.
+        if let slash = rest.firstIndex(of: "/") { rest = String(rest[..<slash]) }
         guard let at = rest.lastIndex(of: "@") else { return nil }
 
         let authority = String(rest[rest.index(after: at)...])
@@ -224,7 +262,7 @@ final class ProfileStore: ObservableObject {
         case "vless": return "vless"
         case "hysteria2", "hy2": return "hysteria2"
         case "mieru", "mierus": return "mieru"
-        case "wg", "wireguard": return "wireguard"
+        case "wg", "wireguard", "amneziawg": return "wireguard"
         case "trojan": return "trojan"
         case "shadowsocks", "ss": return "shadowsocks"
         default: return raw.lowercased()
