@@ -110,6 +110,28 @@ jobs:
             -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=dev-${CORE_VER}" \
             ./experimental/libbox
 
+      - name: Кэш Turnable
+        id: cache-turnable
+        uses: actions/cache@v4
+        with:
+          path: ios/Frameworks/TurnableCore.xcframework
+          key: turnable-ios-${{ hashFiles('core/turnablecore/go.mod', 'core/turnablecore/go.sum', '.github/workflows/ios.yml') }}
+
+      - name: Turnable → TurnableCore.xcframework
+        if: steps.cache-turnable.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          # gomobile ставится в отдельном шаге, который пропускается при кэше ядра —
+          # поэтому проверяем и при необходимости ставим здесь.
+          if ! command -v gomobile >/dev/null 2>&1; then
+            go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
+            go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
+            export PATH="$(go env GOPATH)/bin:$PATH"
+          fi
+          cd core/turnablecore
+          gomobile bind -v             -target ios,iossimulator             -o "$GITHUB_WORKSPACE/ios/Frameworks/TurnableCore.xcframework"             -libname TurnableCore             -iosversion "$IOS_MIN_VERSION"             .
+          ls "$GITHUB_WORKSPACE/ios/Frameworks/TurnableCore.xcframework"
+
       - name: Проверить фреймворк
         run: |
           set -euo pipefail

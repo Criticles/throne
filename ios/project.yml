@@ -46,6 +46,9 @@ targets:
         embed: true
       - framework: Frameworks/Libbox.xcframework
         embed: false
+      # Движок Turnable: транспорт для WireTurn-профилей (слушает 127.0.0.1:9000).
+      - framework: Frameworks/TurnableCore.xcframework
+        embed: false
     info:
       path: App/Info.plist
       properties:
