@@ -9,7 +9,8 @@ import Libbox
 ///
 /// gomobile импортировал функции как `(…, NSErrorPointer) -> Bool`, поэтому ошибки
 /// забираем через указатель, а не через `throws`.
-final class TurnableEngine: NSObject, LibboxLogSinkProtocol {
+// gomobile добавляет к типу префикс пакета: LibboxLogSink → LibboxLibboxLogSinkProtocol.
+final class TurnableEngine: NSObject, LibboxLibboxLogSinkProtocol {
     private let onLog: (String) -> Void
     private(set) var running = false
     private(set) var listenAddress = ""
@@ -68,7 +69,7 @@ final class TurnableEngine: NSObject, LibboxLogSinkProtocol {
                       userInfo: [NSLocalizedDescriptionKey: "Turnable: \(ns.localizedDescription)"])
     }
 
-    // MARK: - LibboxLogSinkProtocol
+    // MARK: - LibboxLibboxLogSinkProtocol
 
     func writeLog(_ message: String?) {
         guard let message, !message.isEmpty else { return }
