@@ -220,7 +220,9 @@ final class ProfileStore: ObservableObject {
     private func dedupeKey(_ profile: Profile) -> String {
         switch profile.kind {
         case .turnable, .wireturn:
-            return "turnable|\(profile.name)"
+            // Это не дубли: wireturn несёт WG-обвязку, turnable — «сырой» конфиг.
+            // Пользователь сам увидит, какой путь рабочий, поэтому держим оба.
+            return "\(profile.kind.rawValue)|\(profile.name)"
         default:
             if let identity = Self.serverIdentity(profile.payload) {
                 return identity
