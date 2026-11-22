@@ -23,6 +23,9 @@ import (
 	"github.com/theairblow/turnable/pkg/common"
 	"github.com/theairblow/turnable/pkg/config"
 	"github.com/theairblow/turnable/pkg/engine"
+	// Регистрирует обработчики connecton/platform/protocol/transport: без этого
+	// config.ParseClientConfig падает на пустом ConnectionsHolder.
+	_ "github.com/theairblow/turnable/pkg/init"
 )
 
 // LogSink реализуется на стороне Swift: строки лога уходят в UI.
@@ -48,7 +51,11 @@ func Setup(basePath string) error {
 	}
 	// Браузера для капчи на iOS нет — только неинтерактивный режим.
 	config.Options.Interactive = false
-	common.SetLogLevel(int(slog.LevelInfo))
+	level := slog.LevelInfo
+	if os.Getenv("TURNABLE_DEBUG") == "1" {
+		level = slog.LevelDebug
+	}
+	common.SetLogLevel(int(level))
 	return nil
 }
 

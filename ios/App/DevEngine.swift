@@ -13,6 +13,12 @@ final class DevEngine: ObservableObject {
 
     private var server: LibboxCommandServer?
     private var platform: DevPlatform?
+    private lazy var turnable = TurnableEngine { [weak self] line in
+        Task { @MainActor in self?.append(line) }
+    }
+
+    /// Транспорт Turnable для WireTurn-профилей: sing-box ждёт его на 127.0.0.1:9000.
+    static let turnablePort = 9000
 
     var socksAddress: String { "127.0.0.1:\(ConfigBuilder.listenPort)" }
 
@@ -20,6 +26,15 @@ final class DevEngine: ObservableObject {
         stop()
         do {
             let config = try ConfigBuilder.build(profile: profile)
+
+            // WireTurn: сначала транспорт, иначе wireguard-эндпоинту некуда стучаться.
+            if profile.kind == .wireturn {
+                let kernelJSON = try Self.kernelConfigJSON(from: profile.payload)
+                try turnable.start(configJSON: kernelJSON,
+                                   listen: "127.0.0.1:\(Self.turnablePort)")
+                append("wireturn: транспорт поднят на 127.0.0.1:\(Self.turnablePort)")
+            }
+
             try boot()
             guard let server else {
                 throw NSError(domain: "orbita.engine", code: -1,
@@ -45,6 +60,7 @@ final class DevEngine: ObservableObject {
     }
 
     func stop() {
+        turnable.stop()
         guard let server else {
             running = false
             activeName = nil
@@ -96,6 +112,21 @@ final class DevEngine: ObservableObject {
         append(message)
     }
 
+    /// Достаёт из payload wireturn-профиля вложенный конфиг клиента Turnable.
+    private static func kernelConfigJSON(from payload: String) throws -> String {
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let root = object as? [String: Any],
+              let kernel = root["kernel"] as? [String: Any],
+              let json = try? JSONSerialization.data(withJSONObject: kernel, options: [.sortedKeys]),
+              let text = String(data: json, encoding: .utf8)
+        else {
+            throw NSError(domain: "orbita.turnable", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "в wireturn-профиле нет kernel-конфига"])
+        }
+        return text
+    }
+
     private func boot() throws {
         let container = try FileManager.default.url(for: .applicationSupportDirectory,
                                                     in: .userDomainMask,
@@ -104,6 +135,9 @@ final class DevEngine: ObservableObject {
         let base = container.appendingPathComponent("libbox", isDirectory: true)
         let working = base.appendingPathComponent("working", isDirectory: true)
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("libbox-temp", isDirectory: true)
+
+        // Транспорт Turnable готовим один раз: каталог + неинтерактивный режим (капчи без браузера).
+        try? TurnableEngine.prepare(basePath: base)
 
         // В приложении лимит памяти расширения не нужен: LibboxSetMemoryLimit из API убран,
         // а SetupOptions памяти не касается — ведём себя как обычный клиент.

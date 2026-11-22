@@ -332,7 +332,7 @@ enum ProfileParser {
                 name: name,
                 kind: .wireturn,
                 payload: json,
-                note: "движок Turnable в этой сборке не встроен — цепочка не поднимется"
+                note: nil
             ))
         }
         return profiles
