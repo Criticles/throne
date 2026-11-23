@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Результат проверки туннеля: не просто «HTTP 200», а с какого адреса и из какой страны
@@ -43,7 +44,7 @@ enum Probe {
             if reserve.ok { result = reserve }
         }
         // Время этих сервисов — их собственная обработка; задержку меряем отдельно.
-        result.millis = result.millis ?? (await latency(port: port))
+        result.millis = await ping(port: port) ?? result.millis
         return result
     }
 
@@ -83,6 +84,76 @@ enum Probe {
             "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": port,
             "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": port,
         ]
+    }
+
+    /// Пинг как в клиентах: один RTT через туннель, без DNS и без TLS.
+    /// Идём по SOCKS5 к локальному инбаунду и просим CONNECT к IP-литералу — sing-box отвечает
+    /// ровно в момент, когда установил TCP до цели, поэтому время = один круг.
+    static func ping(port: Int, host: String = "1.1.1.1", targetPort: UInt16 = 443) async -> Int? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: blockingSocksRTT(port: port, host: host, targetPort: targetPort))
+            }
+        }
+    }
+
+    private static func blockingSocksRTT(port: Int, host: String, targetPort: UInt16) -> Int? {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(port).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard connected == 0 else { return nil }
+
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        // Приветствие SOCKS5: версия 5, один метод — без аутентификации.
+        guard writeAll(fd, [0x05, 0x01, 0x00]), readExactly(fd, 2) != nil else { return nil }
+
+        var request: [UInt8] = [0x05, 0x01, 0x00, 0x01]  // CONNECT, IPv4
+        var ip = in_addr()
+        guard inet_pton(AF_INET, host, &ip) == 1 else { return nil }
+        withUnsafeBytes(of: ip) { request.append(contentsOf: $0) }
+        request.append(UInt8(targetPort >> 8))
+        request.append(UInt8(targetPort & 0xFF))
+
+        let clock = Date()
+        guard writeAll(fd, request), let reply = readExactly(fd, 10), reply.count >= 2, reply[1] == 0x00 else {
+            return nil
+        }
+        return Int(Date().timeIntervalSince(clock) * 1000)
+    }
+
+    private static func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
+        var offset = 0
+        while offset < bytes.count {
+            let sent = bytes[offset...].withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
+            if sent <= 0 { return false }
+            offset += sent
+        }
+        return true
+    }
+
+    private static func readExactly(_ fd: Int32, _ count: Int) -> [UInt8]? {
+        var buffer = [UInt8](repeating: 0, count: count)
+        var offset = 0
+        while offset < count {
+            let got = buffer[offset...].withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
+            if got <= 0 { return nil }
+            offset += got
+        }
+        return buffer
     }
 
     /// Задержка «до выхода»: `generate_204` отдаёт пустой ответ по HTTP,
