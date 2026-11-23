@@ -220,8 +220,7 @@ final class DevEngine: ObservableObject {
     }
 
     private func append(_ line: String) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        log += "[\(stamp)] \(Self.stripANSI(line))\n"
+        LogStore.shared.append(Self.stripANSI(line))
     }
 
     /// sing-box пишет логи с ANSI-последовательностями — в Text их видно как `[36mINFO[0m`.
