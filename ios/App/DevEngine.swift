@@ -10,6 +10,8 @@ final class DevEngine: ObservableObject {
     @Published private(set) var log: String = ""
     @Published private(set) var lastError: String?
     @Published private(set) var activeName: String?
+    /// MTU для WireTurn: поверх TURN/SRTP панельные 1280 фрагментируются.
+    @Published var wireturnMTU: Int = 1200
 
     private var server: LibboxCommandServer?
     private var platform: DevPlatform?
@@ -25,6 +27,12 @@ final class DevEngine: ObservableObject {
     func start(profile: Profile) {
         stop()
         do {
+            if profile.kind == .wireturn {
+                ConfigBuilder.wireturnMTU = wireturnMTU
+                append("wireturn: MTU \(wireturnMTU)")
+            } else {
+                ConfigBuilder.wireturnMTU = nil
+            }
             let config = try ConfigBuilder.build(profile: profile)
 
             // WireTurn: сначала транспорт, иначе wireguard-эндпоинту некуда стучаться.

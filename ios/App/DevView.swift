@@ -128,6 +128,20 @@ struct DevView: View {
                     Text(error).font(.caption).foregroundColor(.red)
                 }
 
+                if store.selected?.kind == .wireturn {
+                    // Под TURN/SRTP панельные 1280 фрагментируются: хендшейки проходят,
+                    // а TCP-трафик умирает. Даём крутить MTU и смотреть по логу.
+                    HStack(spacing: 8) {
+                        Text("MTU").font(.caption).foregroundColor(.secondary)
+                        Button("−20") { engine.wireturnMTU = max(1000, engine.wireturnMTU - 20) }
+                        Text("\(engine.wireturnMTU)").font(.system(.caption, design: .monospaced))
+                        Button("+20") { engine.wireturnMTU = min(1420, engine.wireturnMTU + 20) }
+                        Spacer()
+                        Text("меньше — если трафик не идёт").font(.caption2).foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                }
+
                 Text("Проверка через \(engine.socksAddress)")
                     .font(.caption)
                     .foregroundColor(.secondary)

@@ -21,6 +21,10 @@ enum ConfigBuilder {
         }
     }
 
+    /// Переопределение MTU для WireTurn: поверх TURN/SRTP крупные пакеты теряются,
+    /// поэтому WireGuard-MTU приходится опускать ниже панельных 1280.
+    static var wireturnMTU: Int?
+
     static func build(profile: Profile) throws -> String {
         let config: [String: Any]
         switch profile.kind {
@@ -55,9 +59,9 @@ enum ConfigBuilder {
                 amnezia: wg.amnezia
             ))
         case .wireturn:
-            config = try wireturnConfig(profile.payload)
+            config = try wireturnConfig(profile.payload, mtu: wireturnMTU)
         case .turnable:
-            throw BuildError.unsupported("движок Turnable в этой сборке не встроен — профиль импортирован, но запустить его нечем")
+            throw BuildError.unsupported("Turnable-транспорт есть, но профиль без WireGuard-обвязки пока не поддержан — используйте WireTurn")
         case .custom:
             config = try customConfig(profile.payload)
         }
@@ -233,7 +237,7 @@ enum ConfigBuilder {
     }
 
     /// wireturn: WG-эндпоинт смотрит в локальный порт Turnable (в подписке это `127.0.0.1:9000`).
-    private static func wireturnConfig(_ payload: String) throws -> [String: Any] {
+    private static func wireturnConfig(_ payload: String, mtu override: Int?) throws -> [String: Any] {
         guard let data = payload.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
               let parsed = object as? [String: Any],
@@ -255,7 +259,7 @@ enum ConfigBuilder {
             privateKey: wg["privateKey"] as? String ?? "",
             publicKey: wg["publicKey"] as? String ?? "",
             addresses: addresses,
-            mtu: Int(wg["mtu"] as? String ?? "") ?? 1280,
+            mtu: override ?? Int(wg["mtu"] as? String ?? "") ?? 1280,
             keepAlive: Int(wg["persistentKeepalive"] as? String ?? "") ?? 25,
             peerHost: host,
             peerPort: port
