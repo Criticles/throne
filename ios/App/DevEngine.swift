@@ -185,8 +185,8 @@ final class DevEngine: ObservableObject {
             // VK ограничивает частоту капч (ERROR_LIMIT), поэтому в серии проверяем только первый
             // WireTurn: иначе вторая-третья авторизации упираются в лимит и «не работают» ложно.
             if Self.needsTransport(profile) {
-                if wireturnChecked >= 1 {
-                    bulk[index].note = "в серии пропущен: у VK-капчи лимит на подряд идущие авторизации"
+                if wireturnChecked >= 8 {
+                    bulk[index].note = "в серии пропущен: проверяем не больше 8 VK-авторизаций подряд"
                     bulk[index].done = true
                     append("пропуск: \(profile.name) — лимит капчи VK на серию")
                     continue

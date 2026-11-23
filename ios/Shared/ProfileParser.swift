@@ -217,24 +217,6 @@ enum ProfileParser {
             }
         }
 
-        // Плюс профиль целиком: там urltest/selector и правила маршрутизации панели.
-        var whole = config
-        whole["inbounds"] = [inbound]
-        var route = (whole["route"] as? [String: Any]) ?? [:]
-        if route["final"] == nil, let tag = outbounds.first?["tag"] as? String {
-            route["final"] = tag
-            whole["route"] = route
-        }
-        if let json = encode(whole) {
-            profiles.append(Profile(
-                name: "auto · конфиг панели целиком",
-                kind: .custom,
-                payload: json,
-                note: "весь конфиг панели: urltest сам выбирает сервер, inbounds заменены на локальный SOCKS",
-                badge: "AUTO"
-            ))
-        }
-
         return profiles
     }
 

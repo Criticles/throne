@@ -35,7 +35,11 @@ enum Probe {
     /// Основной источник — Cloudflare trace: отдаёт `ip=` и `loc=`, живёт на CDN,
     /// не отвечает 502 и не требует ключей. ipinfo/ip-api — только резерв.
     static func viaProxy(port: Int) async -> ProbeResult {
-        if let result = await trace(port: port) { return result }
+        if var result = await trace(port: port) {
+            // Замер задержки — отдельно: у trace время включает TLS и работу CDN.
+            result.millis = await ping(port: port) ?? result.millis
+            return result
+        }
 
         var result = await ask("https://ipinfo.io/json", port: port, started: Date())
         if !result.ok {

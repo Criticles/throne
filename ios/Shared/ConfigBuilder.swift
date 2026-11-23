@@ -383,8 +383,27 @@ enum ConfigBuilder {
         }
 
         var route = (config["route"] as? [String: Any]) ?? [:]
-        if route["auto_detect_interface"] == nil {
-            route["auto_detect_interface"] = false
+        // Панель ставит true, а платформы (NE) в dev-режиме нет: ядро падает с
+        // «no available network interface» на любом outbound. Поэтому не «если nil», а всегда.
+        route["auto_detect_interface"] = false
+
+        // Эндпоинты WireGuard приходят с доменом в piere (WARP: engage.cloudflareclient.com).
+        // Резолвить его через туннель нельзя — туннеля ещё нет, поэтому подставляем IP заранее.
+        if var endpoints = config["endpoints"] as? [[String: Any]] {
+            for index in endpoints.indices {
+                var endpoint = endpoints[index]
+                if var peers = endpoint["peers"] as? [[String: Any]] {
+                    for peerIndex in peers.indices {
+                        if let host = peers[peerIndex]["address"] as? String,
+                           let resolved = Self.resolveHost(host) {
+                            peers[peerIndex]["address"] = resolved
+                        }
+                    }
+                    endpoint["peers"] = peers
+                }
+                endpoints[index] = endpoint
+            }
+            config["endpoints"] = endpoints
         }
         if route["final"] == nil {
             let outbounds = (config["outbounds"] as? [[String: Any]]) ?? []
