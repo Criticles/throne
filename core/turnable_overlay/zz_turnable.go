@@ -37,8 +37,9 @@ var (
 // TurnableSetup готовит транспорт: неинтерактивный режим (браузера для капчи на iOS нет).
 func TurnableSetup(basePath string) error {
 	config.Options.Interactive = false
-	level := slog.LevelInfo
-	common.SetLogLevel(int(level))
+	// 0.8.7 решает капчу VK по отпечатку браузера (canvas/audio/GPU/шрифты). Debug нужен,
+	// чтобы в журнале было видно, какой профиль отправлен и почему VK ответил ERROR_LIMIT.
+	common.SetLogLevel(int(slog.LevelDebug))
 	_ = basePath
 	return nil
 }

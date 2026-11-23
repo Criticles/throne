@@ -85,7 +85,7 @@ jobs:
           # нельзя линковать в тот же процесс (два Go runtime → падение на старте).
           cp "$GITHUB_WORKSPACE/core/turnable_overlay/zz_turnable.go" sing-box/experimental/libbox/zz_turnable.go
           cd sing-box
-          go mod edit -require=github.com/theairblow/turnable@v0.8.5
+          go mod edit -require=github.com/theairblow/turnable@v0.8.7
           go mod tidy
           grep -n "theairblow/turnable" go.mod
           cd ..

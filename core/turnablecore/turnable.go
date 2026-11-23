@@ -51,10 +51,9 @@ func Setup(basePath string) error {
 	}
 	// Браузера для капчи на iOS нет — только неинтерактивный режим.
 	config.Options.Interactive = false
-	level := slog.LevelInfo
-	if os.Getenv("TURNABLE_DEBUG") == "1" {
-		level = slog.LevelDebug
-	}
+	// В 0.8.7 капча VK решается по отпечатку браузера; debug нужен, чтобы в журнале было видно,
+	// какой профиль отправлен и почему VK ответил ERROR_LIMIT.
+	level := slog.LevelDebug
 	common.SetLogLevel(int(level))
 	return nil
 }
@@ -67,7 +66,7 @@ func SetLogSink(s LogSink) {
 }
 
 // Version возвращает версию движка для UI.
-func Version() string { return "turnable v0.8.5" }
+func Version() string { return "turnable v0.8.7" }
 
 // IsRunning сообщает, поднят ли клиент.
 func IsRunning() bool {
