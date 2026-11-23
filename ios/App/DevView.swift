@@ -234,12 +234,13 @@ struct DevView: View {
         probing = true
         defer { probing = false }
         let attempts = store.selected?.kind == .wireturn ? 4 : 1
-        var result = await Probe.viaProxy(port: engine.proxyPort)
+        var result = await Probe.timed(port: engine.proxyPort, timeout: 12)
+            ?? ProbeResult(ok: false, error: "таймаут проверки")
         var attempt = 1
         while !result.ok, attempt < attempts {
             probeResult = "пробую ещё раз (\(attempt + 1)/\(attempts))…"
             try? await Task.sleep(nanoseconds: 4_000_000_000)
-            result = await Probe.viaProxy(port: engine.proxyPort)
+            result = await Probe.timed(port: engine.proxyPort, timeout: 12) ?? result
             attempt += 1
         }
         probeResult = result.summary

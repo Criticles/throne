@@ -267,12 +267,15 @@ final class DevEngine: ObservableObject {
                 continue
             }
             // WireTurn поднимает VK-сессию дольше остальных (авторизация, капча, SRTP):
-            // опрашиваем до 30 с, остальные — до 8 с.
-            let deadline = Date().addingTimeInterval(Self.needsTransport(profile) ? 30 : 8)
-            var result = await Probe.viaProxy(port: proxyPort)
+            // держим окно до 40 с, остальным хватает 12 с.
+            let deadline = Date().addingTimeInterval(Self.needsTransport(profile) ? 40 : 12)
+            // Мёртвый профиль (WARP из панели: хендшейк не отвечает) иначе держит очередь
+            // десятками секунд — внутри пробы три резервных сервиса по 10–20 с.
+            var result = await Probe.timed(port: proxyPort, timeout: Self.needsTransport(profile) ? 20 : 12)
+                ?? ProbeResult(ok: false, error: "таймаут проверки")
             while !result.ok, Date() < deadline {
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
-                result = await Probe.viaProxy(port: proxyPort)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                result = await Probe.timed(port: proxyPort, timeout: 10) ?? result
             }
             bulk[index].result = result
             bulk[index].done = true
