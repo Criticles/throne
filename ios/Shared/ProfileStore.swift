@@ -117,7 +117,7 @@ final class ProfileStore: ObservableObject {
         // `wireturn` — профили Throne с WARP-обвязкой, `turnable` — их «сырые» конфиги;
         // без WARP-аккаунта панель отвечает на wireturn 422, тогда берём второй формат.
         // Движка Turnable в сборке нет, но ключи обязаны быть в списке — с пометкой.
-        for format in ["wireturn", "turnable"] {
+        for format in ["wireturn"] {
             guard let turnableURL = Self.withQuery(url, [("format", format)]) else { continue }
             do {
                 let text = try await fetch(turnableURL, userAgent: "Throne/1.1.0")
@@ -335,7 +335,14 @@ final class ProfileStore: ObservableObject {
     private func load() {
         if let data = defaults.data(forKey: profilesKey),
            let stored = try? JSONDecoder().decode([Profile].self, from: data) {
-            profiles = stored
+            // Turnable-профили убраны: панель отдаёт в них только транспорт без ключей WG,
+            // туннель не собрать. Оставляем WireTurn (тот же транспорт + wgConfig).
+            let cleaned = stored.filter { $0.kind != .turnable }
+            profiles = cleaned
+            if cleaned.count != stored.count {
+                save()
+                LogStore.shared.append("импорт: удалены Turnable-профили без ключей (\(stored.count - cleaned.count))", stamp: false)
+            }
         }
         if let raw = defaults.string(forKey: selectedKey), let id = UUID(uuidString: raw) {
             selectedID = id

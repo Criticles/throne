@@ -57,13 +57,36 @@ enum ProfileParser {
         return decoded
     }
 
+    /// Бейдж VLESS: протокол + транспорт. Транспорты, которые умеет только Xray,
+    /// помечаем явно — иначе непонятно, почему профиль обслуживается другим ядром.
+    static func vlessBadge(_ link: VLESSLink) -> String {
+        let security = link.security.lowercased()
+        switch link.transport {
+        case "xhttp":
+            return security == "reality" ? "Xray · XHTTP + Reality" : "Xray · XHTTP"
+        case "ws":
+            return "VLESS · WS"
+        case "grpc":
+            return "VLESS · gRPC"
+        case "h2", "http":
+            return "VLESS · HTTP/2"
+        case "quic":
+            return "VLESS · QUIC"
+        default:
+            if security == "reality" { return "VLESS · Reality" }
+            if security == "tls" { return "VLESS · TLS" }
+            return "VLESS"
+        }
+    }
+
     static func parse(link: String) -> Profile? {
         let lower = link.lowercased()
         if lower.hasPrefix("vless://") {
             guard let parsed = try? VLESSLink.parse(link) else { return nil }
             // type=xhttp sing-box не умеет — такой профиль запускается ядром Xray.
             let kind: ProfileKind = parsed.transport == "xhttp" ? .xray : .vless
-            return Profile(name: parsed.name, kind: kind, payload: link, note: nil)
+            return Profile(name: parsed.name, kind: kind, payload: link, note: nil,
+                           badge: Self.vlessBadge(parsed))
         }
         if lower.hasPrefix("hysteria2://") || lower.hasPrefix("hy2://") {
             guard let parsed = Hysteria2Link.parse(link) else { return nil }
