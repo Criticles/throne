@@ -12,9 +12,15 @@ final class ProfileStore: ObservableObject {
     @Published private(set) var loading = false
     /// Полный журнал импорта: запрос → ответ панели → что распознали → что приняли/отбросили.
     @Published private(set) var importLog: String = ""
+    /// Подписки — «папки» списка серверов; профили помнят свою папку в `group`.
+    @Published private(set) var subscriptions: [Subscription] = []
 
     private let profilesKey = "dev.profiles"
     private let selectedKey = "dev.selectedProfile"
+    private let subscriptionsKey = "dev.subscriptions"
+
+    /// Профили, добавленные ссылкой из буфера, живут в этой папке.
+    static let manualFolder = "Вручную"
     private let defaults = UserDefaults.standard
 
     init() {
@@ -24,6 +30,51 @@ final class ProfileStore: ObservableObject {
     var selected: Profile? {
         guard let selectedID else { return nil }
         return profiles.first { $0.id == selectedID }
+    }
+
+    /// Папки для переключателя сверху: реальные подписки + «Вручную».
+    var folders: [String] {
+        var names = Set<String>()
+        for profile in profiles { names.insert(profile.group ?? Self.manualFolder) }
+        return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    func count(in folder: String) -> Int {
+        profiles.filter { ($0.group ?? Self.manualFolder) == folder }.count
+    }
+
+    func profiles(in folder: String) -> [Profile] {
+        profiles.filter { ($0.group ?? Self.manualFolder) == folder }
+    }
+
+    func delete(_ profile: Profile) {
+        profiles.removeAll { $0.id == profile.id }
+        if selectedID == profile.id { selectedID = profiles.first?.id }
+        save()
+        status = "удалён: \(profile.name)"
+    }
+
+    /// Обновить одну подписку по её ссылке.
+    func refresh(_ subscription: Subscription) async {
+        await importFromURL(subscription.url, name: subscription.name)
+    }
+
+    /// Удалить подписку вместе со всеми её серверами.
+    func remove(_ subscription: Subscription) {
+        profiles.removeAll { $0.group == subscription.name }
+        subscriptions.removeAll { $0.id == subscription.id }
+        if let selectedID, !profiles.contains(where: { $0.id == selectedID }) {
+            self.selectedID = profiles.first?.id
+        }
+        save()
+        status = "подписка удалена: \(subscription.name)"
+    }
+
+    /// Имя папки по ссылке подписки: первый сегмент хоста — так же, как зовёт её панель.
+    static func folderName(for url: String) -> String {
+        guard let host = URL(string: url)?.host else { return "Подписка" }
+        let first = host.split(separator: ".").first.map(String.init) ?? host
+        return first.isEmpty ? host : first
     }
 
     func select(_ id: UUID) {
@@ -54,7 +105,7 @@ final class ProfileStore: ObservableObject {
         }
     }
 
-    func importFromURL(_ raw: String) async {
+    func importFromURL(_ raw: String, name: String? = nil) async {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme,
               scheme == "http" || scheme == "https"
@@ -66,7 +117,9 @@ final class ProfileStore: ObservableObject {
         defer { loading = false }
 
         importLog = ""
+        let folder = name ?? Self.folderName(for: trimmed)
         log("импорт подписки: \(trimmed)")
+        log("    папка: \(folder)")
 
         var added = 0
         var problems: [String] = []
@@ -77,7 +130,7 @@ final class ProfileStore: ObservableObject {
                 problems.append("вместо подписки пришёл HTML")
             } else {
                 log("  формат: \(ProfileParser.describe(list))")
-                added += importParsed(ProfileParser.parse(text: list))
+                added += importParsed(ProfileParser.parse(text: list), group: folder)
             }
         } catch {
             problems.append("список: \(Self.describe(error))")
@@ -91,7 +144,7 @@ final class ProfileStore: ObservableObject {
                 let configText = try await fetch(url, userAgent: userAgent)
                 guard configText.contains("\"outbounds\"") else { continue }
                 log("  формат: \(ProfileParser.describe(configText))")
-                added += importParsed(ProfileParser.parse(text: configText))
+                added += importParsed(ProfileParser.parse(text: configText), group: folder)
                 break
             } catch {
                 problems.append("конфиг (\(userAgent)): \(Self.describe(error))")
@@ -104,7 +157,7 @@ final class ProfileStore: ObservableObject {
             let yptunList = try await fetch(url, userAgent: "YPtun/3.7.0")
             if !yptunList.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
                 log("  формат: \(ProfileParser.describe(yptunList))")
-                added += importParsed(ProfileParser.parse(text: yptunList))
+                added += importParsed(ProfileParser.parse(text: yptunList), group: folder)
             }
         } catch {
             problems.append("AWG: \(Self.describe(error))")
@@ -123,7 +176,7 @@ final class ProfileStore: ObservableObject {
                 let text = try await fetch(turnableURL, userAgent: "Throne/1.1.0")
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") { continue }
                 log("  формат: \(ProfileParser.describe(text))")
-                added += importParsed(ProfileParser.parse(text: text))
+                added += importParsed(ProfileParser.parse(text: text), group: folder)
                 // Не break: запрашиваем оба формата. wireturn идёт первым, поэтому дедуп по имени
                 // оставляет именно его (в нём есть WG-обвязка), а turnable добавит только те узлы,
                 // которых в wireturn нет — если такие вообще найдутся.
@@ -135,6 +188,7 @@ final class ProfileStore: ObservableObject {
             }
         }
 
+        recordSubscription(url: trimmed, name: folder)
         if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
         } else {
@@ -146,9 +200,11 @@ final class ProfileStore: ObservableObject {
 
     func removeAll() {
         profiles = []
+        subscriptions = []
         selectedID = nil
         defaults.removeObject(forKey: profilesKey)
         defaults.removeObject(forKey: selectedKey)
+        defaults.removeObject(forKey: subscriptionsKey)
         status = "список очищен"
     }
 
@@ -186,14 +242,14 @@ final class ProfileStore: ObservableObject {
     }
 
     @discardableResult
-    private func importParsed(_ parsed: [Profile]) -> Int {
+    private func importParsed(_ parsed: [Profile], group: String? = nil) -> Int {
         guard !parsed.isEmpty else {
             log("  → профилей не найдено")
             return 0
         }
         let names = parsed.map { "\($0.kind.title): \($0.name)" }.joined(separator: " | ")
         log("  → разобрано \(parsed.count): \(names)")
-        return merge(parsed)
+        return merge(parsed, group: group)
     }
 
     private static func describe(_ error: Error) -> String {
@@ -303,16 +359,22 @@ final class ProfileStore: ObservableObject {
     }
 
     @discardableResult
-    private func merge(_ incoming: [Profile]) -> Int {
-        var seen = Set(profiles.map { dedupeKey($0) })
+    private func merge(_ incoming: [Profile], group: String? = nil) -> Int {
         var added = 0
-        for profile in incoming {
+        for candidate in incoming {
+            var profile = candidate
+            // Папка — свойство подписки, а не сервера: при обновлении той же подписки
+            // профиль остаётся один, но переезжает в актуальную папку.
+            if let group { profile.group = group }
             let key = dedupeKey(profile)
-            guard !seen.contains(key) else {
+            if let index = profiles.firstIndex(where: { dedupeKey($0) == key }) {
+                if let group, profiles[index].group != group {
+                    profiles[index].group = group
+                    save()
+                }
                 log("    дубль, пропущен: \(profile.name) [\(key)]")
                 continue
             }
-            seen.insert(key)
             profiles.append(profile)
             log("    принят: \(profile.name) [\(key)]")
             added += 1
@@ -327,9 +389,33 @@ final class ProfileStore: ObservableObject {
         return added
     }
 
+    /// Подписка в списке одна на URL: повторный импорт только обновляет дату и счётчик.
+    private func recordSubscription(url: String, name: String) {
+        let inFolder = profiles.filter { $0.group == name }.count
+        if let index = subscriptions.firstIndex(where: { $0.url == url }) {
+            subscriptions[index].name = name
+            subscriptions[index].updated = Date()
+            subscriptions[index].count = inFolder
+        } else {
+            subscriptions.append(Subscription(name: name, url: url, updated: Date(), count: inFolder))
+        }
+        if let data = try? JSONEncoder().encode(subscriptions) {
+            defaults.set(data, forKey: subscriptionsKey)
+        }
+    }
+
     private func save() {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         defaults.set(data, forKey: profilesKey)
+        // Счётчики в «Подписках» берём из фактического состава папок.
+        if !subscriptions.isEmpty {
+            for index in subscriptions.indices {
+                subscriptions[index].count = profiles.filter { $0.group == subscriptions[index].name }.count
+            }
+            if let data = try? JSONEncoder().encode(subscriptions) {
+                defaults.set(data, forKey: subscriptionsKey)
+            }
+        }
     }
 
     private func load() {
@@ -346,6 +432,10 @@ final class ProfileStore: ObservableObject {
         }
         if let raw = defaults.string(forKey: selectedKey), let id = UUID(uuidString: raw) {
             selectedID = id
+        }
+        if let data = defaults.data(forKey: subscriptionsKey),
+           let stored = try? JSONDecoder().decode([Subscription].self, from: data) {
+            subscriptions = stored
         }
     }
 }

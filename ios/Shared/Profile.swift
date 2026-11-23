@@ -35,4 +35,6 @@ struct Profile: Codable, Identifiable, Hashable {
     var note: String?
     /// Протокол для бейджа: имя сервера не трогаем, протокол показываем отдельно.
     var badge: String? = nil
+    /// Папка в списке — подписка, из которой пришёл сервер (nil = добавлен вручную).
+    var group: String? = nil
 }

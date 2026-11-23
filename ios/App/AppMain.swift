@@ -9,26 +9,40 @@ struct ThroneApp: App {
     }
 }
 
+/// Четыре экрана, которыми пользуются каждый день: серверы, маршрут, журнал, настройки.
 struct RootView: View {
+    @StateObject private var store = ProfileStore()
+    @StateObject private var engine = DevEngine()
+    @StateObject private var prefs = Prefs()
+
     var body: some View {
         TabView {
-            ContentView()
-                .tabItem { Label("VPN", systemImage: "shield.lefthalf.filled") }
-            NavigationView { DevView() }
-                .navigationViewStyle(.stack)
-                .tabItem { Label("Dev", systemImage: "hammer") }
+            ProfilesView()
+                .tabItem { Label("Серверы", systemImage: "square.stack.3d.up.fill") }
+            RoutingView()
+                .tabItem { Label("Маршрут", systemImage: "arrow.triangle.branch") }
+            LogsView()
+                .tabItem { Label("Журнал", systemImage: "text.alignleft") }
+            SettingsView()
+                .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
         }
+        .environmentObject(store)
+        .environmentObject(engine)
+        .environmentObject(prefs)
+        .accentColor(Theme.accent)
     }
 }
 
+/// Системный VPN через Network Extension. Открывается из настроек, поэтому своего
+/// NavigationView не держит — иначе внутри стека получился бы второй.
 struct ContentView: View {
     @StateObject private var tunnel = TunnelController()
     @State private var log = ""
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        NavigationView {
-            VStack(alignment: .leading, spacing: 12) {
+        List {
+            Section {
                 HStack {
                     Text(tunnel.statusText).font(.headline)
                     Spacer()
@@ -36,11 +50,9 @@ struct ContentView: View {
                         .fill(tunnel.isConnected ? Color.green : Color.secondary.opacity(0.4))
                         .frame(width: 10, height: 10)
                 }
-
                 Text("ядро: \(tunnel.coreVersion)")
                     .font(.footnote)
                     .foregroundColor(.secondary)
-
                 Button {
                     Task { await tunnel.toggle() }
                 } label: {
@@ -49,21 +61,17 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(tunnel.busy)
-
-                Text("Лог расширения")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                ScrollView {
-                    Text(log.isEmpty ? "пусто" : log)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .background(Color.secondary.opacity(0.08))
             }
-            .padding()
-            .navigationTitle("Throne")
+
+            Section("Лог расширения") {
+                Text(log.isEmpty ? "пусто" : log)
+                    .font(.system(.caption2, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Системный VPN")
+        .navigationBarTitleDisplayMode(.inline)
         .onAppear { Task { await tunnel.reload() } }
         .onReceive(timer) { _ in log = TunnelLog.read() }
     }

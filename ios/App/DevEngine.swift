@@ -287,6 +287,40 @@ final class DevEngine: ObservableObject {
         append("проверка всех серверов завершена")
     }
 
+    /// Проверка одного профиля из списка: старт → IP/страна/пинг → стоп.
+    /// Результат кладём в тот же массив, что и «Проверить все», чтобы строка списка
+    /// показывала свежие цифры, не сбрасывая остальные.
+    func check(profile: Profile) async {
+        guard !bulkRunning else { return }
+        bulkRunning = true
+        let row = BulkRow(id: profile.id, name: profile.name, badge: profile.badge ?? profile.kind.title)
+        if let existing = bulk.firstIndex(where: { $0.id == profile.id }) {
+            bulk[existing] = row
+        } else {
+            bulk.append(row)
+        }
+        guard let index = bulk.firstIndex(where: { $0.id == profile.id }) else {
+            bulkRunning = false
+            return
+        }
+        append("проверка: \(profile.name) [\(profile.kind.title)]")
+        start(profile: profile)
+        if await waitListening() {
+            let timeout: Double = Self.needsTransport(profile) ? 20 : 12
+            let result = await Probe.timed(port: proxyPort, timeout: timeout)
+                ?? ProbeResult(ok: false, error: "таймаут проверки")
+            bulk[index].result = result
+            append("итог: \(profile.name) → \(result.summary)")
+        } else {
+            let result = ProbeResult(ok: false, error: lastError ?? "ядро не слушает \(socksAddress)")
+            bulk[index].result = result
+            append("итог: \(profile.name) → \(result.summary)")
+        }
+        bulk[index].done = true
+        stop()
+        bulkRunning = false
+    }
+
     /// Ждём, пока ядро откроет локальный порт (до 10 с), не блокируя интерфейс.
     private func waitListening() async -> Bool {
         for _ in 0..<20 {

@@ -52,9 +52,14 @@ core/
 ios/
   project.yml               единственный источник истины для Xcode-проекта (XcodeGen)
   App/
-    AppMain.swift           точка входа, вкладки VPN/Dev
-    DevView.swift           экран Dev: подписка, профили, старт, проба, «Проверить все», журнал
-    DevEngine.swift         запуск/остановка ядра в процессе приложения, серия проверок
+    AppMain.swift           точка входа, TabView из четырёх вкладок
+    ProfilesView.swift      «Серверы»: статус, папки подписок, список, проверка по строке
+    RoutingView.swift       «Маршрут»: режим, обход LAN, реклама, правила (заготовка), Xray
+    LogsView.swift          «Журнал»: один поток, копирование и очистка
+    SettingsView.swift      «Настройки»: подписки, MTU WireTurn, системный VPN, о приложении
+    Theme.swift             акцент, бейдж протокола, кнопка питания, чипы папок
+    Prefs.swift             режим маршрутизации, обход LAN, реклама, предпочтение Xray
+    DevEngine.swift         запуск/остановка ядра в процессе приложения, проверка одного и всех
     TurnableEngine.swift    обёртка над LibboxTurnable* (биндинг из оверлея)
     DevPlatform.swift       заглушка LibboxPlatformInterface для dev-режима (без NE)
     TunnelController.swift  управление VPN-профилем (Network Extension)
