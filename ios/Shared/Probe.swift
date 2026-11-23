@@ -36,13 +36,37 @@ enum Probe {
     /// ipinfo.io — резерв, если первый недоступен.
     static func viaProxy(port: Int) async -> ProbeResult {
         let started = Date()
-        let primary = await ask("http://ip-api.com/json/?fields=status,country,countryCode,city,isp,query&lang=ru",
-                                port: port, started: started)
-        if primary.ok { return primary }
-        let reserve = await ask("https://ipinfo.io/json", port: port, started: started)
-        if reserve.ok { return reserve }
-        // Ни один сервис не ответил: возвращаем ошибку первого, она ближе к причине.
-        return primary
+        var result = await ask("http://ip-api.com/json/?fields=status,country,countryCode,city,isp,query&lang=ru",
+                               port: port, started: started)
+        if !result.ok {
+            // Резерв, если ip-api недоступен: у него другой формат ответа.
+            let reserve = await ask("https://ipinfo.io/json", port: port, started: started)
+            if reserve.ok { result = reserve }
+        }
+        // Время ip-api — это задержка до чужого веб-сервиса с его обработкой, а не ping до выхода.
+        // Поэтому задержку меряем отдельно: пустой ответ Cloudflare, один круг до сервера.
+        result.millis = await latency(port: port)
+        return result
+    }
+
+    /// Задержка «до выхода»: `generate_204` отдаёт пустой ответ по HTTP,
+    /// то есть это фактически один RTT через туннель, без TLS и без работы сервиса.
+    private static func latency(port: Int) async -> Int? {
+        guard let url = URL(string: "http://cp.cloudflare.com/generate_204") else { return nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 8
+        configuration.connectionProxyDictionary = [
+            "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": port,
+            "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": port,
+        ]
+        let session = URLSession(configuration: configuration)
+        let clock = Date()
+        do {
+            _ = try await session.data(from: url)
+            return Int(Date().timeIntervalSince(clock) * 1000)
+        } catch {
+            return nil
+        }
     }
 
     private static func ask(_ raw: String, port: Int, started: Date) async -> ProbeResult {
