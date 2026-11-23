@@ -22,9 +22,10 @@ var (
 	xrayInstance *xcore.Instance
 )
 
-// LibboxXrayStart поднимает Xray с полным JSON-конфигом.
+// XrayStart поднимает Xray с полным JSON-конфигом.
+// gomobile сам добавляет префикс пакета: XrayStart → LibboxXrayStart в Swift.
 // Ожидается, что конфиг содержит socks-инбаунд на 127.0.0.1:7892 — через него идёт проверка.
-func LibboxXrayStart(configJSON string) error {
+func XrayStart(configJSON string) error {
 	xrayMu.Lock()
 	defer xrayMu.Unlock()
 
@@ -51,8 +52,8 @@ func LibboxXrayStart(configJSON string) error {
 	return nil
 }
 
-// LibboxXrayStop гасит Xray и освобождает socks-порт.
-func LibboxXrayStop() error {
+// XrayStop гасит Xray и освобождает socks-порт.
+func XrayStop() error {
 	xrayMu.Lock()
 	defer xrayMu.Unlock()
 	if xrayInstance == nil {
@@ -63,8 +64,8 @@ func LibboxXrayStop() error {
 	return err
 }
 
-// LibboxXrayIsRunning сообщает, поднят ли Xray (для интерфейса).
-func LibboxXrayIsRunning() bool {
+// XrayIsRunning сообщает, поднят ли Xray (для интерфейса).
+func XrayIsRunning() bool {
 	xrayMu.Lock()
 	defer xrayMu.Unlock()
 	return xrayInstance != nil
