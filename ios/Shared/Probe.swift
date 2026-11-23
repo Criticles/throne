@@ -90,21 +90,32 @@ enum Probe {
         ]
     }
 
-    /// Пинг как в клиентах: один RTT через туннель, без DNS и без TLS.
-    /// Идём по SOCKS5 к локальному инбаунду и просим CONNECT к IP-литералу — sing-box отвечает
-    /// ровно в момент, когда установил TCP до цели, поэтому время = один круг.
-    static func ping(port: Int, host: String = "1.1.1.1", targetPort: UInt16 = 443) async -> Int? {
+    /// Пинг как в клиентах: один RTT через туннель.
+    ///
+    /// TCP-CONNECT через прокси даёт минимум два круга (хендшейк протокола + соединение до цели),
+    /// а hysteria2 вообще отвечает сразу, ещё ничего не отправив — отсюда «0 мс».
+    /// Поэтому меряем UDP: SOCKS5 `UDP ASSOCIATE` + DNS-запрос к 1.1.1.1 — ровно один круг.
+    static func ping(port: Int) async -> Int? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: blockingSocksRTT(port: port, host: host, targetPort: targetPort))
+                let udp = blockingUdpPing(port: port)
+                if let udp, udp > 0 {
+                    continuation.resume(returning: udp)
+                    return
+                }
+                // Транспорт без UDP-релея (редкость) — остаётся TCP-замер, но нули не показываем.
+                let tcp = blockingSocksRTT(port: port, host: "1.1.1.1", targetPort: 443)
+                continuation.resume(returning: (tcp ?? 0) > 10 ? tcp : nil)
             }
         }
     }
 
-    private static func blockingSocksRTT(port: Int, host: String, targetPort: UInt16) -> Int? {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
-        defer { close(fd) }
+    // MARK: - UDP-пинг через SOCKS5
+
+    private static func blockingUdpPing(port: Int) -> Int? {
+        let tcp = socket(AF_INET, SOCK_STREAM, 0)
+        guard tcp >= 0 else { return nil }
+        defer { close(tcp) }
 
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -113,51 +124,87 @@ enum Probe {
         address.sin_addr.s_addr = inet_addr("127.0.0.1")
         let connected = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                connect(tcp, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         guard connected == 0 else { return nil }
 
-        var timeout = timeval(tv_sec: 5, tv_usec: 0)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var timeout = timeval(tv_sec: 3, tv_usec: 0)
+        setsockopt(tcp, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
-        // Приветствие SOCKS5: версия 5, один метод — без аутентификации.
-        guard writeAll(fd, [0x05, 0x01, 0x00]), readExactly(fd, 2) != nil else { return nil }
+        guard writeAll(tcp, [0x05, 0x01, 0x00]), readExactly(tcp, 2) != nil else { return nil }
 
-        var request: [UInt8] = [0x05, 0x01, 0x00, 0x01]  // CONNECT, IPv4
-        var ip = in_addr()
-        guard inet_pton(AF_INET, host, &ip) == 1 else { return nil }
-        withUnsafeBytes(of: ip) { request.append(contentsOf: $0) }
-        request.append(UInt8(targetPort >> 8))
-        request.append(UInt8(targetPort & 0xFF))
+        // UDP ASSOCIATE — прокси отвечает адресом своего UDP-релея.
+        guard writeAll(tcp, [0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0]),
+              let head = readExactly(tcp, 4), head[0] == 0x05, head[1] == 0x00
+        else { return nil }
 
-        let clock = Date()
-        guard writeAll(fd, request), let reply = readExactly(fd, 10), reply.count >= 2, reply[1] == 0x00 else {
+        var relayHost = "127.0.0.1"
+        var relayPort: UInt16 = 0
+        switch head[3] {
+        case 0x01:
+            guard let raw = readExactly(tcp, 6) else { return nil }
+            var addr = in_addr()
+            raw[0..<4].withUnsafeBytes { addr = $0.load(as: in_addr.self) }
+            var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            inet_ntop(AF_INET, &addr, &buffer, socklen_t(buffer.count))
+            relayHost = String(cString: buffer)
+            relayPort = UInt16(raw[4]) << 8 | UInt16(raw[5])
+        case 0x04:
+            guard let raw = readExactly(tcp, 18) else { return nil }
+            var addr = in6_addr()
+            raw[0..<16].withUnsafeBytes { addr = $0.load(as: in6_addr.self) }
+            var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+            inet_ntop(AF_INET6, &addr, &buffer, socklen_t(buffer.count))
+            relayHost = String(cString: buffer)
+            relayPort = UInt16(raw[16]) << 8 | UInt16(raw[17])
+        default:
             return nil
         }
+        guard relayPort != 0 else { return nil }
+        if relayHost == "0.0.0.0" || relayHost == "::" { relayHost = "127.0.0.1" }
+
+        let udp = socket(AF_INET, SOCK_DGRAM, 0)
+        guard udp >= 0 else { return nil }
+        defer { close(udp) }
+        setsockopt(udp, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        var relay = sockaddr_in()
+        relay.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        relay.sin_family = sa_family_t(AF_INET)
+        relay.sin_port = relayPort.bigEndian
+        relay.sin_addr.s_addr = inet_addr(relayHost)
+
+        // SOCKS5 UDP-заголовок: RSV(2) FRAG(1) ATYP(1) 1.1.1.1:53 + DNS-запрос.
+        var packet: [UInt8] = [0x00, 0x00, 0x00, 0x01, 1, 1, 1, 1, 0x00, 0x35]
+        packet.append(contentsOf: dnsQuery())
+
+        let clock = Date()
+        let sent = packet.withUnsafeBufferPointer { bytes in
+            withUnsafePointer(to: &relay) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    sendto(udp, bytes.baseAddress, bytes.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+        }
+        guard sent > 0 else { return nil }
+
+        var reply = [UInt8](repeating: 0, count: 2048)
+        let got = recv(udp, &reply, reply.count, 0)
+        guard got > 0 else { return nil }
         return Int(Date().timeIntervalSince(clock) * 1000)
     }
 
-    private static func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
-        var offset = 0
-        while offset < bytes.count {
-            let sent = bytes[offset...].withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
-            if sent <= 0 { return false }
-            offset += sent
+    /// Минимальный DNS-запрос A для example.com — один круг, без TLS и без кэша.
+    private static func dnsQuery() -> [UInt8] {
+        var bytes: [UInt8] = [0x1a, 0x2b, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        for label in ["example", "com"] {
+            bytes.append(UInt8(label.utf8.count))
+            bytes.append(contentsOf: Array(label.utf8))
         }
-        return true
-    }
-
-    private static func readExactly(_ fd: Int32, _ count: Int) -> [UInt8]? {
-        var buffer = [UInt8](repeating: 0, count: count)
-        var offset = 0
-        while offset < count {
-            let got = buffer[offset...].withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
-            if got <= 0 { return nil }
-            offset += got
-        }
-        return buffer
+        bytes.append(0x00)
+        bytes.append(contentsOf: [0x00, 0x01, 0x00, 0x01])
+        return bytes
     }
 
     /// Задержка «до выхода»: `generate_204` отдаёт пустой ответ по HTTP,
