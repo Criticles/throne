@@ -280,7 +280,7 @@ enum ProfileParser {
             // В формате turnable панель отдаёт только описание транспорта (gateway, call_id,
             // pub_key, routes): ни ключей WireGuard, ни адреса в туннеле здесь нет.
             profiles.append(Profile(name: name, kind: .turnable, payload: json,
-                                    note: "только транспорт: панель не выдаёт ключи — нужен WireTurn с тем же сервером"))
+                                    note: "только транспорт: запускается VK/SRTP, ключей WireGuard нет — туннеля не будет (для туннеля нужен WireTurn)"))
         }
         return profiles
     }

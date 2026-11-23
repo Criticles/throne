@@ -135,7 +135,7 @@ final class ProfileStore: ObservableObject {
             }
         }
 
-        if added > 0 || dropBareTurnable() > 0 {
+        if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
         } else {
             status = problems.isEmpty
@@ -325,25 +325,6 @@ final class ProfileStore: ObservableObject {
             save()
         }
         return added
-    }
-
-    /// `?format=turnable` отдаёт тот же транспорт, что и wireturn, но без ключей WireGuard:
-    /// подключиться по такому профилю нечем. Если в подписке есть wireturn — оставляем только его.
-    @discardableResult
-    private func dropBareTurnable() -> Int {
-        guard profiles.contains(where: { $0.kind == .wireturn }) else { return 0 }
-        let before = profiles.count
-        profiles.removeAll { $0.kind == .turnable }
-        let removed = before - profiles.count
-        if removed > 0 {
-            log("  turnable без ключей пропущен: \(removed) — в подписке есть wireturn (тот же транспорт + wgConfig)")
-            if let selectedID, !profiles.contains(where: { $0.id == selectedID }) {
-                self.selectedID = profiles.first?.id
-                defaults.set(self.selectedID?.uuidString, forKey: selectedKey)
-            }
-            save()
-        }
-        return removed
     }
 
     private func save() {

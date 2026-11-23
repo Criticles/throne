@@ -105,7 +105,14 @@ struct DevView: View {
                 }
 
                 if let active = engine.activeName {
-                    Text("активен: \(active)").font(.caption).foregroundColor(.secondary)
+                    Text(engine.transportOnly ? "транспорт: \(active)" : "активен: \(active)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if engine.transportOnly {
+                    Text("поднят только транспорт Turnable: ключей WireGuard в профиле нет, туннеля не будет — смотрите хендшейк в журнале")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
                 }
                 if let error = engine.lastError {
                     Text(error).font(.caption).foregroundColor(.red)
@@ -133,7 +140,7 @@ struct DevView: View {
                     Task { await probe() }
                 }
                 .buttonStyle(.bordered)
-                .disabled(!engine.running || probing || engine.bulkRunning)
+                .disabled(!engine.running || engine.transportOnly || probing || engine.bulkRunning)
 
                 if !probeResult.isEmpty {
                     Text(probeResult)

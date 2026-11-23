@@ -11,6 +11,8 @@ final class DevEngine: ObservableObject {
     @Published private(set) var activeName: String?
     /// MTU для WireTurn: поверх TURN/SRTP панельные 1280 фрагментируются.
     @Published var wireturnMTU: Int = 1200
+    /// Поднят только транспорт Turnable (профиль без wgConfig): туннеля нет, проверяем VK/SRTP.
+    @Published private(set) var transportOnly = false
 
     private var server: LibboxCommandServer?
     private var platform: DevPlatform?
@@ -23,8 +25,17 @@ final class DevEngine: ObservableObject {
 
     var socksAddress: String { "127.0.0.1:\(ConfigBuilder.listenPort)" }
 
+    /// Поднят ли транспорт Turnable (нужно для отчёта по профилям без wgConfig).
+    var isTransportRunning: Bool { turnable.running }
+
     func start(profile: Profile) {
         stop()
+        // Профиль Turnable из панели — это только транспорт: gateway, call_id, pub_key.
+        // Ключей WireGuard в нём нет, поэтому запускаем Turnable и честно говорим, что туннеля не будет.
+        if profile.kind == .turnable {
+            startTransportOnly(profile)
+            return
+        }
         do {
             if profile.kind == .wireturn {
                 ConfigBuilder.wireturnMTU = wireturnMTU
@@ -66,7 +77,27 @@ final class DevEngine: ObservableObject {
         }
     }
 
+    /// Проверка одного Turnable: авторизация VK, капча, SRTP-хендшейк с гейтвеем.
+    private func startTransportOnly(_ profile: Profile) {
+        do {
+            try turnable.start(configJSON: profile.payload,
+                               listen: "127.0.0.1:\(Self.turnablePort)")
+            transportOnly = true
+            activeName = profile.name
+            running = false
+            lastError = nil
+            append("turnable: транспорт поднят на 127.0.0.1:\(Self.turnablePort)")
+            append("turnable: в профиле нет wgConfig — туннеля не будет, это проверка транспорта (VK авторизация, SRTP)")
+        } catch {
+            let described = Self.describe(error)
+            lastError = described
+            append("ошибка транспорта Turnable: \(described)")
+            stop()
+        }
+    }
+
     func stop() {
+        transportOnly = false
         turnable.stop()
         guard let server else {
             running = false
@@ -142,8 +173,15 @@ final class DevEngine: ObservableObject {
         for (index, profile) in profiles.enumerated() {
             append("проверка: \(profile.name) [\(profile.kind.title)]")
             if profile.kind == .turnable {
-                bulk[index].note = "только транспорт, ключей нет"
+                // Транспорт проверяется отдельно: VK-авторизация, капча, SRTP-сессия с гейтвеем.
+                start(profile: profile)
+                let transportUp = isTransportRunning
+                bulk[index].note = transportUp
+                    ? "транспорт поднят (VK/SRTP), ключей WireGuard нет — туннеля не будет"
+                    : (lastError ?? "транспорт не поднялся")
                 bulk[index].done = true
+                stop()
+                try? await Task.sleep(nanoseconds: 300_000_000)
                 continue
             }
             start(profile: profile)
