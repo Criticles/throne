@@ -68,7 +68,7 @@ jobs:
           # Ключ — хеш файла с закреплённым коммитом ядра, тегами и самого workflow:
           # в ключах actions/cache нельзя запятые, а теги сборки их содержат,
           # а флаги gomobile (например -ldflags с версией) меняют результат, поэтому их хеш тоже в ключе.
-          key: libbox-ios-${{ hashFiles('core/singbox-ref.txt', 'core/turnable_overlay/**', '.github/workflows/ios.yml') }}
+          key: libbox-ios-${{ hashFiles('core/singbox-ref.txt', 'core/turnable_overlay/**', 'core/xray_overlay/**', '.github/workflows/ios.yml') }}
 
       - name: Клонировать ядро
         if: steps.cache-core.outputs.cache-hit != 'true'
@@ -84,10 +84,15 @@ jobs:
           # Оверлей: биндинг Turnable живёт в том же пакете libbox — второй gomobile-фреймворк
           # нельзя линковать в тот же процесс (два Go runtime → падение на старте).
           cp "$GITHUB_WORKSPACE/core/turnable_overlay/zz_turnable.go" sing-box/experimental/libbox/zz_turnable.go
+          # Xray живёт в том же пакете libbox: второй Go-рантайм в процессе iOS не уживается.
+          cp "$GITHUB_WORKSPACE/core/xray_overlay/zz_xray.go" sing-box/experimental/libbox/zz_xray.go
           cd sing-box
           go mod edit -require=github.com/theairblow/turnable@v0.8.7
+          # Форк и версия — ровно как в Throne PC (core/go.mod): только он совместим с их sing-box.
+          go mod edit -require=github.com/xtls/xray-core@v1.260327.1-0.20260908222543-52a412d9e2f5
+          go mod edit -replace=github.com/xtls/xray-core=github.com/throneproj/xray-core@v1.251015.1-0.20261113120537-eea0cb078b79
           go mod tidy
-          grep -n "theairblow/turnable" go.mod
+          grep -nE "theairblow/turnable|xtls/xray-core" go.mod
           cd ..
 
       - name: gomobile
