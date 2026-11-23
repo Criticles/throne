@@ -327,8 +327,6 @@ final class ProfileStore: ObservableObject {
         return added
     }
 
-    /// Подмешивает в Turnable-профиль `wgConfig` от WireTurn с тем же именем сервера.
-    /// Если пары нет — профиль остаётся «только транспорт», но это уже честное исключение.
     private func save() {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         defaults.set(data, forKey: profilesKey)
