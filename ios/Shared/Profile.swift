@@ -2,6 +2,7 @@ import Foundation
 
 enum ProfileKind: String, Codable, CaseIterable {
     case vless
+    case xray
     case hysteria2
     case mieru
     case wireguard
@@ -12,6 +13,7 @@ enum ProfileKind: String, Codable, CaseIterable {
     var title: String {
         switch self {
         case .vless: return "VLESS"
+        case .xray: return "VLESS XHTTP (Xray)"
         case .hysteria2: return "Hysteria2"
         case .mieru: return "Mieru"
         case .wireguard: return "WireGuard / AWG"

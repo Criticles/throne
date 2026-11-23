@@ -61,7 +61,9 @@ enum ProfileParser {
         let lower = link.lowercased()
         if lower.hasPrefix("vless://") {
             guard let parsed = try? VLESSLink.parse(link) else { return nil }
-            return Profile(name: parsed.name, kind: .vless, payload: link, note: nil)
+            // type=xhttp sing-box не умеет — такой профиль запускается ядром Xray.
+            let kind: ProfileKind = parsed.transport == "xhttp" ? .xray : .vless
+            return Profile(name: parsed.name, kind: kind, payload: link, note: nil)
         }
         if lower.hasPrefix("hysteria2://") || lower.hasPrefix("hy2://") {
             guard let parsed = Hysteria2Link.parse(link) else { return nil }

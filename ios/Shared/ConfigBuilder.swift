@@ -61,6 +61,9 @@ enum ConfigBuilder {
             ))
         case .wireturn:
             config = try wireturnConfig(profile.payload, mtu: wireturnMTU)
+        case .xray:
+            // XHTTP собирает не sing-box, а Xray (см. XrayConfig и DevEngine.startXray).
+            throw BuildError.unsupported("VLESS XHTTP обслуживается ядром Xray, а не sing-box")
         case .turnable:
             // Если к транспорту подмешаны ключи WireGuard (см. ProfileStore.pairTurnable) —
             // это полноценный туннель, конфиг тот же, что у WireTurn.

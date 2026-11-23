@@ -23,6 +23,9 @@ final class DevEngine: ObservableObject {
     /// Транспорт Turnable для WireTurn-профилей: sing-box ждёт его на 127.0.0.1:9000.
     static let turnablePort = 9000
 
+    /// Локальный прокси активного ядра: sing-box — 7891, Xray — 7892.
+    @Published private(set) var proxyPort: Int = ConfigBuilder.listenPort
+
     var socksAddress: String { "127.0.0.1:\(ConfigBuilder.listenPort)" }
 
     /// Поднят ли транспорт Turnable (нужно для отчёта по профилям без wgConfig).
@@ -39,6 +42,11 @@ final class DevEngine: ObservableObject {
 
     func start(profile: Profile) {
         stop()
+        // Профиль VLESS + XHTTP: sing-box такой транспорт не умеет, поднимаем Xray.
+        if profile.kind == .xray {
+            startXray(profile)
+            return
+        }
         // Профиль Turnable без ключей WireGuard — это только транспорт: запускаем Turnable
         // и честно говорим, что туннеля не будет. Если ключи подмешаны — идём общим путём.
         if profile.kind == .turnable && !ConfigBuilder.hasWireGuard(profile.payload) {
@@ -86,6 +94,41 @@ final class DevEngine: ObservableObject {
         }
     }
 
+    /// Запуск Xray (VLESS + XHTTP): свой socks-инбаунд на 127.0.0.1:7892.
+    private func startXray(_ profile: Profile) {
+        do {
+            guard let link = try? VLESSLink.parse(profile.payload) else {
+                throw NSError(domain: "throne.xray", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "не разобрать vless-ссылку для Xray"])
+            }
+            let object = XrayConfig.build(link: link)
+            guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+                  let json = String(data: data, encoding: .utf8)
+            else { throw NSError(domain: "throne.xray", code: -2,
+                                 userInfo: [NSLocalizedDescriptionKey: "не собрать JSON для Xray"]) }
+
+            var error: NSError?
+            let ok = LibboxXrayStart(json, &error)
+            guard ok else {
+                let ns = error ?? NSError(domain: "throne.xray", code: -3,
+                                          userInfo: [NSLocalizedDescriptionKey: "неизвестная ошибка"])
+                throw NSError(domain: "throne.xray", code: ns.code,
+                              userInfo: [NSLocalizedDescriptionKey: "Xray: \(ns.localizedDescription)"])
+            }
+            proxyPort = XrayConfig.socksPort
+            running = true
+            lastError = nil
+            activeName = profile.name
+            append("xray: запущен, socks 127.0.0.1:\(XrayConfig.socksPort)")
+            append("старт: \(profile.name) [\(profile.kind.title)] → локально 127.0.0.1:\(XrayConfig.socksPort)")
+        } catch {
+            let described = Self.describe(error)
+            lastError = described
+            append("ошибка старта Xray: \(described)")
+            stop()
+        }
+    }
+
     /// Проверка одного Turnable: авторизация VK, капча, SRTP-хендшейк с гейтвеем.
     private func startTransportOnly(_ profile: Profile) {
         do {
@@ -108,6 +151,12 @@ final class DevEngine: ObservableObject {
     func stop() {
         transportOnly = false
         turnable.stop()
+        if LibboxXrayIsRunning() {
+            var error: NSError?
+            _ = LibboxXrayStop(&error)
+            append("xray: остановлен")
+        }
+        proxyPort = ConfigBuilder.listenPort
         guard let server else {
             running = false
             activeName = nil
@@ -138,7 +187,7 @@ final class DevEngine: ObservableObject {
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = UInt16(ConfigBuilder.listenPort).bigEndian
+        address.sin_port = UInt16(proxyPort).bigEndian
         address.sin_addr.s_addr = inet_addr("127.0.0.1")
 
         let result = withUnsafePointer(to: &address) { pointer in
@@ -220,10 +269,10 @@ final class DevEngine: ObservableObject {
             // WireTurn поднимает VK-сессию дольше остальных (авторизация, капча, SRTP):
             // опрашиваем до 30 с, остальные — до 8 с.
             let deadline = Date().addingTimeInterval(Self.needsTransport(profile) ? 30 : 8)
-            var result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+            var result = await Probe.viaProxy(port: proxyPort)
             while !result.ok, Date() < deadline {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
-                result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+                result = await Probe.viaProxy(port: proxyPort)
             }
             bulk[index].result = result
             bulk[index].done = true

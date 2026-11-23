@@ -132,7 +132,7 @@ struct DevView: View {
                     .buttonStyle(.borderless)
                 }
 
-                Text("Выход в интернет через \(engine.socksAddress)")
+                Text("Выход в интернет через 127.0.0.1:\(engine.proxyPort)")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -216,7 +216,7 @@ struct DevView: View {
         if engine.running && !engine.isListening() {
             // Ядро сообщило «старт», но порт не слушается: чаще всего остался прошлый
             // экземпляр или в конфиге ошибка — тогда проверка трафика врёт про сервер.
-            probeResult = "ядро не слушает 127.0.0.1:\(ConfigBuilder.listenPort) — смотрите лог ядра"
+            probeResult = "ядро не слушает 127.0.0.1:\(engine.proxyPort) — смотрите лог ядра"
             return
         }
         if engine.running {
@@ -234,12 +234,12 @@ struct DevView: View {
         probing = true
         defer { probing = false }
         let attempts = store.selected?.kind == .wireturn ? 4 : 1
-        var result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+        var result = await Probe.viaProxy(port: engine.proxyPort)
         var attempt = 1
         while !result.ok, attempt < attempts {
             probeResult = "пробую ещё раз (\(attempt + 1)/\(attempts))…"
             try? await Task.sleep(nanoseconds: 4_000_000_000)
-            result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+            result = await Probe.viaProxy(port: engine.proxyPort)
             attempt += 1
         }
         probeResult = result.summary

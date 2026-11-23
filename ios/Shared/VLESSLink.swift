@@ -16,6 +16,14 @@ struct VLESSLink {
     let publicKey: String?
     let shortID: String?
     let packetEncoding: String?
+    /// Транспорт из ссылки: tcp (по умолчанию), ws, grpc, xhttp.
+    let transport: String
+    /// Параметры xhttp/ws: путь, host-заголовок, режим, extra-объект, ALPN.
+    let path: String?
+    let hostHeader: String?
+    let mode: String?
+    let extra: String?
+    let alpn: [String]
 
     enum ParseError: LocalizedError {
         case notVLESS
@@ -60,7 +68,13 @@ struct VLESSLink {
             fingerprint: query["fp"],
             publicKey: query["pbk"],
             shortID: query["sid"],
-            packetEncoding: query["packetencoding"]
+            packetEncoding: query["packetencoding"],
+            transport: (query["type"] ?? "tcp").lowercased(),
+            path: query["path"],
+            hostHeader: query["host"],
+            mode: query["mode"],
+            extra: query["extra"],
+            alpn: (query["alpn"] ?? "").split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
         )
     }
 }
