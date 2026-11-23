@@ -230,8 +230,8 @@ enum ProfileParser {
                 name: "auto · конфиг панели целиком",
                 kind: .custom,
                 payload: json,
-                badge: "auto",
-                note: "urltest/selector из подписки, inbounds заменены на локальный SOCKS"
+                note: "urltest/selector из подписки, inbounds заменены на локальный SOCKS",
+                badge: "auto"
             ))
         }
 
