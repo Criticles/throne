@@ -61,47 +61,21 @@ enum ProfileParser {
         let lower = link.lowercased()
         if lower.hasPrefix("vless://") {
             guard let parsed = try? VLESSLink.parse(link) else { return nil }
-            return Profile(name: Self.cleanName(parsed.name), kind: .vless, payload: link, note: nil)
+            return Profile(name: parsed.name, kind: .vless, payload: link, note: nil)
         }
         if lower.hasPrefix("hysteria2://") || lower.hasPrefix("hy2://") {
             guard let parsed = Hysteria2Link.parse(link) else { return nil }
-            return Profile(name: Self.cleanName(parsed.name), kind: .hysteria2, payload: link, note: nil)
+            return Profile(name: parsed.name, kind: .hysteria2, payload: link, note: nil)
         }
         if lower.hasPrefix("mierus://") || lower.hasPrefix("mieru://") {
             guard let parsed = MieruLink.parse(link) else { return nil }
-            return Profile(name: Self.cleanName(parsed.name), kind: .mieru, payload: link, note: nil)
+            return Profile(name: parsed.name, kind: .mieru, payload: link, note: nil)
         }
         if lower.hasPrefix("amneziawg://") || lower.hasPrefix("wg://") {
             guard let parsed = WireGuardConfig.parse(link) else { return nil }
-            return Profile(name: Self.cleanName(parsed.name), kind: .wireguard, payload: link, note: parsed.note)
+            return Profile(name: parsed.name, kind: .wireguard, payload: link, note: parsed.note)
         }
         return nil
-    }
-
-    /// Убирает из названия сервера слово протокола: панель называет узлы
-    /// «🇷🇺 RU sushuri-madonna mieru · criticles», а протокол уже показан бейджем ниже.
-    static func cleanName(_ raw: String) -> String {
-        let pattern = "\\s+(vless|vmess|hy2|hysteria2|hysteria|mieru|mierus|wg|wireguard|amneziawg|trojan|shadowsocks|tuic|anytls)(\\s|$)"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return raw
-        }
-        var result = raw
-        var iterations = 0
-        while iterations < 3 {
-            let range = NSRange(result.startIndex..., in: result)
-            guard let match = regex.firstMatch(in: result, options: [], range: range),
-                  let matchRange = Range(match.range, in: result)
-            else { break }
-            let tail = match.range(at: 2).location != NSNotFound
-                ? String(result[Range(match.range(at: 2), in: result)!])
-                : ""
-            result.replaceSubrange(matchRange, with: tail == " " ? " " : "")
-            iterations += 1
-        }
-        while result.contains("  ") {
-            result = result.replacingOccurrences(of: "  ", with: " ")
-        }
-        return result.trimmingCharacters(in: .whitespaces)
     }
 
     /// Что именно пришло от панели — для журнала импорта. Без этого «добавлено 5 профилей»
@@ -207,10 +181,11 @@ enum ProfileParser {
             ]
             guard let json = encode(mini) else { continue }
             profiles.append(Profile(
-                name: Self.cleanName(tag),
+                name: tag,
                 kind: .custom,
                 payload: json,
-                note: nil
+                note: nil,
+                badge: Self.protocolTitle(type)
             ))
         }
 
@@ -231,12 +206,13 @@ enum ProfileParser {
                     .filter { !WireGuardConfig.knownAmneziaFields.contains($0) }
                     .sorted()
                 profiles.append(Profile(
-                    name: Self.cleanName(tag),
+                    name: tag,
                     kind: .custom,
                     payload: json,
                     note: dropped.isEmpty
                         ? nil
-                        : "AWG 3.x: поля \(dropped.joined(separator: ", ")) ядру неизвестны и отбрасываются"
+                        : "AWG 3.x: поля \(dropped.joined(separator: ", ")) ядру неизвестны и отбрасываются",
+                    badge: Self.protocolTitle(type)
                 ))
             }
         }
@@ -254,6 +230,7 @@ enum ProfileParser {
                 name: "auto · конфиг панели целиком",
                 kind: .custom,
                 payload: json,
+                badge: "auto",
                 note: "urltest/selector из подписки, inbounds заменены на локальный SOCKS"
             ))
         }

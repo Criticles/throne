@@ -256,12 +256,6 @@ struct DevView: View {
 
     /// «sing-box JSON» ничего не говорит о протоколе — показываем протокол, а формат уточняем.
     private func badge(for profile: Profile) -> String {
-        guard profile.kind == .custom else { return profile.kind.title }
-        // У профилей из JSON-конфига панели название протокола уже стоит в имени —
-        // показываем его, без пояснений про формат (они нужны только в журнале импорта).
-        if let separator = profile.name.range(of: " · ") {
-            return String(profile.name[..<separator.lowerBound])
-        }
-        return "конфиг панели"
+        profile.badge ?? profile.kind.title
     }
 }

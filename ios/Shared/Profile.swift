@@ -31,4 +31,6 @@ struct Profile: Codable, Identifiable, Hashable {
     var payload: String
     /// Почему профиль может не заработать в текущей сборке (например, нет движка Turnable).
     var note: String?
+    /// Протокол для бейджа: имя сервера не трогаем, протокол показываем отдельно.
+    var badge: String? = nil
 }
