@@ -61,7 +61,7 @@ enum ConfigBuilder {
         case .wireturn:
             config = try wireturnConfig(profile.payload, mtu: wireturnMTU)
         case .turnable:
-            throw BuildError.unsupported("Turnable-транспорт есть, но профиль без WireGuard-обвязки пока не поддержан — используйте WireTurn")
+            throw BuildError.unsupported("профиль Turnable — только транспорт (gateway, call_id, pub_key), без ключей WireGuard и адреса в туннеле: подключиться нечем. Возьмите WireTurn с тем же сервером")
         case .custom:
             config = try customConfig(profile.payload)
         }

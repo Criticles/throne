@@ -5,9 +5,9 @@ import SwiftUI
 struct DevView: View {
     @StateObject private var store = ProfileStore()
     @StateObject private var engine = DevEngine()
+    @StateObject private var logs = LogStore.shared
 
     @State private var subscriptionURL = ""
-    @State private var probeURL = "https://api.ipify.org?format=json"
     @State private var probeResult = ""
     @State private var probing = false
 
@@ -91,23 +91,6 @@ struct DevView: View {
                 }
             }
 
-            if !store.importLog.isEmpty {
-                Section {
-                    HStack {
-                        Text("Журнал импорта").font(.caption).foregroundColor(.secondary)
-                        Spacer()
-                        Button("Копировать") {
-                            UIPasteboard.general.string = store.importLog
-                        }
-                        .font(.caption)
-                    }
-                    Text(store.importLog)
-                        .font(.system(.caption2, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-
             Section("Подключение") {
                 HStack(spacing: 10) {
                     Button(engine.running ? "Перезапустить" : "Старт") { startSelected() }
@@ -142,20 +125,15 @@ struct DevView: View {
                     .buttonStyle(.borderless)
                 }
 
-                Text("Проверка через \(engine.socksAddress)")
+                Text("Выход в интернет через \(engine.socksAddress)")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                TextField("URL", text: $probeURL)
-                    .textFieldStyle(.roundedBorder)
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-
-                Button(probing ? "Проверяю…" : "Проверить") {
+                Button(probing ? "Проверяю…" : "Проверить IP и страну") {
                     Task { await probe() }
                 }
                 .buttonStyle(.bordered)
-                .disabled(!engine.running || probing)
+                .disabled(!engine.running || probing || engine.bulkRunning)
 
                 if !probeResult.isEmpty {
                     Text(probeResult)
@@ -167,16 +145,44 @@ struct DevView: View {
                 }
             }
 
+            Section("Проверка всех серверов") {
+                Button(engine.bulkRunning ? "Проверяю…" : "Проверить все (\(store.profiles.count))") {
+                    Task { await engine.checkAll(profiles: store.profiles) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(engine.bulkRunning || probing || store.profiles.isEmpty)
+
+                ForEach(engine.bulk) { row in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(row.name).font(.caption)
+                            Text(row.badge)
+                                .font(.caption2)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.secondary.opacity(0.15))
+                                .cornerRadius(3)
+                        }
+                        if let result = row.result {
+                            Text(result.summary)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(result.ok ? .green : .red)
+                        } else if let note = row.note {
+                            Text(note).font(.caption2).foregroundColor(.orange)
+                        } else if !row.done {
+                            Text("в очереди").font(.caption2).foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+
             Section {
                 HStack {
-                    Text("Лог ядра").font(.caption).foregroundColor(.secondary)
+                    Text("Общий журнал").font(.caption).foregroundColor(.secondary)
                     Spacer()
                     Button("Копировать всё") {
                         UIPasteboard.general.string = [
-                            "=== журнал импорта ===",
-                            store.importLog,
-                            "=== лог ядра ===",
-                            engine.log,
+                            logs.text,
                             "=== проверка трафика ===",
                             probeResult,
                             "=== активный профиль ===",
@@ -186,7 +192,7 @@ struct DevView: View {
                     .font(.caption)
                     Button("Очистить") { engine.clearLog() }.font(.caption)
                 }
-                Text(engine.log.isEmpty ? "пусто" : engine.log)
+                Text(logs.text.isEmpty ? "пусто" : logs.text)
                     .font(.system(.caption2, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -215,70 +221,13 @@ struct DevView: View {
         }
     }
 
+    /// Проверка выхода: с какого IP и из какой страны нас видит интернет.
     private func probe() async {
-        let raw = probeURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: raw), let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https", url.host != nil
-        else {
-            probeResult = "некорректный URL: «\(raw)»"
-            return
-        }
         probing = true
         defer { probing = false }
-
-        // mixed-инбаунд понимает и HTTP CONNECT, и SOCKS5. CFNetwork для https через SOCKS
-        // часто отдаёт kCFErrorDomainCFNetwork 310 («не удалось соединение с прокси»),
-        // поэтому сначала идём через HTTP-прокси, а SOCKS оставляем вторым заходом.
-        let viaHTTP = await request(url, proxy: [
-            "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": Int(ConfigBuilder.listenPort),
-            "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": Int(ConfigBuilder.listenPort),
-        ])
-        if viaHTTP.hasPrefix("HTTP") {
-            probeResult = viaHTTP
-            return
-        }
-
-        let viaSOCKS = await request(url, proxy: [
-            "SOCKSEnable": 1, "SOCKSProxy": "127.0.0.1", "SOCKSPort": Int(ConfigBuilder.listenPort),
-        ])
-        if viaSOCKS.hasPrefix("HTTP") {
-            probeResult = viaSOCKS
-            return
-        }
-
-        // Оба канала молчат. Проверяем сам туннель по IP-литералу: если 1.1.1.1 отвечает,
-        // значит трафик ходит, а имя резолвится подменённым адресом (провайдер глушит DNS).
-        let byIP = await request(URL(string: "https://1.1.1.1/cdn-cgi/trace")!, proxy: [
-            "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": Int(ConfigBuilder.listenPort),
-            "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": Int(ConfigBuilder.listenPort),
-        ])
-        let hostName = url.host ?? "имя"
-        let verdict = byIP.hasPrefix("HTTP")
-            ? "\n\nТуннель по IP работает (1.1.1.1 отвечает) → проблема в DNS: «\(hostName)» резолвится подменённым адресом."
-            : "\n\nТуннель молчит и по IP (1.1.1.1) — дело не в DNS."
-        probeResult = "HTTP-прокси: \(viaHTTP)\nSOCKS: \(viaSOCKS)" + verdict
-    }
-
-    private func request(_ url: URL, proxy: [AnyHashable: Any]) async -> String {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 20
-        configuration.connectionProxyDictionary = proxy
-        let session = URLSession(configuration: configuration)
-        let started = Date()
-        do {
-            let (data, response) = try await session.data(from: url)
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            let millis = Int(Date().timeIntervalSince(started) * 1000)
-            let body = String(data: data.prefix(400), encoding: .utf8) ?? "<бинарные данные>"
-            return "HTTP \(code) за \(millis) мс\n\(body)"
-        } catch {
-            let ns = error as NSError
-            var detail = "\(ns.localizedDescription) [\(ns.domain) \(ns.code)]"
-            if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
-                detail += " ← \(underlying.localizedDescription) [\(underlying.domain) \(underlying.code)]"
-            }
-            return "ошибка: \(detail)"
-        }
+        let result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+        probeResult = result.summary
+        logs.append("проверка выхода: \(result.summary)")
     }
 
     /// «sing-box JSON» ничего не говорит о протоколе — показываем протокол, а формат уточняем.

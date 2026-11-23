@@ -7,7 +7,6 @@ import Libbox
 @MainActor
 final class DevEngine: ObservableObject {
     @Published private(set) var running = false
-    @Published private(set) var log: String = ""
     @Published private(set) var lastError: String?
     @Published private(set) var activeName: String?
     /// MTU для WireTurn: поверх TURN/SRTP панельные 1280 фрагментируются.
@@ -111,13 +110,71 @@ final class DevEngine: ObservableObject {
     }
 
     func clearLog() {
-        log = ""
+        LogStore.shared.clear()
     }
 
     /// Ошибки уровня UI (например, не разобралась share-ссылка).
     func report(_ message: String) {
         lastError = message
         append(message)
+    }
+
+    // MARK: - Проверка всех серверов
+
+    struct BulkRow: Identifiable {
+        let id: UUID
+        let name: String
+        let badge: String
+        var result: ProbeResult?
+        var note: String?
+        var done = false
+    }
+
+    @Published private(set) var bulk: [BulkRow] = []
+    @Published private(set) var bulkRunning = false
+
+    /// Проверяет все профили подряд: старт → локальный порт → внешний IP и страна → стоп.
+    /// Turnable-профили пропускаются сразу: в них нет ключей, туннель собрать не из чего.
+    func checkAll(profiles: [Profile]) async {
+        guard !bulkRunning, !profiles.isEmpty else { return }
+        bulkRunning = true
+        bulk = profiles.map { BulkRow(id: $0.id, name: $0.name, badge: $0.badge ?? $0.kind.title) }
+        for (index, profile) in profiles.enumerated() {
+            append("проверка: \(profile.name) [\(profile.kind.title)]")
+            if profile.kind == .turnable {
+                bulk[index].note = "только транспорт, ключей нет"
+                bulk[index].done = true
+                continue
+            }
+            start(profile: profile)
+            if !await waitListening() {
+                bulk[index].note = lastError ?? "ядро не слушает \(socksAddress)"
+                bulk[index].result = ProbeResult(ok: false, error: lastError)
+                bulk[index].done = true
+                stop()
+                continue
+            }
+            // WireTurn поднимает VK-сессию дольше остальных: даём транспорту время на SRTP-хендшейк.
+            let settle: UInt64 = profile.kind == .wireturn ? 3_000_000_000 : 700_000_000
+            try? await Task.sleep(nanoseconds: settle)
+            let result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+            bulk[index].result = result
+            bulk[index].done = true
+            append("итог: \(profile.name) → \(result.summary)")
+            stop()
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        bulkRunning = false
+        append("проверка всех серверов завершена")
+    }
+
+    /// Ждём, пока ядро откроет локальный порт (до 10 с), не блокируя интерфейс.
+    private func waitListening() async -> Bool {
+        for _ in 0..<20 {
+            if running, isListening() { return true }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return false
     }
 
     /// Достаёт из payload wireturn-профиля вложенный конфиг клиента Turnable.

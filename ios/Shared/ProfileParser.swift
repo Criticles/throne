@@ -230,8 +230,8 @@ enum ProfileParser {
                 name: "auto · конфиг панели целиком",
                 kind: .custom,
                 payload: json,
-                note: "urltest/selector из подписки, inbounds заменены на локальный SOCKS",
-                badge: "auto"
+                note: "весь конфиг панели: urltest сам выбирает сервер, inbounds заменены на локальный SOCKS",
+                badge: "AUTO"
             ))
         }
 
@@ -277,8 +277,10 @@ enum ProfileParser {
                   let json = String(data: encoded, encoding: .utf8)
             else { continue }
             let name = (item["name"] as? String) ?? "turnable"
+            // В формате turnable панель отдаёт только описание транспорта (gateway, call_id,
+            // pub_key, routes): ни ключей WireGuard, ни адреса в туннеле здесь нет.
             profiles.append(Profile(name: name, kind: .turnable, payload: json,
-                                    note: "движок Turnable в этой сборке не встроен"))
+                                    note: "только транспорт: панель не выдаёт ключи — нужен WireTurn с тем же сервером"))
         }
         return profiles
     }
