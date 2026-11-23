@@ -62,7 +62,12 @@ enum ConfigBuilder {
         case .wireturn:
             config = try wireturnConfig(profile.payload, mtu: wireturnMTU)
         case .turnable:
-            throw BuildError.unsupported("профиль Turnable — только транспорт (gateway, call_id, pub_key), без ключей WireGuard и адреса в туннеле: подключиться нечем. Возьмите WireTurn с тем же сервером")
+            // Если к транспорту подмешаны ключи WireGuard (см. ProfileStore.pairTurnable) —
+            // это полноценный туннель, конфиг тот же, что у WireTurn.
+            guard hasWireGuard(profile.payload) else {
+                throw BuildError.unsupported("у Turnable нет ключей WireGuard: панель отдаёт их только в формате wireturn")
+            }
+            config = try wireturnConfig(profile.payload, mtu: wireturnMTU)
         case .custom:
             config = try customConfig(profile.payload)
         }
@@ -218,6 +223,15 @@ enum ConfigBuilder {
             outbound["multiplexing"] = multiplexing
         }
         return outbound
+    }
+
+    /// Есть ли в payload ключи WireGuard (`wg`): у «сырого» Turnable их нет.
+    static func hasWireGuard(_ payload: String) -> Bool {
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let root = object as? [String: Any]
+        else { return false }
+        return root["wg"] is [String: Any]
     }
 
     /// Уже IP-литерал? Тогда резолв не нужен.

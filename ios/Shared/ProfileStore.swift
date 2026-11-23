@@ -306,7 +306,10 @@ final class ProfileStore: ObservableObject {
     private func merge(_ incoming: [Profile]) -> Int {
         var seen = Set(profiles.map { dedupeKey($0) })
         var added = 0
-        for profile in incoming {
+        for original in incoming {
+            // Turnable из панели — только транспорт. Ключи WireGuard берём у WireTurn того же
+            // сервера: тогда профиль Turnable тоже поднимает полный туннель, а не висит с пометкой.
+            let profile = Self.pairTurnable(original, with: profiles + incoming)
             let key = dedupeKey(profile)
             guard !seen.contains(key) else {
                 log("    дубль, пропущен: \(profile.name) [\(key)]")
@@ -327,6 +330,53 @@ final class ProfileStore: ObservableObject {
         return added
     }
 
+    /// Подмешивает в Turnable-профиль `wgConfig` от WireTurn с тем же именем сервера.
+    /// Если пары нет — профиль остаётся «только транспорт», но это уже честное исключение.
+    private static func pairTurnable(_ profile: Profile, with candidates: [Profile]) -> Profile {
+        guard profile.kind == .turnable else { return profile }
+        guard let own = payloadObject(profile.payload) else { return profile }
+        if own["wg"] != nil { return profile }
+
+        let donor = candidates.first { candidate in
+            candidate.kind == .wireturn && sameServer(candidate.name, profile.name)
+        }
+        guard let donor, let donorPayload = payloadObject(donor.payload),
+              let wg = donorPayload["wg"] as? [String: Any]
+        else { return profile }
+
+        var payload: [String: Any] = ["kernel": own, "wg": wg, "paired": true]
+        if let vless = donorPayload["vless"] { payload["vless"] = vless }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8)
+        else { return profile }
+
+        return Profile(id: profile.id, name: profile.name, kind: profile.kind,
+                       payload: json, note: nil, badge: profile.badge)
+    }
+
+    private static func payloadObject(_ raw: String) -> [String: Any]? {
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data)
+        else { return nil }
+        return object as? [String: Any]
+    }
+
+    /// Совпадение серверов: имена отличаются только словом протокола и номером «#N».
+    private static func sameServer(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs { return true }
+        return normalize(lhs) == normalize(rhs)
+    }
+
+    private static func normalize(_ name: String) -> String {
+        var text = name.lowercased()
+        for word in ["wireturn", "turnable", "wireguard", "amneziawg", "vless", "hysteria2", "hy2", "mieru", "wg"] {
+            text = text.replacingOccurrences(of: word, with: " ")
+        }
+        text = text.replacingOccurrences(of: "#", with: " ")
+        return text.split(whereSeparator: { $0 == " " || $0 == "·" || $0 == "-" })
+            .joined(separator: " ")
+    }
+
     private func save() {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         defaults.set(data, forKey: profilesKey)
@@ -335,7 +385,12 @@ final class ProfileStore: ObservableObject {
     private func load() {
         if let data = defaults.data(forKey: profilesKey),
            let stored = try? JSONDecoder().decode([Profile].self, from: data) {
-            profiles = stored
+            // Списки, сохранённые до появления пар «Turnable + ключи WG», дочиняем на загрузке,
+            // чтобы не требовать повторного импорта подписки.
+            profiles = stored.map { Self.pairTurnable($0, with: stored) }
+            if profiles != stored {
+                save()
+            }
         }
         if let raw = defaults.string(forKey: selectedKey), let id = UUID(uuidString: raw) {
             selectedID = id

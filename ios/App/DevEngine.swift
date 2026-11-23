@@ -28,25 +28,34 @@ final class DevEngine: ObservableObject {
     /// Поднят ли транспорт Turnable (нужно для отчёта по профилям без wgConfig).
     var isTransportRunning: Bool { turnable.running }
 
+    /// Нужен ли транспорту Turnable: WireTurn всегда, Turnable — только если есть ключи WG.
+    static func needsTransport(_ profile: Profile) -> Bool {
+        switch profile.kind {
+        case .wireturn: return true
+        case .turnable: return ConfigBuilder.hasWireGuard(profile.payload)
+        default: return false
+        }
+    }
+
     func start(profile: Profile) {
         stop()
-        // Профиль Turnable из панели — это только транспорт: gateway, call_id, pub_key.
-        // Ключей WireGuard в нём нет, поэтому запускаем Turnable и честно говорим, что туннеля не будет.
-        if profile.kind == .turnable {
+        // Профиль Turnable без ключей WireGuard — это только транспорт: запускаем Turnable
+        // и честно говорим, что туннеля не будет. Если ключи подмешаны — идём общим путём.
+        if profile.kind == .turnable && !ConfigBuilder.hasWireGuard(profile.payload) {
             startTransportOnly(profile)
             return
         }
         do {
-            if profile.kind == .wireturn {
+            if Self.needsTransport(profile) {
                 ConfigBuilder.wireturnMTU = wireturnMTU
-                append("wireturn: MTU \(wireturnMTU)")
+                append("транспорт: MTU \(wireturnMTU)")
             } else {
                 ConfigBuilder.wireturnMTU = nil
             }
             let config = try ConfigBuilder.build(profile: profile)
 
-            // WireTurn: сначала транспорт, иначе wireguard-эндпоинту некуда стучаться.
-            if profile.kind == .wireturn {
+            // WireTurn и Turnable-с-ключами: сначала транспорт, иначе wireguard-эндпоинту некуда стучаться.
+            if Self.needsTransport(profile) {
                 let kernelJSON = try Self.kernelConfigJSON(from: profile.payload)
                 try turnable.start(configJSON: kernelJSON,
                                    listen: "127.0.0.1:\(Self.turnablePort)")
@@ -175,7 +184,7 @@ final class DevEngine: ObservableObject {
             append("проверка: \(profile.name) [\(profile.kind.title)]")
             // VK ограничивает частоту капч (ERROR_LIMIT), поэтому в серии проверяем только первый
             // WireTurn: иначе вторая-третья авторизации упираются в лимит и «не работают» ложно.
-            if profile.kind == .wireturn {
+            if Self.needsTransport(profile) {
                 if wireturnChecked >= 1 {
                     bulk[index].note = "в серии пропущен: у VK-капчи лимит на подряд идущие авторизации"
                     bulk[index].done = true
@@ -185,7 +194,7 @@ final class DevEngine: ObservableObject {
                 wireturnChecked += 1
             }
 
-            if profile.kind == .turnable {
+            if profile.kind == .turnable && !ConfigBuilder.hasWireGuard(profile.payload) {
                 // Транспорт проверяется отдельно: VK-авторизация, капча, SRTP-сессия с гейтвеем.
                 start(profile: profile)
                 // Хендшейк занимает секунды, поэтому даём транспорту время, а не гасим сразу.
@@ -210,7 +219,7 @@ final class DevEngine: ObservableObject {
             }
             // WireTurn поднимает VK-сессию дольше остальных (авторизация, капча, SRTP):
             // опрашиваем до 30 с, остальные — до 8 с.
-            let deadline = Date().addingTimeInterval(profile.kind == .wireturn ? 30 : 8)
+            let deadline = Date().addingTimeInterval(Self.needsTransport(profile) ? 30 : 8)
             var result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
             while !result.ok, Date() < deadline {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
