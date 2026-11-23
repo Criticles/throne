@@ -147,7 +147,8 @@ final class DevEngine: ObservableObject {
                 continue
             }
             start(profile: profile)
-            if !await waitListening() {
+            let listening = await waitListening()
+            if !listening {
                 bulk[index].note = lastError ?? "ядро не слушает \(socksAddress)"
                 bulk[index].result = ProbeResult(ok: false, error: lastError)
                 bulk[index].done = true
