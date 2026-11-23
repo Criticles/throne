@@ -207,6 +207,68 @@ enum Probe {
         return bytes
     }
 
+
+    // MARK: - Низкоуровневые помощники
+
+    /// TCP-замер через SOCKS5 (резерв, если UDP-релей недоступен).
+    private static func blockingSocksRTT(port: Int, host: String, targetPort: UInt16) -> Int? {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(port).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard connected == 0 else { return nil }
+
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        guard writeAll(fd, [0x05, 0x01, 0x00]), readExactly(fd, 2) != nil else { return nil }
+
+        var request: [UInt8] = [0x05, 0x01, 0x00, 0x01]
+        var ip = in_addr()
+        guard inet_pton(AF_INET, host, &ip) == 1 else { return nil }
+        withUnsafeBytes(of: ip) { request.append(contentsOf: $0) }
+        request.append(UInt8(targetPort >> 8))
+        request.append(UInt8(targetPort & 0xFF))
+
+        let clock = Date()
+        guard writeAll(fd, request), let reply = readExactly(fd, 10), reply.count >= 2, reply[1] == 0x00 else {
+            return nil
+        }
+        return Int(Date().timeIntervalSince(clock) * 1000)
+    }
+
+    private static func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
+        var offset = 0
+        while offset < bytes.count {
+            let sent = bytes[offset...].withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
+            if sent <= 0 { return false }
+            offset += sent
+        }
+        return true
+    }
+
+    private static func readExactly(_ fd: Int32, _ count: Int) -> [UInt8]? {
+        var buffer = [UInt8](repeating: 0, count: count)
+        var offset = 0
+        while offset < count {
+            let got = buffer[offset...].withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
+            if got <= 0 { return nil }
+            offset += got
+        }
+        return buffer
+    }
+
     /// Задержка «до выхода»: `generate_204` отдаёт пустой ответ по HTTP,
     /// то есть это фактически один RTT через туннель, без TLS и без работы сервиса.
     private static func latency(port: Int) async -> Int? {
