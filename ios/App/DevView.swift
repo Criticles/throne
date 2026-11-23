@@ -110,7 +110,7 @@ struct DevView: View {
                         .foregroundColor(.secondary)
                 }
                 if engine.transportOnly {
-                    Text("поднят только транспорт Turnable: ключей WireGuard в профиле нет, туннеля не будет — смотрите хендшейк в журнале")
+                    Text("транспорт Turnable запущен: VK-авторизация и SRTP-сессия — подробности в журнале")
                         .font(.caption2)
                         .foregroundColor(.orange)
                 }

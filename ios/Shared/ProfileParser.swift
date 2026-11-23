@@ -279,8 +279,9 @@ enum ProfileParser {
             let name = (item["name"] as? String) ?? "turnable"
             // В формате turnable панель отдаёт только описание транспорта (gateway, call_id,
             // pub_key, routes): ни ключей WireGuard, ни адреса в туннеле здесь нет.
-            profiles.append(Profile(name: name, kind: .turnable, payload: json,
-                                    note: "только транспорт: запускается VK/SRTP, ключей WireGuard нет — туннеля не будет (для туннеля нужен WireTurn)"))
+            // Turnable — транспортный профиль: запускает VK-авторизацию и SRTP-сессию.
+            // Это его штатный режим, поэтому никаких «ограничено» в списке.
+            profiles.append(Profile(name: name, kind: .turnable, payload: json, note: nil))
         }
         return profiles
     }

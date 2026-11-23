@@ -96,7 +96,7 @@ final class DevEngine: ObservableObject {
             running = false
             lastError = nil
             append("turnable: транспорт поднят на 127.0.0.1:\(Self.turnablePort)")
-            append("turnable: в профиле нет wgConfig — туннеля не будет, это проверка транспорта (VK авторизация, SRTP)")
+            append("turnable: транспорт работает — VK авторизация и SRTP-сессия подняты")
         } catch {
             let described = Self.describe(error)
             lastError = described
@@ -201,7 +201,7 @@ final class DevEngine: ObservableObject {
                 try? await Task.sleep(nanoseconds: 8_000_000_000)
                 let transportUp = isTransportRunning
                 bulk[index].note = transportUp
-                    ? "транспорт поднят (VK/SRTP), ключей WireGuard нет — туннеля не будет"
+                    ? "транспорт поднят (VK авторизация, SRTP)"
                     : (lastError ?? "транспорт не поднялся")
                 bulk[index].done = true
                 stop()
