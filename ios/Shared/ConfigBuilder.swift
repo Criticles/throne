@@ -80,12 +80,29 @@ enum ConfigBuilder {
 
     /// Явный DNS через системный резолвер. Без блока `dns` sing-box в приложении
     /// не резолвит имена из SOCKS-запросов, и проверка трафика падает с «bad URL»/ошибкой прокси.
-    private static func dnsConfig() -> [String: Any] {
-        [
+    private static func dnsConfig(detour: String? = nil) -> [String: Any] {
+        // Системный резолвер у этого провайдера подменяет ответы (api.ipify.org → 198.20.0.68),
+        // и пакет уходит в туннель на несуществующий адрес: WG-handshake проходит, а данных нет.
+        // Для WireGuard/Turnable разрешаем имена через сам туннель.
+        guard let detour else {
             // Формат 1.12+: у сервера есть тип. Старый вид {"address": "local"} удалён в 1.14,
             // и ядро отказывается разбирать конфиг целиком.
-            "servers": [["type": "local", "tag": "dns-local"]],
-            "final": "dns-local",
+            return [
+                "servers": [["type": "local", "tag": "dns-local"]],
+                "final": "dns-local",
+            ]
+        }
+        return [
+            "servers": [
+                [
+                    "type": "udp",
+                    "server": "1.1.1.1",
+                    "detour": detour,
+                    "tag": "dns-remote",
+                ],
+            ],
+            "final": "dns-remote",
+            "strategy": "ipv4_only",
         ]
     }
 
@@ -113,7 +130,7 @@ enum ConfigBuilder {
         let tag = (endpoint["tag"] as? String) ?? "wg-out"
         return [
             "log": ["level": "info", "timestamp": true],
-            "dns": dnsConfig(),
+            "dns": dnsConfig(detour: tag),
             "inbounds": [inbound()],
             "endpoints": [endpoint],
             "route": ["final": tag],
@@ -312,7 +329,9 @@ enum ConfigBuilder {
             config["log"] = ["level": "info", "timestamp": true]
         }
         if config["dns"] == nil {
-            config["dns"] = dnsConfig()
+            // У WireGuard-профилей системный DNS подменён провайдером — резолвим через туннель.
+            let endpointTag = ((config["endpoints"] as? [[String: Any]])?.first?["tag"] as? String)
+            config["dns"] = dnsConfig(detour: endpointTag)
         }
 
         var route = (config["route"] as? [String: Any]) ?? [:]

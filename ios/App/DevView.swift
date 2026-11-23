@@ -241,9 +241,22 @@ struct DevView: View {
         let viaSOCKS = await request(url, proxy: [
             "SOCKSEnable": 1, "SOCKSProxy": "127.0.0.1", "SOCKSPort": Int(ConfigBuilder.listenPort),
         ])
-        probeResult = viaSOCKS.hasPrefix("HTTP")
-            ? viaSOCKS
-            : "HTTP-прокси: \(viaHTTP)\nSOCKS: \(viaSOCKS)"
+        if viaSOCKS.hasPrefix("HTTP") {
+            probeResult = viaSOCKS
+            return
+        }
+
+        // Оба канала молчат. Проверяем сам туннель по IP-литералу: если 1.1.1.1 отвечает,
+        // значит трафик ходит, а имя резолвится подменённым адресом (провайдер глушит DNS).
+        let byIP = await request(URL(string: "https://1.1.1.1/cdn-cgi/trace")!, proxy: [
+            "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": Int(ConfigBuilder.listenPort),
+            "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": Int(ConfigBuilder.listenPort),
+        ])
+        let hostName = url.host ?? "имя"
+        let verdict = byIP.hasPrefix("HTTP")
+            ? "\n\nТуннель по IP работает (1.1.1.1 отвечает) → проблема в DNS: «\(hostName)» резолвится подменённым адресом."
+            : "\n\nТуннель молчит и по IP (1.1.1.1) — дело не в DNS."
+        probeResult = "HTTP-прокси: \(viaHTTP)\nSOCKS: \(viaSOCKS)" + verdict
     }
 
     private func request(_ url: URL, proxy: [AnyHashable: Any]) async -> String {
