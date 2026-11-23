@@ -56,6 +56,14 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        # Проверка трафика ходит по HTTP: ip-api отдаёт гео только так, а generate_204 по HTTP —
+        # это ровно один RTT, без TLS. Без исключений ATS iOS возвращает -1022 на любой http.
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            ip-api.com:
+              NSExceptionAllowsInsecureHTTPLoads: true
+            cp.cloudflare.com:
+              NSExceptionAllowsInsecureHTTPLoads: true
     entitlements:
       path: App/Throne.entitlements
       properties:

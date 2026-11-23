@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Сборка конфига sing-box для dev-режима: локальный `mixed`-инбаунд + один профиль наружу.
@@ -122,7 +123,7 @@ enum ConfigBuilder {
             "dns": dnsConfig(),
             "inbounds": [inbound()],
             "outbounds": [outbound],
-            "route": ["final": tag],
+            "route": ["final": tag, "auto_detect_interface": false],
         ]
     }
 
@@ -133,7 +134,7 @@ enum ConfigBuilder {
             "dns": dnsConfig(detour: tag),
             "inbounds": [inbound()],
             "endpoints": [endpoint],
-            "route": ["final": tag],
+            "route": ["final": tag, "auto_detect_interface": false],
         ]
     }
 
@@ -219,6 +220,36 @@ enum ConfigBuilder {
         return outbound
     }
 
+    /// Уже IP-литерал? Тогда резолв не нужен.
+    private static func isIPAddress(_ host: String) -> Bool {
+        var v4 = in_addr()
+        if inet_pton(AF_INET, host, &v4) == 1 { return true }
+        var v6 = in6_addr()
+        return inet_pton(AF_INET6, host, &v6) == 1
+    }
+
+    /// Системный резолв имени в IP (getaddrinfo). nil — если имя не разрешилось.
+    private static func resolveHost(_ host: String) -> String? {
+        if isIPAddress(host) { return host }
+        var hints = addrinfo(ai_flags: 0, ai_family: AF_UNSPEC, ai_socktype: SOCK_DGRAM,
+                             ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &result) == 0, let first = result else { return nil }
+        defer { freeaddrinfo(first) }
+        var pointer: UnsafeMutablePointer<addrinfo>? = first
+        while let current = pointer {
+            if let address = current.pointee.ai_addr {
+                var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(address, current.pointee.ai_addrlen, &buffer, socklen_t(buffer.count),
+                               nil, 0, NI_NUMERICHOST) == 0 {
+                    return String(cString: buffer)
+                }
+            }
+            pointer = current.pointee.ai_next
+        }
+        return nil
+    }
+
     private static func wireguardEndpoint(
         tag: String,
         privateKey: String,
@@ -230,6 +261,9 @@ enum ConfigBuilder {
         peerPort: Int,
         amnezia: [String: Any]? = nil
     ) -> [String: Any] {
+        // Пир может быть задан доменом (WARP: engage.cloudflareclient.com). Через туннель его не
+        // разрешить — туннеля ещё нет, DNS-запрос ушёл бы в никуда. Резолвим заранее, системой.
+        let resolved = Self.resolveHost(peerHost) ?? peerHost
         var endpoint: [String: Any] = [
             "type": "wireguard",
             "tag": tag,
@@ -239,7 +273,7 @@ enum ConfigBuilder {
             "private_key": privateKey,
             "peers": [
                 [
-                    "address": peerHost,
+                    "address": resolved,
                     "port": peerPort,
                     "public_key": publicKey,
                     "allowed_ips": ["0.0.0.0/0", "::/0"],
@@ -335,6 +369,9 @@ enum ConfigBuilder {
         }
 
         var route = (config["route"] as? [String: Any]) ?? [:]
+        if route["auto_detect_interface"] == nil {
+            route["auto_detect_interface"] = false
+        }
         if route["final"] == nil {
             let outbounds = (config["outbounds"] as? [[String: Any]]) ?? []
             let endpoints = (config["endpoints"] as? [[String: Any]]) ?? []

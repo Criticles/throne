@@ -170,11 +170,26 @@ final class DevEngine: ObservableObject {
         guard !bulkRunning, !profiles.isEmpty else { return }
         bulkRunning = true
         bulk = profiles.map { BulkRow(id: $0.id, name: $0.name, badge: $0.badge ?? $0.kind.title) }
+        var wireturnChecked = 0
         for (index, profile) in profiles.enumerated() {
             append("проверка: \(profile.name) [\(profile.kind.title)]")
+            // VK ограничивает частоту капч (ERROR_LIMIT), поэтому в серии проверяем только первый
+            // WireTurn: иначе вторая-третья авторизации упираются в лимит и «не работают» ложно.
+            if profile.kind == .wireturn {
+                if wireturnChecked >= 1 {
+                    bulk[index].note = "в серии пропущен: у VK-капчи лимит на подряд идущие авторизации"
+                    bulk[index].done = true
+                    append("пропуск: \(profile.name) — лимит капчи VK на серию")
+                    continue
+                }
+                wireturnChecked += 1
+            }
+
             if profile.kind == .turnable {
                 // Транспорт проверяется отдельно: VK-авторизация, капча, SRTP-сессия с гейтвеем.
                 start(profile: profile)
+                // Хендшейк занимает секунды, поэтому даём транспорту время, а не гасим сразу.
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
                 let transportUp = isTransportRunning
                 bulk[index].note = transportUp
                     ? "транспорт поднят (VK/SRTP), ключей WireGuard нет — туннеля не будет"
@@ -193,10 +208,14 @@ final class DevEngine: ObservableObject {
                 stop()
                 continue
             }
-            // WireTurn поднимает VK-сессию дольше остальных: даём транспорту время на SRTP-хендшейк.
-            let settle: UInt64 = profile.kind == .wireturn ? 3_000_000_000 : 700_000_000
-            try? await Task.sleep(nanoseconds: settle)
-            let result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+            // WireTurn поднимает VK-сессию дольше остальных (авторизация, капча, SRTP):
+            // опрашиваем до 30 с, остальные — до 8 с.
+            let deadline = Date().addingTimeInterval(profile.kind == .wireturn ? 30 : 8)
+            var result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+            while !result.ok, Date() < deadline {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                result = await Probe.viaProxy(port: ConfigBuilder.listenPort)
+            }
             bulk[index].result = result
             bulk[index].done = true
             append("итог: \(profile.name) → \(result.summary)")
