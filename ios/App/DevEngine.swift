@@ -442,7 +442,7 @@ final class DevEngine: ObservableObject {
         return URLSession(configuration: configuration)
     }
 
-    static func download(megabytes: Int, port: Int) async -> Leg? {
+    private static func download(megabytes: Int, port: Int) async -> Leg? {
         let bytes = megabytes * 1_000_000
         guard let url = URL(string: speedDownloadURL + "?bytes=" + String(bytes)) else { return nil }
         let session = proxySession(port: port)
@@ -454,7 +454,7 @@ final class DevEngine: ObservableObject {
                    seconds: seconds)
     }
 
-    static func upload(megabytes: Int, port: Int) async -> Leg? {
+    private static func upload(megabytes: Int, port: Int) async -> Leg? {
         guard let url = URL(string: speedUploadURL) else { return nil }
         let session = proxySession(port: port)
         let payload = Data(count: megabytes * 1_000_000)
