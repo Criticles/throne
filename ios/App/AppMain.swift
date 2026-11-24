@@ -9,11 +9,13 @@ struct ThroneApp: App {
     }
 }
 
-/// Четыре экрана, которыми пользуются каждый день: серверы, маршрут, журнал, настройки.
+/// Три экрана: серверы, маршрут и настройки. Журнал и статистика живут внутри настроек —
+/// так на нижней панели остаётся только то, чем пользуются каждый день.
 struct RootView: View {
     @StateObject private var store = ProfileStore()
     @StateObject private var engine = DevEngine()
     @StateObject private var prefs = Prefs()
+    @StateObject private var rules = RuleStore()
 
     var body: some View {
         TabView {
@@ -21,14 +23,13 @@ struct RootView: View {
                 .tabItem { Label("Серверы", systemImage: "square.stack.3d.up.fill") }
             RoutingView()
                 .tabItem { Label("Маршрут", systemImage: "arrow.triangle.branch") }
-            LogsView()
-                .tabItem { Label("Журнал", systemImage: "text.alignleft") }
             SettingsView()
                 .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
         }
         .environmentObject(store)
         .environmentObject(engine)
         .environmentObject(prefs)
+        .environmentObject(rules)
         .accentColor(Theme.accent)
     }
 }

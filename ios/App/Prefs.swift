@@ -40,6 +40,21 @@ final class Prefs: ObservableObject {
         }
     }
 
+    enum SortOrder: String, CaseIterable, Identifiable {
+        case name, ping, country, kind
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .name: return "По имени"
+            case .ping: return "По пингу"
+            case .country: return "По стране"
+            case .kind: return "По протоколу"
+            }
+        }
+    }
+
     private let defaults = UserDefaults.standard
 
     @Published var routingMode: RoutingMode {
@@ -54,11 +69,15 @@ final class Prefs: ObservableObject {
     @Published var xrayPreference: XrayPreference {
         didSet { defaults.set(xrayPreference.rawValue, forKey: "prefs.xray") }
     }
+    @Published var sortOrder: SortOrder {
+        didSet { defaults.set(sortOrder.rawValue, forKey: "prefs.sort") }
+    }
 
     init() {
         routingMode = RoutingMode(rawValue: defaults.string(forKey: "prefs.routing") ?? "") ?? .rules
         bypassLocalNetwork = defaults.object(forKey: "prefs.bypassLAN") as? Bool ?? true
         blockAds = defaults.object(forKey: "prefs.blockAds") as? Bool ?? false
         xrayPreference = XrayPreference(rawValue: defaults.string(forKey: "prefs.xray") ?? "") ?? .xhttpAndReality
+        sortOrder = SortOrder(rawValue: defaults.string(forKey: "prefs.sort") ?? "") ?? .name
     }
 }

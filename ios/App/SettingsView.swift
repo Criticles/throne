@@ -1,18 +1,18 @@
 import Libbox
 import SwiftUI
 
-/// Настройки: подписки, параметры ядра, системный VPN, о приложении.
+/// Настройки: что крутит приложение, что импортировать, подписки, журнал и статистика.
 struct SettingsView: View {
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var engine: DevEngine
 
-    @State private var coreVersion = ""
-
     var body: some View {
         NavigationView {
             List {
-                subscriptionsSection
                 coreSection
+                protocolsSection
+                subscriptionsSection
+                journalSection
                 vpnSection
                 aboutSection
             }
@@ -21,6 +21,75 @@ struct SettingsView: View {
         }
         .navigationViewStyle(.stack)
     }
+
+    // MARK: - Ядро
+
+    private var coreSection: some View {
+        Section {
+            ForEach(CoreInfo.lines) { item in
+                HStack(alignment: .top) {
+                    Text(item.title).font(.subheadline)
+                    Spacer()
+                    Text(item.value)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+            Stepper(value: $engine.wireturnMTU, in: 1000...1420, step: 20) {
+                HStack {
+                    Text("MTU WireTurn")
+                    Spacer()
+                    Text("\(engine.wireturnMTU)")
+                        .font(.system(.subheadline, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+            }
+            HStack {
+                Text("Состояние")
+                Spacer()
+                Text(engine.running ? "подключено" : "выключено")
+                    .font(.caption)
+                    .foregroundColor(engine.running ? .green : .secondary)
+            }
+            if engine.running {
+                Button(role: .destructive) {
+                    engine.stop()
+                } label: {
+                    Text("Отключить ядро")
+                }
+            }
+        } header: {
+            Text("Ядра")
+        } footer: {
+            Text("sing-box — форк throneproj с WireTurn и AmneziaWG; Xray отвечает за VLESS + XHTTP, sing-box этот транспорт не умеет. MTU влияет только на WireTurn: поверх TURN и SRTP панельные 1280 фрагментируются.")
+        }
+    }
+
+    // MARK: - Протоколы при импорте
+
+    private var protocolsSection: some View {
+        Section {
+            ForEach(ProfileKind.allCases, id: \.self) { kind in
+                Toggle(kind.title, isOn: Binding(
+                    get: { store.allowedKinds.contains(kind) },
+                    set: { isOn in
+                        if isOn {
+                            store.allowedKinds.insert(kind)
+                        } else {
+                            store.allowedKinds.remove(kind)
+                        }
+                    }
+                ))
+            }
+        } header: {
+            Text("Протоколы при импорте")
+        } footer: {
+            Text("Выключенные протоколы не попадают в список при импорте и обновлении подписки. Уже добавленные серверы остаются — их можно удалить вручную.")
+        }
+    }
+
+    // MARK: - Подписки
 
     private var subscriptionsSection: some View {
         Section {
@@ -74,52 +143,26 @@ struct SettingsView: View {
         }
     }
 
-    private var coreSection: some View {
+    // MARK: - Журнал и статистика
+
+    private var journalSection: some View {
         Section {
-            HStack {
-                Text("Ядро")
-                Spacer()
-                Text(coreVersion.isEmpty ? "…" : coreVersion)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Stepper(value: $engine.wireturnMTU, in: 1000...1420, step: 20) {
-                HStack {
-                    Text("MTU WireTurn")
-                    Spacer()
-                    Text("\(engine.wireturnMTU)")
-                        .font(.system(.subheadline, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-            }
-            HStack {
-                Text("Состояние")
-                Spacer()
-                Text(engine.running ? "подключено" : "выключено")
-                    .font(.caption)
-                    .foregroundColor(engine.running ? .green : .secondary)
-            }
-            if engine.running {
-                Button(role: .destructive) {
-                    engine.stop()
-                } label: {
-                    Text("Отключить ядро")
-                }
-            }
-            Button(role: .destructive) {
-                engine.clearLog()
+            NavigationLink {
+                LogsView()
             } label: {
-                Text("Очистить журнал")
+                Label("Журнал", systemImage: "text.alignleft")
             }
-        } header: {
-            Text("Ядро dev-режима")
+            NavigationLink {
+                StatsView()
+            } label: {
+                Label("Статистика и правила", systemImage: "chart.bar")
+            }
         } footer: {
-            Text("MTU влияет только на WireTurn: поверх TURN и SRTP панельные 1280 фрагментируются, поэтому по умолчанию 1200.")
-        }
-        .onAppear {
-            if coreVersion.isEmpty { coreVersion = LibboxVersion() }
+            Text("В журнале — импорт и логи ядра, там же экспорт в txt. В статистике — сколько серверов отвечает, кто быстрее и по какому правилу пойдёт домен.")
         }
     }
+
+    // MARK: - Системный VPN
 
     private var vpnSection: some View {
         Section {
@@ -135,6 +178,8 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - О приложении
+
     private var aboutSection: some View {
         Section {
             HStack {
@@ -147,8 +192,6 @@ struct SettingsView: View {
             }
         } header: {
             Text("О приложении")
-        } footer: {
-            Text("Throne — клиент на ядре sing-box (форк throneproj) с Xray и WireTurn.")
         }
     }
 
@@ -162,14 +205,13 @@ struct SettingsView: View {
         guard let url = URL(string: raw) else { return raw }
         let host = url.host ?? raw
         let tail = url.lastPathComponent
-        let masked = String(tail.prefix(4))
-        return "\(host)/…/\(masked)…"
+        return host + "/…/" + String(tail.prefix(4)) + "…"
     }
 
     private static var appVersion: String {
         let info = Bundle.main.infoDictionary
         let short = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
-        return "\(short) (\(build))"
+        return short + " (" + build + ")"
     }
 }

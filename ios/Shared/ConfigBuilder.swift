@@ -7,6 +7,8 @@ enum ConfigBuilder {
     static let listenPort = 7891
     /// Порт, который слушает Turnable-клиент в подписке wireturn (в wgConfig.endpoint).
     static let wireturnPort = 9000
+    /// Локальный Clash API: через него замеряем задержку каждого сервера параллельно.
+    static let clashPort = 19090
 
     enum BuildError: LocalizedError {
         case badPayload(String)
@@ -79,6 +81,68 @@ enum ConfigBuilder {
               let json = String(data: data, encoding: .utf8)
         else { throw BuildError.encodingFailed }
         return json
+    }
+
+    /// Один конфиг со всеми серверами сразу — для параллельного пинга через Clash API.
+    ///
+    /// Clash API (`experimental.clash_api`) умеет отдавать задержку конкретного outbound:
+    /// `GET /proxies/<tag>/delay`. Поэтому не нужно поднимать и гасить ядро на каждый сервер —
+    /// поднимаем одно с общим списком и меряем все задержки параллельно.
+    ///
+    /// WireGuard/AmneziaWG сюда не входят: в ядре это `endpoints`, а не outbounds, и Clash API
+    /// их не видит. Xray и WireTurn тоже — у них своё ядро и свой транспорт.
+    static func pingConfig(profiles: [Profile]) throws -> (json: String, tags: [UUID: String]) {
+        var outbounds: [[String: Any]] = []
+        var tags: [UUID: String] = [:]
+
+        for profile in profiles {
+            let tag = "p\(tags.count)"
+            switch profile.kind {
+            case .vless:
+                guard let link = try? VLESSLink.parse(profile.payload) else { continue }
+                var outbound = vlessOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                tags[profile.id] = tag
+            case .hysteria2:
+                guard let link = Hysteria2Link.parse(profile.payload) else { continue }
+                var outbound = hysteria2Outbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                tags[profile.id] = tag
+            case .mieru:
+                guard let link = MieruLink.parse(profile.payload) else { continue }
+                var outbound = mieruOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                tags[profile.id] = tag
+            default:
+                continue
+            }
+        }
+
+        guard !outbounds.isEmpty else {
+            throw BuildError.unsupported("нет серверов, которые sing-box может проверить одним конфигом")
+        }
+
+        let config: [String: Any] = [
+            "log": ["level": "warn", "timestamp": true],
+            "dns": dnsConfig(),
+            // Инбаунд не нужен для замеров, но с ним ядро ведёт себя как обычно (и пишет порт в лог).
+            "inbounds": [inbound()],
+            "outbounds": outbounds + [["type": "direct", "tag": "direct"]],
+            "route": ["final": "direct", "auto_detect_interface": false],
+            "experimental": [
+                "clash_api": [
+                    "external_controller": "127.0.0.1:\(clashPort)",
+                ],
+            ],
+        ]
+
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8)
+        else { throw BuildError.encodingFailed }
+        return (json, tags)
     }
 
     static func note(for profile: Profile) -> String? {

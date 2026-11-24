@@ -18,12 +18,21 @@ final class ProfileStore: ObservableObject {
     private let profilesKey = "dev.profiles"
     private let selectedKey = "dev.selectedProfile"
     private let subscriptionsKey = "dev.subscriptions"
+    private let kindsKey = "dev.allowedKinds"
 
     /// Профили, добавленные ссылкой из буфера, живут в этой папке.
     static let manualFolder = "Вручную"
+
+    /// Какие протоколы принимать при импорте. Настройка пользователя: по умолчанию все.
+    @Published var allowedKinds: Set<ProfileKind> {
+        didSet { defaults.set(allowedKinds.map { $0.rawValue }, forKey: kindsKey) }
+    }
     private let defaults = UserDefaults.standard
 
     init() {
+        let stored = UserDefaults.standard.stringArray(forKey: "dev.allowedKinds") ?? []
+        let kinds = stored.compactMap { ProfileKind(rawValue: $0) }
+        allowedKinds = kinds.isEmpty ? Set(ProfileKind.allCases) : Set(kinds)
         load()
     }
 
@@ -249,7 +258,15 @@ final class ProfileStore: ObservableObject {
         }
         let names = parsed.map { "\($0.kind.title): \($0.name)" }.joined(separator: " | ")
         log("  → разобрано \(parsed.count): \(names)")
-        return merge(parsed, group: group)
+
+        // Пользователь может выключить ненужные протоколы в настройках — тогда они
+        // не попадают в список, а не просто прячутся в интерфейсе.
+        let allowed = parsed.filter { allowedKinds.contains($0.kind) }
+        if allowed.count != parsed.count {
+            log("  → отфильтровано по настройкам протоколов: \(parsed.count - allowed.count)")
+        }
+        guard !allowed.isEmpty else { return 0 }
+        return merge(allowed, group: group)
     }
 
     private static func describe(_ error: Error) -> String {

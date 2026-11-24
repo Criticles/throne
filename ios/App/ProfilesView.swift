@@ -1,9 +1,11 @@
 import SwiftUI
 
 /// Главный экран: состояние туннеля, папки подписок и список серверов.
+/// Пинг не висит в каждой строке: у сервера есть кнопка, результат появляется по нажатию.
 struct ProfilesView: View {
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var engine: DevEngine
+    @EnvironmentObject private var prefs: Prefs
 
     @State private var folder: String? = nil
     @State private var query = ""
@@ -12,14 +14,40 @@ struct ProfilesView: View {
     @State private var addText = ""
     @State private var addTitle = ""
 
+    private var rowsByID: [UUID: DevEngine.BulkRow] {
+        var map: [UUID: DevEngine.BulkRow] = [:]
+        for row in engine.bulk { map[row.id] = row }
+        return map
+    }
+
     private var visible: [Profile] {
-        store.profiles.filter { profile in
+        let filtered = store.profiles.filter { profile in
             let inFolder = folder == nil || (profile.group ?? ProfileStore.manualFolder) == folder
             guard inFolder else { return false }
             guard !query.isEmpty else { return true }
             return profile.name.localizedCaseInsensitiveContains(query)
                 || (profile.badge ?? profile.kind.title).localizedCaseInsensitiveContains(query)
         }
+        let map = rowsByID
+        switch prefs.sortOrder {
+        case .name:
+            return filtered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .kind:
+            return filtered.sorted {
+                ($0.badge ?? $0.kind.title).localizedCaseInsensitiveCompare($1.badge ?? $1.kind.title) == .orderedAscending
+            }
+        case .ping:
+            return filtered.sorted { ping($0, map) < ping($1, map) }
+        case .country:
+            return filtered.sorted { country($0, map) < country($1, map) }
+        }
+    }
+
+    /// Серверов в папке / сколько из них отвечает.
+    private var counters: (all: Int, alive: Int) {
+        let map = rowsByID
+        let alive = visible.filter { map[$0.id]?.result?.ok == true }.count
+        return (visible.count, alive)
     }
 
     var body: some View {
@@ -28,7 +56,6 @@ struct ProfilesView: View {
                 connectionSection
                 folderSection
                 serverSection
-                actionsSection
             }
             .listStyle(.insetGrouped)
             .searchable(text: $query, prompt: "Сервер или протокол")
@@ -78,7 +105,7 @@ struct ProfilesView: View {
 
     private var statusLine: String {
         if !probeLine.isEmpty { return probeLine }
-        if engine.running { return "проверьте выход: «Проверить» на строке сервера или «Проверить все»" }
+        if engine.running { return "нажмите «пинг» у сервера, чтобы увидеть страну и задержку" }
         if store.selected == nil { return "добавьте подписку кнопкой +" }
         return "нажмите кнопку питания, чтобы поднять туннель"
     }
@@ -118,82 +145,83 @@ struct ProfilesView: View {
                 ServerRow(profile: profile,
                           selected: store.selectedID == profile.id,
                           active: engine.running && engine.activeName == profile.name,
-                          bulk: bulkRow(for: profile))
-                    .contentShape(Rectangle())
-                    .onTapGesture { store.select(profile.id) }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            store.delete(profile)
-                        } label: {
-                            Label("Удалить", systemImage: "trash")
-                        }
-                        Button {
-                            Task { await check(profile) }
-                        } label: {
-                            Label("Проверить", systemImage: "waveform.path.ecg")
-                        }
-                        .tint(.orange)
+                          bulk: rowsByID[profile.id],
+                          busy: engine.bulkRunning) {
+                    Task { await check(profile) }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { store.select(profile.id) }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        store.delete(profile)
+                    } label: {
+                        Label("Удалить", systemImage: "trash")
                     }
-                    .contextMenu {
+                    Button {
+                        store.select(profile.id)
+                        Task { await toggle() }
+                    } label: {
+                        Label("Подключить", systemImage: "power")
+                    }
+                    .tint(.green)
+                }
+                .contextMenu {
+                    Button {
+                        store.select(profile.id)
+                        Task { await toggle() }
+                    } label: {
+                        Label("Подключиться", systemImage: "power")
+                    }
+                    Button {
+                        Task { await check(profile) }
+                    } label: {
+                        Label("Пинг", systemImage: "waveform.path.ecg")
+                    }
+                    if let link = shareLink(profile) {
                         Button {
-                            store.select(profile.id)
-                            Task { await toggle() }
+                            UIPasteboard.general.string = link
                         } label: {
-                            Label("Подключиться", systemImage: "power")
-                        }
-                        Button {
-                            Task { await check(profile) }
-                        } label: {
-                            Label("Проверить выход", systemImage: "waveform.path.ecg")
-                        }
-                        if let link = shareLink(profile) {
-                            Button {
-                                UIPasteboard.general.string = link
-                            } label: {
-                                Label("Скопировать ссылку", systemImage: "doc.on.doc")
-                            }
-                        }
-                        Divider()
-                        Button(role: .destructive) {
-                            store.delete(profile)
-                        } label: {
-                            Label("Удалить", systemImage: "trash")
+                            Label("Скопировать ссылку", systemImage: "doc.on.doc")
                         }
                     }
+                    Divider()
+                    Button(role: .destructive) {
+                        store.delete(profile)
+                    } label: {
+                        Label("Удалить", systemImage: "trash")
+                    }
+                }
             }
         } header: {
-            HStack {
+            HStack(spacing: 8) {
                 Text(folder ?? "Все серверы")
+                Text("\(counters.all)/\(counters.alive)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 Spacer()
                 if engine.bulkRunning {
                     ProgressView().scaleEffect(0.7)
-                } else {
-                    Text("\(visible.count)")
                 }
-            }
-        }
-    }
-
-    private var actionsSection: some View {
-        Section {
-            Button {
-                Task { await engine.checkAll(profiles: visible) }
-            } label: {
-                Label(engine.bulkRunning ? "Проверяю…" : "Проверить все (\(visible.count))",
-                      systemImage: "waveform.path.ecg")
-            }
-            .disabled(engine.bulkRunning || visible.isEmpty)
-
-            if let subscription = store.subscriptions.first(where: { $0.name == folder }) {
-                Button {
-                    Task { await store.refresh(subscription) }
+                HeaderButton(icon: "waveform.path.ecg", tint: Theme.accent) {
+                    Task { await engine.checkAll(profiles: visible) }
+                }
+                .disabled(engine.bulkRunning || visible.isEmpty)
+                HeaderButton(icon: "arrow.clockwise", tint: Theme.accent) {
+                    Task { await refreshCurrent() }
+                }
+                .disabled(store.subscriptions.isEmpty || store.loading)
+                Menu {
+                    Picker("Сортировка", selection: $prefs.sortOrder) {
+                        ForEach(Prefs.SortOrder.allCases) { order in
+                            Text(order.title).tag(order)
+                        }
+                    }
                 } label: {
-                    Label(store.loading ? "Обновляю…" : "Обновить подписку", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 26, height: 26)
                 }
-                .disabled(store.loading)
             }
-        } footer: {
-            Text("Проверка поднимает серверы по очереди и снимает IP, страну и задержку. WireTurn авторизуется в VK, поэтому в серии их не больше 8.")
         }
     }
 
@@ -272,6 +300,14 @@ struct ProfilesView: View {
 
     // MARK: - Действия
 
+    private func ping(_ profile: Profile, _ map: [UUID: DevEngine.BulkRow]) -> Int {
+        map[profile.id]?.result?.millis ?? Int.max
+    }
+
+    private func country(_ profile: Profile, _ map: [UUID: DevEngine.BulkRow]) -> String {
+        map[profile.id]?.result?.countryCode ?? "ZZ"
+    }
+
     private func addSubscription() {
         let input = addText.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = addTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -293,6 +329,15 @@ struct ProfilesView: View {
         }
         showAdd = false
         Task { await store.importAny(text) }
+    }
+
+    /// Обновляем подписку выбранной папки, а если выбрано «Все» — все подписки.
+    private func refreshCurrent() async {
+        if let name = folder, let subscription = store.subscriptions.first(where: { $0.name == name }) {
+            await store.refresh(subscription)
+        } else {
+            await refreshAll()
+        }
     }
 
     private func refreshAll() async {
@@ -324,13 +369,9 @@ struct ProfilesView: View {
 
     private func check(_ profile: Profile) async {
         await engine.check(profile: profile)
-        if let result = bulkRow(for: profile)?.result {
+        if let result = rowsByID[profile.id]?.result {
             probeLine = result.summary
         }
-    }
-
-    private func bulkRow(for profile: Profile) -> DevEngine.BulkRow? {
-        engine.bulk.first { $0.id == profile.id }
     }
 
     /// Поделиться можно только тем профилем, у которого есть share-ссылка.
@@ -340,33 +381,41 @@ struct ProfilesView: View {
     }
 }
 
-/// Строка списка: имя сервера, протокол, задержка и последний результат проверки.
+/// Маленькая кнопка в заголовке секции: только иконка, чтобы не отнимать место у названия.
+struct HeaderButton: View {
+    let icon: String
+    var tint: Color = .secondary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(tint)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Color(uiColor: .tertiarySystemFill)))
+        }
+        .buttonStyle(.borderless)
+    }
+}
+
+/// Строка списка: имя сервера, протокол и кнопка пинга. Результат — только после нажатия.
 struct ServerRow: View {
     let profile: Profile
     let selected: Bool
     let active: Bool
     let bulk: DevEngine.BulkRow?
+    let busy: Bool
+    let ping: () -> Void
 
-    private var millis: Int? { bulk?.result?.millis }
-
-    private var detail: String? {
-        guard let bulk else { return nil }
-        if let result = bulk.result {
-            if result.ok {
-                let parts = [result.ip, result.country].compactMap { $0 }
-                return parts.isEmpty ? nil : parts.joined(separator: " · ")
-            }
-            return result.error
-        }
-        return bulk.note
-    }
+    private var result: ProbeResult? { bulk?.result }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 17))
                 .foregroundColor(selected ? Theme.accent : Color(uiColor: .tertiaryLabel))
-                .padding(.top, 2)
+                .padding(.top, 3)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
@@ -379,25 +428,42 @@ struct ServerRow: View {
                             .foregroundColor(Theme.accent)
                     }
                 }
-                ProtocolBadge(text: profile.badge ?? profile.kind.title)
-                if let detail {
-                    Text(detail)
-                        .font(.caption2)
-                        .foregroundColor(bulk?.result?.ok == false ? .red : .secondary)
-                        .lineLimit(2)
+
+                HStack(spacing: 6) {
+                    ProtocolBadge(text: profile.badge ?? profile.kind.title)
+                    if let result {
+                        Text(result.shortSummary)
+                            .font(.caption2.weight(.medium))
+                            .foregroundColor(result.ok ? Theme.pingColor(result.millis) : .red)
+                            .lineLimit(1)
+                    } else if let note = bulk?.note {
+                        Text(note)
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                            .lineLimit(2)
+                    }
                 }
             }
 
-            Spacer(minLength: 6)
+            Spacer(minLength: 4)
 
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(Theme.pingText(millis))
-                    .font(.system(.footnote, design: .rounded).weight(.medium))
-                    .foregroundColor(Theme.pingColor(millis))
-                if let bulk, !bulk.done {
-                    ProgressView().scaleEffect(0.6)
+            Button(action: ping) {
+                VStack(spacing: 2) {
+                    if let bulk, !bulk.done {
+                        ProgressView().scaleEffect(0.6).frame(width: 30, height: 26)
+                    } else {
+                        Image(systemName: result == nil ? "waveform.path.ecg" : "arrow.clockwise")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(Theme.accent)
+                            .frame(width: 30, height: 26)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color(uiColor: .tertiarySystemFill)))
+                    }
                 }
             }
+            .buttonStyle(.borderless)
+            .disabled(busy)
+            .accessibilityLabel("Пинг")
         }
         .padding(.vertical, 5)
     }

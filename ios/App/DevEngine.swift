@@ -222,20 +222,33 @@ final class DevEngine: ObservableObject {
     @Published private(set) var bulk: [BulkRow] = []
     @Published private(set) var bulkRunning = false
 
-    /// Проверяет все профили подряд: старт → локальный порт → внешний IP и страна → стоп.
-    /// Turnable-профили пропускаются сразу: в них нет ключей, туннель собрать не из чего.
+    /// Виды профилей, которые sing-box умеет проверить одним конфигом (параллельно).
+    /// WireGuard — это `endpoints`, Clash API их не видит; Xray и WireTurn — другое ядро/транспорт.
+    static let parallelKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru]
+
+    /// Проверка всех серверов: сначала параллельно тем, что умеет sing-box (одно ядро,
+    /// Clash API), потом по очереди остальными (WireGuard, Xray, WireTurn).
     func checkAll(profiles: [Profile]) async {
         guard !bulkRunning, !profiles.isEmpty else { return }
         bulkRunning = true
+        defer { bulkRunning = false }
         bulk = profiles.map { BulkRow(id: $0.id, name: $0.name, badge: $0.badge ?? $0.kind.title) }
+
+        let parallel = profiles.filter { Self.parallelKinds.contains($0.kind) }
+        let sequential = profiles.filter { !Self.parallelKinds.contains($0.kind) }
+
+        if !parallel.isEmpty {
+            await runParallel(parallel)
+        }
+
         var wireturnChecked = 0
-        for (index, profile) in profiles.enumerated() {
+        for profile in sequential {
+            guard let index = bulk.firstIndex(where: { $0.id == profile.id }) else { continue }
             append("проверка: \(profile.name) [\(profile.kind.title)]")
-            // VK ограничивает частоту капч (ERROR_LIMIT), поэтому в серии проверяем только первый
-            // WireTurn: иначе вторая-третья авторизации упираются в лимит и «не работают» ложно.
+            // VK ограничивает частоту капч (ERROR_LIMIT), поэтому в серии проверяем не больше 8.
             if Self.needsTransport(profile) {
                 if wireturnChecked >= 8 {
-                    bulk[index].note = "в серии пропущен: проверяем не больше 8 VK-авторизаций подряд"
+                    bulk[index].note = "в серии пропущен: не больше 8 VK-авторизаций подряд"
                     bulk[index].done = true
                     append("пропуск: \(profile.name) — лимит капчи VK на серию")
                     continue
@@ -244,9 +257,7 @@ final class DevEngine: ObservableObject {
             }
 
             if profile.kind == .turnable && !ConfigBuilder.hasWireGuard(profile.payload) {
-                // Транспорт проверяется отдельно: VK-авторизация, капча, SRTP-сессия с гейтвеем.
                 start(profile: profile)
-                // Хендшейк занимает секунды, поэтому даём транспорту время, а не гасим сразу.
                 try? await Task.sleep(nanoseconds: 8_000_000_000)
                 let transportUp = isTransportRunning
                 bulk[index].note = transportUp
@@ -266,11 +277,7 @@ final class DevEngine: ObservableObject {
                 stop()
                 continue
             }
-            // WireTurn поднимает VK-сессию дольше остальных (авторизация, капча, SRTP):
-            // держим окно до 40 с, остальным хватает 12 с.
             let deadline = Date().addingTimeInterval(Self.needsTransport(profile) ? 40 : 12)
-            // Мёртвый профиль (WARP из панели: хендшейк не отвечает) иначе держит очередь
-            // десятками секунд — внутри пробы три резервных сервиса по 10–20 с.
             var result = await Probe.timed(port: proxyPort, timeout: Self.needsTransport(profile) ? 20 : 12)
                 ?? ProbeResult(ok: false, error: "таймаут проверки")
             while !result.ok, Date() < deadline {
@@ -283,9 +290,66 @@ final class DevEngine: ObservableObject {
             stop()
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
-        bulkRunning = false
         append("проверка всех серверов завершена")
     }
+
+    /// Параллельная часть: одно ядро, все серверы внутри, задержка каждого — через Clash API.
+    /// Ядро не перезапускается на каждый сервер, поэтому серия из 29 профилей не превращается
+    /// в 29 стартов и остановок.
+    private func runParallel(_ profiles: [Profile]) async {
+        var tags: [UUID: String] = [:]
+        do {
+            let built = try ConfigBuilder.pingConfig(profiles: profiles)
+            tags = built.tags
+            stop()
+            try boot()
+            guard let server else {
+                throw NSError(domain: "throne.ping", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "command server не создан"])
+            }
+            try server.startOrReloadService(built.json, options: LibboxOverrideOptions())
+            running = true
+            append("параллельный пинг: \(tags.count) серверов одним ядром")
+        } catch {
+            append("параллельный пинг недоступен: \(Self.describe(error)) — проверяю по одному")
+            stop()
+            return
+        }
+
+        guard await waitListening() else {
+            append("параллельный пинг: ядро не слушает \(socksAddress)")
+            stop()
+            return
+        }
+        // Clash API поднимается вместе с сервисом, но не мгновенно.
+        for _ in 0..<10 {
+            if await ClashApi.version() != nil { break }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+
+        let target = "https://www.cloudflare.com/cdn-cgi/trace"
+        let list = profiles.filter { tags[$0.id] != nil }
+        var index = 0
+        while index < list.count {
+            let chunk = Array(list[index..<min(index + 8, list.count)])
+            await withTaskGroup(of: (UUID, Int?).self) { group in
+                for profile in chunk {
+                    let tag = tags[profile.id] ?? ""
+                    group.addTask { (profile.id, await ClashApi.delay(tag: tag, url: target)) }
+                }
+                for await (id, millis) in group {
+                    guard let row = bulk.firstIndex(where: { $0.id == id }) else { continue }
+                    bulk[row].result = ProbeResult(ok: millis != nil, millis: millis,
+                                                   error: millis == nil ? "нет ответа через туннель" : nil)
+                    bulk[row].done = true
+                }
+            }
+            index += 8
+        }
+        append("параллельный пинг завершён")
+        stop()
+    }
+
 
     /// Проверка одного профиля из списка: старт → IP/страна/пинг → стоп.
     /// Результат кладём в тот же массив, что и «Проверить все», чтобы строка списка

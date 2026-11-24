@@ -13,6 +13,16 @@ struct ProbeResult {
     var millis: Int?
     var error: String?
 
+    /// «🇫🇮 FI · 186 мс» — для строки списка: страна кодом, чтобы всё влезало в одну строку.
+    var shortSummary: String {
+        guard ok else { return error ?? "нет связи" }
+        var parts: [String] = []
+        if let short = Probe.shortCountry(code: countryCode) { parts.append(short) }
+        if let millis { parts.append("\(millis) мс") }
+        if parts.isEmpty, let ip { parts.append(ip) }
+        return parts.joined(separator: " · ")
+    }
+
     /// «IP 1.2.3.4 · 🇩🇪 Германия · Berlin · 412 мс» либо «нет связи: …».
     var summary: String {
         guard ok, let ip else { return "нет связи — \(error ?? "неизвестная ошибка")" }
@@ -194,6 +204,13 @@ enum Probe {
         let name = Locale(identifier: "ru_RU").localizedString(forRegionCode: code.uppercased()) ?? code
         let flag = self.flag(code)
         return flag.isEmpty ? name : "\(flag) \(name)"
+    }
+
+    /// Короткая подпись страны: флаг + ISO-код («🇩🇪 DE»). Нужна там, где важна одна строка.
+    static func shortCountry(code: String?) -> String? {
+        guard let code, code.count == 2 else { return nil }
+        let flag = self.flag(code)
+        return flag.isEmpty ? code.uppercased() : "\(flag) \(code.uppercased())"
     }
 
     /// Код страны → флаг-эмодзи («DE» → 🇩🇪).
