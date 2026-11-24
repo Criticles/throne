@@ -285,8 +285,8 @@ struct SpeedGraph: View {
     }
 
     private var peak: Double {
-        let candidates = [(down.max() ?? 0), (up.max() ?? 0), 1]
-        return candidates.max() ?? 1
+        let candidates: [Double] = [down.max() ?? 0, up.max() ?? 0, 1.0]
+        return candidates.max() ?? 1.0
     }
 
     private func line(values: [Double], peak: Double, size: CGSize, color: Color) -> some View {
