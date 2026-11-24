@@ -16,7 +16,6 @@ struct StatsView: View {
             countersSection
             speedSection
             trafficSection
-            ruleSection
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Статистика")
@@ -100,21 +99,6 @@ struct StatsView: View {
             }
         } header: {
             Text("Трафик по серверам")
-        }
-    }
-
-    private var ruleSection: some View {
-        Section {
-            TextField("например, cdn.example.com", text: $domain)
-                .autocapitalization(.none)
-                .disableAutocorrection(true)
-            Text(rules.evaluate(domain))
-                .font(.footnote)
-                .foregroundColor(.secondary)
-        } header: {
-            Text("По какому правилу пойдёт домен")
-        } footer: {
-            Text("Проверка по вашим правилам, без запуска ядра.")
         }
     }
 

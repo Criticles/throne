@@ -25,7 +25,10 @@ struct ServerDetailsView: View {
 
     private var pingText: String {
         guard let row = bulkRow, let result = row.result else { return "не проверялся" }
-        return result.ok ? (result.shortSummary) : (result.error ?? "нет связи")
+        guard result.ok else { return result.error ?? "нет связи" }
+        let country = Probe.countryName(code: result.countryCode, fallback: result.country) ?? result.ip ?? ""
+        let millis = result.millis.map { String($0) + " мс" } ?? ""
+        return (country + " · " + millis).trimmingCharacters(in: .whitespaces)
     }
 
     private var speedText: String {
