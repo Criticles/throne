@@ -93,11 +93,26 @@ final class DevEngine: ObservableObject {
         }
     }
 
-    /// Пинг одного сервера из строки списка.
+    /// Пинг одного сервера из строки списка. Идёт тем же путём, что и серия проверок:
+    /// у endpoint-профилей свои таймауты, повторы и цель без DNS — а не «12 секунд на всё».
     func runCheck(profile: Profile) {
         measurementTask?.cancel()
+        if !bulk.contains(where: { $0.id == profile.id }) {
+            bulk.append(BulkRow(id: profile.id, name: profile.name,
+                                badge: profile.badge ?? profile.kind.title))
+        }
         measurementTask = Task { [weak self] in
-            await self?.check(profile: profile)
+            guard let self else { return }
+            let owned = !self.bulkRunning
+            if owned {
+                self.bulkRunning = true
+                self.cancelRequested = false
+            }
+            await self.checkSequential([profile])
+            if owned {
+                self.bulkRunning = false
+                self.probing = false
+            }
         }
     }
 
@@ -108,6 +123,14 @@ final class DevEngine: ObservableObject {
         measurementTask = nil
         // Обрыв самой загрузки: без этого файл на 10 МБ доезжает до конца.
         Self.abortSpeedSession()
+        // Кружок «идёт замер» снимается только результатом строки, а при отмене результата
+        // не будет — поэтому закрываем все ожидающие строки сами, иначе они висят со
+        // спиннером до следующей проверки.
+        for index in bulk.indices where !bulk[index].done {
+            bulk[index].done = true
+            bulk[index].note = "отменено"
+        }
+        if !bulk.isEmpty { append("проверка отменена") }
         bulkRunning = false
         speedRunning = nil
         probing = false
@@ -623,49 +646,9 @@ final class DevEngine: ObservableObject {
                    seconds: seconds)
     }
 
-    /// Проверка одного профиля из списка: старт → IP/страна/пинг → стоп.
-    /// Результат кладём в тот же массив, что и «Проверить все», чтобы строка списка
-    /// показывала свежие цифры, не сбрасывая остальные.
-    func check(profile: Profile) async {
-        guard !bulkRunning else { return }
-        bulkRunning = true
-        defer { bulkRunning = false }
-        let row = BulkRow(id: profile.id, name: profile.name, badge: profile.badge ?? profile.kind.title)
-        if let existing = bulk.firstIndex(where: { $0.id == profile.id }) {
-            bulk[existing] = row
-        } else {
-            bulk.append(row)
-        }
-        guard let index = bulk.firstIndex(where: { $0.id == profile.id }) else { return }
-        append("проверка: \(profile.name) [\(profile.kind.title)]")
-
-        // Ядро уже держит этот сервер в живом конфиге — пингуем через его собственный вход:
-        // соединение не рвётся, ответ приходит за секунду. Перезапуск нужен только тем,
-        // кого в живом конфиге нет (WireGuard-эндпоинты, Xray, WireTurn).
-        if running, !transportOnly, let port = probePorts[profile.id] {
-            let result = await Probe.timed(port: port, timeout: 12)
-                ?? ProbeResult(ok: false, error: "таймаут проверки")
-            bulk[index].result = result
-            bulk[index].done = true
-            append("итог: \(profile.name) → \(result.summary)")
-            return
-        }
-
-        start(profile: profile)
-        if await waitListening() {
-            let timeout: Double = Self.needsTransport(profile) ? 20 : 12
-            let result = await Probe.timed(port: proxyPort, timeout: timeout)
-                ?? ProbeResult(ok: false, error: "таймаут проверки")
-            bulk[index].result = result
-            append("итог: \(profile.name) → \(result.summary)")
-        } else {
-            let result = ProbeResult(ok: false, error: lastError ?? "ядро не слушает \(socksAddress)")
-            bulk[index].result = result
-            append("итог: \(profile.name) → \(result.summary)")
-        }
-        bulk[index].done = true
-        stop()
-    }
+    /// Проверка одного профиля идёт через `checkSequential` (см. `runCheck`): у endpoint-профилей
+    /// там свои таймауты, повторы и цель без DNS. Отдельный упрощённый путь удалён — он мерил
+    /// WireGuard теми же 12 секундами, что и VLESS, и всегда показывал «Недоступен».
 
     /// Ждём, пока ядро откроет локальный порт (до 10 с), не блокируя интерфейс.
     private func waitListening() async -> Bool {

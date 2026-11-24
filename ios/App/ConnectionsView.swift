@@ -12,8 +12,17 @@ struct ConnectionsView: View {
     @State private var query = ""
     @State private var networkFilter = 0        // 0 — все, 1 — tcp, 2 — udp
     @State private var ruleFilter = ""          // "" — все
-    @State private var selected: ClashApi.Connection?
+    @State private var outboundFilter = ""      // "" — все
     @State private var refreshed = Date()
+    /// Один активный лист на весь экран: несколько `.sheet` на одном виде в iOS 15 конфликтуют.
+    @State private var activeSheet: ConnectionsSheet?
+
+    /// Пауза: сбор соединений останавливается, список замирает на моменте нажатия —
+    /// вместе с теми соединениями, что закрылись в последние пять секунд.
+    @State private var paused = false
+    @State private var recentlyClosed: [ClashApi.Connection] = []
+    @State private var closedAt: [String: Date] = [:]
+    @State private var notice = ""
 
     private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -23,10 +32,31 @@ struct ConnectionsView: View {
         return names.sorted()
     }
 
+    private var outboundNames: [String] {
+        var names: [String] = []
+        for item in connections where !names.contains(item.outbound) { names.append(item.outbound) }
+        return names.sorted()
+    }
+
+    private var filterActive: Bool {
+        !query.isEmpty || networkFilter != 0 || !ruleFilter.isEmpty || !outboundFilter.isEmpty
+    }
+
+    /// Что показываем: на паузе — снимок плюс те, кто закрылся в последние пять секунд.
+    private var shown: [ClashApi.Connection] {
+        guard paused else { return connections }
+        var merged = connections
+        for item in recentlyClosed where !merged.contains(where: { $0.id == item.id }) {
+            merged.append(item)
+        }
+        return merged
+    }
+
     private var visible: [ClashApi.Connection] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return connections.filter { item in
+        return shown.filter { item in
             if !ruleFilter.isEmpty, item.rule != ruleFilter { return false }
+            if !outboundFilter.isEmpty, item.outbound != outboundFilter { return false }
             switch networkFilter {
             case 1: if item.network.lowercased() != "tcp" { return false }
             case 2: if item.network.lowercased() != "udp" { return false }
@@ -42,38 +72,132 @@ struct ConnectionsView: View {
 
     private var totalUp: Int64 {
         var total: Int64 = 0
-        for item in connections { total += Int64(item.upload) }
+        for item in shown { total += Int64(item.upload) }
         return total
     }
 
     private var totalDown: Int64 {
         var total: Int64 = 0
-        for item in connections { total += Int64(item.download) }
+        for item in shown { total += Int64(item.download) }
         return total
     }
 
     var body: some View {
         NavigationView {
             List {
+                if paused || !notice.isEmpty { statusSection }
                 summarySection
-                filterSection
+                if filterActive { activeFilterSection }
                 listSection
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Соединения")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { toolbarContent }
             .onReceive(timer) { _ in refresh() }
             .onAppear { refresh() }
-            .sheet(item: $selected) { item in
-                ConnectionDetailView(connection: item) { attr, value, title in
-                    selected = nil
-                    // Даём шторке закрыться, иначе переход не виден.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        router.openRouting(with: RouteInsertPrefill(title: title, attr: attr, value: value))
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .detail(let item):
+                    ConnectionDetailView(connection: item) { attr, value, title in
+                        activeSheet = nil
+                        // Даём шторке закрыться, иначе переход не виден.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            router.openRouting(with: RouteInsertPrefill(title: title, attr: attr, value: value))
+                        }
                     }
+                case .filter:
+                    ConnectionsFilterSheet(query: $query,
+                                           network: $networkFilter,
+                                           rule: $ruleFilter,
+                                           outbound: $outboundFilter,
+                                           rules: ruleNames,
+                                           outbounds: outboundNames)
+                case .export(let url):
+                    ShareSheet(items: [url])
                 }
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Menu {
+                Button {
+                    paused.toggle()
+                    notice = paused ? "пауза: список не обновляется" : ""
+                } label: {
+                    Label(paused ? "Продолжить" : "Пауза",
+                          systemImage: paused ? "play.fill" : "pause.fill")
+                }
+                Button {
+                    activeSheet = .filter
+                } label: {
+                    Label(filterActive ? "Фильтр (включён)" : "Фильтр",
+                          systemImage: "line.3.horizontal.decrease.circle")
+                }
+                Divider()
+                Button {
+                    UIPasteboard.general.string = plainText(visible)
+                    notice = "скопировано: \(visible.count) соединений"
+                } label: {
+                    Label("Скопировать", systemImage: "doc.on.doc")
+                }
+                Button {
+                    export()
+                } label: {
+                    Label("Экспорт в txt", systemImage: "square.and.arrow.up")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+        }
+    }
+
+    private var statusSection: some View {
+        Section {
+            if paused {
+                Label("Пауза — список замер на \(Self.time.string(from: refreshed))", systemImage: "pause.circle")
+                    .font(.footnote)
+                    .foregroundColor(.orange)
+            }
+            if !notice.isEmpty {
+                Text(notice).font(.caption2).foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private var activeFilterSection: some View {
+        Section {
+            HStack(spacing: 6) {
+                Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                    .foregroundColor(Theme.accent)
+                Text(filterSummary).font(.caption2)
+                Spacer()
+                Button("Сбросить") {
+                    query = ""
+                    networkFilter = 0
+                    ruleFilter = ""
+                    outboundFilter = ""
+                }
+                .font(.caption2.weight(.medium))
+                .buttonStyle(.borderless)
+            }
+        } footer: {
+            Text("Показано \(visible.count) из \(shown.count)")
+        }
+    }
+
+    private var filterSummary: String {
+        var parts: [String] = []
+        if !query.isEmpty { parts.append("«\(query)»") }
+        if networkFilter == 1 { parts.append("tcp") }
+        if networkFilter == 2 { parts.append("udp") }
+        if !ruleFilter.isEmpty { parts.append("правило: \(ruleFilter)") }
+        if !outboundFilter.isEmpty { parts.append("сервер: \(outboundFilter)") }
+        return parts.joined(separator: " · ")
     }
 
     private var summarySection: some View {
@@ -89,7 +213,7 @@ struct ConnectionsView: View {
             HStack {
                 Text("Соединений")
                 Spacer()
-                Text(String(connections.count)).foregroundColor(.secondary)
+                Text(String(shown.count)).foregroundColor(.secondary)
             }
             .font(.footnote)
             HStack {
@@ -103,42 +227,9 @@ struct ConnectionsView: View {
         }
     }
 
-    private var filterSection: some View {
-        Section {
-            TextField("домен, IP или порт", text: $query)
-                .autocapitalization(.none)
-                .disableAutocorrection(true)
-            Picker("Сеть", selection: $networkFilter) {
-                Text("Все").tag(0)
-                Text("tcp").tag(1)
-                Text("udp").tag(2)
-            }
-            .pickerStyle(.segmented)
-            Menu {
-                Button("Все правила") { ruleFilter = "" }
-                ForEach(ruleNames, id: \.self) { name in
-                    Button(name) { ruleFilter = name }
-                }
-            } label: {
-                HStack {
-                    Text("Правило")
-                    Spacer()
-                    Text(ruleFilter.isEmpty ? "все" : ruleFilter)
-                        .foregroundColor(.secondary)
-                }
-            }
-        } header: {
-            Text("Фильтр")
-        } footer: {
-            Text(visible.count == connections.count
-                 ? "Показаны все соединения"
-                 : "Показано \(visible.count) из \(connections.count)")
-        }
-    }
-
     private var listSection: some View {
         Section {
-            if connections.isEmpty {
+            if shown.isEmpty {
                 Text(engine.running
                      ? "живых соединений нет"
                      : "ядро выключено — поднимите туннель на вкладке «Серверы»")
@@ -147,7 +238,7 @@ struct ConnectionsView: View {
             }
             ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
                 Button {
-                    selected = item
+                    activeSheet = .detail(item)
                 } label: {
                     connectionRow(index: index + 1, item: item)
                 }
@@ -232,6 +323,8 @@ struct ConnectionsView: View {
     }
 
     private func refresh() {
+        // На паузе список не трогаем: он показывает соединения на момент нажатия.
+        guard !paused else { return }
         guard engine.running else {
             connections = []
             return
@@ -239,12 +332,64 @@ struct ConnectionsView: View {
         Task {
             let list = await ClashApi.connections()
             await MainActor.run {
+                guard !paused else { return }
+                // Соединения, закрывшиеся с прошлого опроса, держим ещё пять секунд: на паузе
+                // видно и то, что только что оборвалось, — иначе строка исчезает до нажатия.
+                let now = Date()
+                let currentIDs = Set(list.map { $0.id })
+                for item in connections where !currentIDs.contains(item.id) {
+                    if !recentlyClosed.contains(where: { $0.id == item.id }) {
+                        recentlyClosed.append(item)
+                        closedAt[item.id] = now
+                    }
+                }
+                recentlyClosed.removeAll { item in
+                    guard let closed = closedAt[item.id] else { return true }
+                    return now.timeIntervalSince(closed) > 5
+                }
+                if recentlyClosed.count > 80 {
+                    recentlyClosed = Array(recentlyClosed.suffix(80))
+                }
+
                 connections = list
                 refreshed = Date()
                 if !ruleFilter.isEmpty, !list.contains(where: { $0.rule == ruleFilter }) {
                     ruleFilter = ""
                 }
+                if !outboundFilter.isEmpty, !list.contains(where: { $0.outbound == outboundFilter }) {
+                    outboundFilter = ""
+                }
             }
+        }
+    }
+
+    /// Таблица в текст: одна строка на соединение, читается и в чате, и в файле.
+    private func plainText(_ list: [ClashApi.Connection]) -> String {
+        var lines: [String] = []
+        lines.append("Соединения · \(Self.fileStamp.string(from: Date())) · всего \(list.count)")
+        for (index, item) in list.enumerated() {
+            var parts: [String] = []
+            parts.append(item.destination)
+            if !item.source.isEmpty { parts.append("из " + item.source) }
+            if !item.proto.isEmpty { parts.append(item.proto) }
+            parts.append(networkText(item))
+            parts.append("↑ " + Self.size(Int64(item.upload)) + " ↓ " + Self.size(Int64(item.download)))
+            parts.append(ruleText(item))
+            parts.append(item.outbound)
+            lines.append(String(index + 1) + ". " + parts.joined(separator: " · "))
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func export() {
+        let text = plainText(visible)
+        let name = "throne-connections-" + Self.fileStamp.string(from: Date()) + ".txt"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            activeSheet = .export(url)
+        } catch {
+            notice = "экспорт не удался: " + error.localizedDescription
         }
     }
 
@@ -269,6 +414,97 @@ struct ConnectionsView: View {
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
+
+    /// Для имени файла экспорта: дата и минута.
+    private static let fileStamp: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmm"
+        return formatter
+    }()
+}
+
+/// Листы экрана «Соединения»: подробности, фильтр и файл экспорта.
+enum ConnectionsSheet: Identifiable {
+    case detail(ClashApi.Connection)
+    case filter
+    case export(URL)
+
+    var id: String {
+        switch self {
+        case .detail(let item): return "detail-" + item.id
+        case .filter: return "filter"
+        case .export(let url): return "export-" + url.lastPathComponent
+        }
+    }
+}
+
+/// Окно фильтра соединений: адрес, сеть, правило и выходной сервер.
+struct ConnectionsFilterSheet: View {
+    @Environment(\.presentationMode) private var presentation
+
+    @Binding var query: String
+    @Binding var network: Int
+    @Binding var rule: String
+    @Binding var outbound: String
+
+    let rules: [String]
+    let outbounds: [String]
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("домен, IP или порт", text: $query)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                } header: {
+                    Text("Адрес")
+                }
+
+                Section {
+                    Picker("Сеть", selection: $network) {
+                        Text("Все").tag(0)
+                        Text("tcp").tag(1)
+                        Text("udp").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    Picker("Правило", selection: $rule) {
+                        Text("все").tag("")
+                        ForEach(rules, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    Picker("Выходной сервер", selection: $outbound) {
+                        Text("все").tag("")
+                        ForEach(outbounds, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                } header: {
+                    Text("Условия")
+                } footer: {
+                    Text("Значения берутся из живых соединений: правила и сервера, которых сейчас нет в списке, сюда не попадают.")
+                }
+
+                Section {
+                    Button("Сбросить фильтр") {
+                        query = ""
+                        network = 0
+                        rule = ""
+                        outbound = ""
+                    }
+                }
+            }
+            .navigationTitle("Фильтр")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") { presentation.wrappedValue.dismiss() }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
 }
 
 /// Подробности соединения: адрес, порт и кнопки «добавить в правило».
