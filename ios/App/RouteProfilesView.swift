@@ -5,10 +5,22 @@ import SwiftUI
 struct RouteProfilesView: View {
     @EnvironmentObject private var rules: RuleStore
 
-    @State private var showImport = false
+    /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки.
+    private enum Sheet: Identifiable {
+        case newName, importPlan
+        case export(RoutePlan)
+
+        var id: String {
+            switch self {
+            case .newName: return "newName"
+            case .importPlan: return "import"
+            case .export(let plan): return "export-\(plan.id.uuidString)"
+            }
+        }
+    }
+
+    @State private var sheet: Sheet?
     @State private var importText = ""
-    @State private var exportPlan: RoutePlan?
-    @State private var showNewName = false
     @State private var newName = ""
 
     var body: some View {
@@ -63,7 +75,7 @@ struct RouteProfilesView: View {
                             Label("Дублировать", systemImage: "plus.square.on.square")
                         }
                         Button {
-                            exportPlan = plan
+                            sheet = .export(plan)
                         } label: {
                             Label("Экспорт", systemImage: "square.and.arrow.up")
                         }
@@ -86,7 +98,7 @@ struct RouteProfilesView: View {
             Section {
                 Button {
                     newName = ""
-                    showNewName = true
+                    sheet = .newName
                 } label: {
                     Label("Новый профиль", systemImage: "plus.circle")
                 }
@@ -97,7 +109,7 @@ struct RouteProfilesView: View {
                 }
                 Button {
                     importText = ""
-                    showImport = true
+                    sheet = .importPlan
                 } label: {
                     Label("Импорт JSON / Throne вручную", systemImage: "square.and.arrow.down")
                 }
@@ -108,10 +120,15 @@ struct RouteProfilesView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Профили маршрутизации")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showNewName) { newNameSheet }
-        .sheet(isPresented: $showImport) { importSheet }
-        .sheet(item: $exportPlan) { plan in
-            RouteExportView(plan: plan)
+        .sheet(item: $sheet) { item in
+            switch item {
+            case .newName:
+                newNameSheet
+            case .importPlan:
+                importSheet
+            case .export(let plan):
+                RouteExportView(plan: plan)
+            }
         }
     }
 
@@ -128,13 +145,13 @@ struct RouteProfilesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { showNewName = false }
+                    Button("Отмена") { sheet = nil }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Создать") {
                         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
                         rules.addPlan(name: trimmed.isEmpty ? "Профиль" : trimmed)
-                        showNewName = false
+                        sheet = nil
                     }
                 }
             }
@@ -145,7 +162,7 @@ struct RouteProfilesView: View {
     private var importSheet: some View {
         RouteImportView(text: $importText) {
             if rules.importPlan(from: importText) != nil {
-                showImport = false
+                sheet = nil
             }
         }
     }

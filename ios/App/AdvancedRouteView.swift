@@ -22,11 +22,26 @@ struct AdvancedRouteView: View {
     @State private var tab = 0
     @State private var loaded = false
 
-    @State private var editingRule: RoutePlanRule?
-    @State private var showNewRule = false
+    /// Один лист на экран: несколько `.sheet` на одном виде в iOS 15 конфликтуют, и открывается
+    /// только последний.
+    private enum Sheet: Identifiable {
+        case rule(RoutePlanRule)
+        case newFolder
+        case preview
+        case export
+
+        var id: String {
+            switch self {
+            case .rule(let rule): return "rule-\(rule.id.uuidString)"
+            case .newFolder: return "newFolder"
+            case .preview: return "preview"
+            case .export: return "export"
+            }
+        }
+    }
+
+    @State private var sheet: Sheet?
     @State private var newRuleName = ""
-    @State private var showPreview = false
-    @State private var showExport = false
 
     private var targets: [String] {
         var list = ["proxy", "direct", "reject"]
@@ -65,21 +80,21 @@ struct AdvancedRouteView: View {
                 Button("Сохранить") { save() }
             }
         }
-        .sheet(item: $editingRule) { rule in
-            RouteRuleEditorView(rule: rule, targets: targets) { updated in
-                if let index = folders.firstIndex(where: { $0.id == updated.id }) {
-                    folders[index] = updated
+        .sheet(item: $sheet) { item in
+            switch item {
+            case .rule(let rule):
+                RouteRuleEditorView(rule: rule, targets: targets) { updated in
+                    if let index = folders.firstIndex(where: { $0.id == updated.id }) {
+                        folders[index] = updated
+                    }
                 }
+            case .newFolder:
+                newRuleSheet
+            case .preview:
+                RouteJSONSheet(title: name, text: rules.planJSON(plan))
+            case .export:
+                RouteExportView(plan: plan)
             }
-        }
-        .sheet(isPresented: $showNewRule) {
-            newRuleSheet
-        }
-        .sheet(isPresented: $showPreview) {
-            RouteJSONSheet(title: name, text: rules.planJSON(plan))
-        }
-        .sheet(isPresented: $showExport) {
-            RouteExportView(plan: plan)
         }
         .onAppear(perform: load)
     }
@@ -138,7 +153,7 @@ struct AdvancedRouteView: View {
 
             Button {
                 newRuleName = ""
-                showNewRule = true
+                sheet = .newFolder
             } label: {
                 Label("Добавить папку с атрибутами", systemImage: "folder.badge.plus")
             }
@@ -152,12 +167,12 @@ struct AdvancedRouteView: View {
     private var previewSection: some View {
         Section {
             Button {
-                showPreview = true
+                sheet = .preview
             } label: {
                 Label("Предварительный просмотр JSON", systemImage: "curlybraces")
             }
             Button {
-                showExport = true
+                sheet = .export
             } label: {
                 Label("Экспорт (JSON или Throne)", systemImage: "square.and.arrow.up")
             }
@@ -173,7 +188,7 @@ struct AdvancedRouteView: View {
     private func folderRow(_ rule: RoutePlanRule) -> some View {
         HStack(spacing: 8) {
             Button {
-                editingRule = rule
+                sheet = .rule(rule)
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(rule.name.isEmpty ? "Папка" : rule.name)
@@ -231,14 +246,18 @@ struct AdvancedRouteView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { showNewRule = false }
+                    Button("Отмена") { sheet = nil }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Создать") {
                         let created = RoutePlanRule(name: newRuleName.trimmingCharacters(in: .whitespacesAndNewlines))
                         folders.append(created)
-                        showNewRule = false
-                        editingRule = created
+                        // Сначала закрываем лист создания: подмена одного листа другим на iOS 15
+                        // не срабатывает, поэтому редактор открываем чуть позже.
+                        sheet = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            sheet = .rule(created)
+                        }
                     }
                     .disabled(newRuleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -297,9 +316,21 @@ struct RouteRuleEditorView: View {
     let targets: [String]
     let onSave: (RoutePlanRule) -> Void
 
+    /// Один лист на экран (iOS 15 не умеет два `.sheet` на одном виде).
+    private enum Sheet: Identifiable {
+        case attribute
+        case value(RoutePlanAttr)
+
+        var id: String {
+            switch self {
+            case .attribute: return "attribute"
+            case .value(let attr): return "value-\(attr.id.uuidString)"
+            }
+        }
+    }
+
     @State private var rule: RoutePlanRule
-    @State private var showAttrPicker = false
-    @State private var editingAttr: RoutePlanAttr?
+    @State private var sheet: Sheet?
 
     init(rule: RoutePlanRule, targets: [String], onSave: @escaping (RoutePlanRule) -> Void) {
         self.targets = targets
@@ -346,7 +377,7 @@ struct RouteRuleEditorView: View {
                         rule.attrs.remove(atOffsets: offsets)
                     }
                     Button {
-                        showAttrPicker = true
+                        sheet = .attribute
                     } label: {
                         Label("Добавить атрибут", systemImage: "plus.circle")
                     }
@@ -369,15 +400,17 @@ struct RouteRuleEditorView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showAttrPicker) {
-                RouteAttributePicker { attr in
-                    addAttr(attr)
-                }
-            }
-            .sheet(item: $editingAttr) { item in
-                RouteValueView(attr: item.attr, values: item.values) { updated in
-                    if let index = rule.attrs.firstIndex(where: { $0.id == item.id }) {
-                        rule.attrs[index].values = updated
+            .sheet(item: $sheet) { item in
+                switch item {
+                case .attribute:
+                    RouteAttributePicker { attr in
+                        addAttr(attr)
+                    }
+                case .value(let current):
+                    RouteValueView(attr: current.attr, values: current.values) { updated in
+                        if let index = rule.attrs.firstIndex(where: { $0.id == current.id }) {
+                            rule.attrs[index].values = updated
+                        }
                     }
                 }
             }
@@ -388,7 +421,7 @@ struct RouteRuleEditorView: View {
     private func attrRow(_ item: RoutePlanAttr) -> some View {
         HStack(spacing: 8) {
             Button {
-                editingAttr = item
+                sheet = .value(item)
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.attr)
@@ -405,7 +438,7 @@ struct RouteRuleEditorView: View {
             .buttonStyle(.plain)
 
             if RouteAttribute.needsChoice(item.attr) {
-                Button("Выбрать") { editingAttr = item }
+                Button("Выбрать") { sheet = .value(item) }
                     .font(.caption2.weight(.medium))
                     .buttonStyle(.borderless)
             }
@@ -426,10 +459,12 @@ struct RouteRuleEditorView: View {
         guard !rule.attrs.contains(where: { $0.attr == attr }) else { return }
         let created = RoutePlanAttr(attr: attr)
         rule.attrs.append(created)
-        // Сразу открываем значения: лишний тап по новой строке не нужен.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+        // Сразу открываем значения: лишний тап по новой строке не нужен. Список атрибутов
+        // закрываем сами — iOS 15 не открывает второй лист поверх закрывающегося.
+        sheet = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if let fresh = rule.attrs.first(where: { $0.id == created.id }) {
-                editingAttr = fresh
+                sheet = .value(fresh)
             }
         }
     }

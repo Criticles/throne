@@ -10,18 +10,31 @@ struct ProfilesView: View {
     @State private var folderID: UUID? = nil
     @State private var query = ""
     @State private var probeLine = ""
-    @State private var showAdd = false
+    /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки, остальные
+    /// молча не открываются.
+    private enum Sheet: Identifiable {
+        case add, scanner, subscriptions, log, newFolder
+        case qr(Profile), note(Profile), details(Profile)
+
+        var id: String {
+            switch self {
+            case .add: return "add"
+            case .scanner: return "scanner"
+            case .subscriptions: return "subscriptions"
+            case .log: return "log"
+            case .newFolder: return "newFolder"
+            case .qr(let profile): return "qr-\(profile.id.uuidString)"
+            case .note(let profile): return "note-\(profile.id.uuidString)"
+            case .details(let profile): return "details-\(profile.id.uuidString)"
+            }
+        }
+    }
+
+    @State private var sheet: Sheet?
     @State private var addText = ""
     @State private var addTitle = ""
     @State private var createFolder = true
-    @State private var showScanner = false
-    @State private var qrProfile: Profile?
-    @State private var noteProfile: Profile?
     @State private var noteText = ""
-    @State private var detailsProfile: Profile?
-    @State private var showSubscriptions = false
-    @State private var showLog = false
-    @State private var showNewFolder = false
     @State private var folderName = ""
     /// Куда класть новую подписку, когда выбрано «в существующую папку».
     @State private var targetFolderID: UUID?
@@ -131,19 +144,25 @@ struct ProfilesView: View {
             .searchable(text: $query, prompt: "Сервер или протокол")
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
-            .sheet(isPresented: $showAdd) { addSheet }
-            .sheet(isPresented: $showNewFolder) { newFolderSheet }
-            .sheet(isPresented: $showScanner) { scannerSheet }
-            .sheet(isPresented: $showSubscriptions) { SubscriptionEditorView() }
-            .sheet(isPresented: $showLog) { NavigationView { LogsView() } }
-            .sheet(item: $qrProfile) { profile in
-                QRCodeSheet(title: "QR сервера", text: shareLink(profile) ?? profile.payload)
-            }
-            .sheet(item: $noteProfile) { profile in
-                noteSheet(for: profile)
-            }
-            .sheet(item: $detailsProfile) { profile in
-                ServerDetailsView(profile: profile)
+            .sheet(item: $sheet) { item in
+                switch item {
+                case .add:
+                    addSheet
+                case .newFolder:
+                    newFolderSheet
+                case .scanner:
+                    scannerSheet
+                case .subscriptions:
+                    SubscriptionEditorView()
+                case .log:
+                    NavigationView { LogsView() }
+                case .qr(let profile):
+                    QRCodeSheet(title: "QR сервера", text: shareLink(profile) ?? profile.payload)
+                case .note(let profile):
+                    noteSheet(for: profile)
+                case .details(let profile):
+                    ServerDetailsView(profile: profile)
+                }
             }
         }
         .navigationViewStyle(.stack)
@@ -184,7 +203,7 @@ struct ProfilesView: View {
                         .font(.caption)
                         .foregroundColor(.red)
                     Spacer(minLength: 0)
-                    Button("Журнал") { showLog = true }
+                    Button("Журнал") { sheet = .log }
                         .font(.caption)
                 }
             }
@@ -264,7 +283,7 @@ struct ProfilesView: View {
                     }
                     Button {
                         folderName = ""
-                        showNewFolder = true
+                        sheet = .newFolder
                     } label: {
                         Image(systemName: "plus")
                             .font(.caption.weight(.semibold))
@@ -367,7 +386,7 @@ struct ProfilesView: View {
             .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
             .contentShape(Rectangle())
             .onTapGesture { store.select(profile.id) }
-            .onLongPressGesture { detailsProfile = profile }
+            .onLongPressGesture { sheet = .details(profile) }
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) {
                     store.delete(profile)
@@ -390,7 +409,7 @@ struct ProfilesView: View {
                 .tint(.yellow)
             }
             .contextMenu {
-                Button { detailsProfile = profile } label: {
+                Button { sheet = .details(profile) } label: {
                     Label("Сведения", systemImage: "info.circle")
                 }
                 Button { Task { await connect(profile) } } label: {
@@ -408,7 +427,7 @@ struct ProfilesView: View {
                 }
                 Button {
                     noteText = profile.userNote ?? ""
-                    noteProfile = profile
+                    sheet = .note(profile)
                 } label: {
                     Label(profile.userNote == nil ? "Добавить заметку" : "Изменить заметку",
                           systemImage: "text.bubble")
@@ -420,7 +439,7 @@ struct ProfilesView: View {
                     Button { UIPasteboard.general.string = deepLink(for: profile) } label: {
                         Label("Скопировать для Throne", systemImage: "link.badge.plus")
                     }
-                    Button { qrProfile = profile } label: {
+                    Button { sheet = .qr(profile) } label: {
                         Label("Показать QR", systemImage: "qrcode")
                     }
                 }
@@ -438,7 +457,7 @@ struct ProfilesView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
-            Button("Изм") { showSubscriptions = true }
+            Button("Изм") { sheet = .subscriptions }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
             Menu {
@@ -447,14 +466,14 @@ struct ProfilesView: View {
                     addTitle = ""
                     targetFolderID = folderID
                     createFolder = true
-                    showAdd = true
+                    sheet = .add
                 } label: {
                     Label("Подписка по ссылке", systemImage: "link")
                 }
                 Button { importClipboard() } label: {
                     Label("Импорт из буфера", systemImage: "doc.on.clipboard")
                 }
-                Button { showScanner = true } label: {
+                Button { sheet = .scanner } label: {
                     Label("Сканировать QR", systemImage: "qrcode.viewfinder")
                 }
                 if !store.subscriptions.isEmpty {
@@ -519,7 +538,7 @@ struct ProfilesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { showAdd = false }
+                    Button("Отмена") { sheet = nil }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Добавить") { addSubscription() }
@@ -544,12 +563,12 @@ struct ProfilesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { showNewFolder = false }
+                    Button("Отмена") { sheet = nil }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Создать") {
                         let created = store.addFolder(name: folderName)
-                        showNewFolder = false
+                        sheet = nil
                         folderID = created.id
                     }
                     .disabled(folderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -562,20 +581,23 @@ struct ProfilesView: View {
     private var scannerSheet: some View {
         NavigationView {
             QRScannerView { code in
-                showScanner = false
+                sheet = nil
                 // Тот же лист с выбором папки, что и для ссылки: скрытого создания нет.
                 addText = code
                 addTitle = ""
                 targetFolderID = store.lastFolderID
                 createFolder = true
-                showAdd = true
+                // Сканер закрылся — лист выбора папки открываем после закрытия.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    sheet = .add
+                }
             }
             .ignoresSafeArea()
             .navigationTitle("Наведите камеру на QR")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Закрыть") { showScanner = false }
+                    Button("Закрыть") { sheet = nil }
                 }
             }
         }
@@ -593,12 +615,12 @@ struct ProfilesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { noteProfile = nil }
+                    Button("Отмена") { sheet = nil }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Сохранить") {
                         store.setNote(noteText, for: profile)
-                        noteProfile = nil
+                        sheet = nil
                     }
                 }
             }
@@ -644,7 +666,7 @@ struct ProfilesView: View {
             target = store.addFolder(name: ProfileStore.folderName(for: input)).id
         }
         store.rememberFolder(target)
-        showAdd = false
+        sheet = nil
         folderID = target
         Task {
             if input.lowercased().hasPrefix("http") {
@@ -665,7 +687,7 @@ struct ProfilesView: View {
         addTitle = ""
         targetFolderID = store.lastFolderID
         createFolder = true
-        showAdd = true
+        sheet = .add
     }
 
     private func refreshCurrent() async {

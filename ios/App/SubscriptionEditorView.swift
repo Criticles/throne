@@ -8,17 +8,33 @@ struct SubscriptionEditorView: View {
 
     @State private var addURL = ""
     @State private var addName = ""
-    @State private var showAdd = false
-    @State private var editFolder: Folder?
+    /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки.
+    private enum Sheet: Identifiable {
+        case add
+        case settings(Folder)
+
+        var id: String {
+            switch self {
+            case .add: return "add"
+            case .settings(let folder): return "settings-\(folder.id.uuidString)"
+            }
+        }
+    }
+
+    @State private var sheet: Sheet?
 
     var body: some View {
         NavigationView {
             content
         }
         .navigationViewStyle(.stack)
-        .sheet(isPresented: $showAdd) { addSheet }
-        .sheet(item: $editFolder) { folder in
-            SubscriptionSettingsView(folderID: folder.id)
+        .sheet(item: $sheet) { item in
+            switch item {
+            case .add:
+                addSheet
+            case .settings(let folder):
+                SubscriptionSettingsView(folderID: folder.id)
+            }
         }
     }
 
@@ -32,7 +48,7 @@ struct SubscriptionEditorView: View {
                 }
                 ForEach(store.folders) { folder in
                     Button {
-                        editFolder = folder
+                        sheet = .settings(folder)
                     } label: {
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
@@ -77,7 +93,7 @@ struct SubscriptionEditorView: View {
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
-                    showAdd = true
+                    sheet = .add
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -121,7 +137,7 @@ struct SubscriptionEditorView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { showAdd = false }
+                    Button("Отмена") { sheet = nil }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Добавить") {
@@ -130,7 +146,7 @@ struct SubscriptionEditorView: View {
                         // Каждый импорт — своя папка: имя можно оставить и таким же, как у другой.
                         let base = typed.isEmpty ? ProfileStore.folderName(for: url) : typed
                         let folder = store.addFolder(name: base)
-                        showAdd = false
+                        sheet = nil
                         Task { await store.importFromURL(url, folderID: folder.id) }
                         addURL = ""
                         addName = ""
