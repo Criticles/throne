@@ -60,7 +60,7 @@ struct SettingsView: View {
         } header: {
             Text("Ядра")
         } footer: {
-            Text("sing-box — форк throneproj с WireTurn и AmneziaWG; Xray отвечает за VLESS + XHTTP, sing-box этот транспорт не умеет. MTU влияет только на WireTurn: поверх TURN и SRTP панельные 1280 фрагментируются.")
+            Text("sing-box и Xray взяты из Throne (throneproj). Xray отвечает за VLESS + XHTTP — sing-box этот транспорт не умеет.")
         }
     }
 
@@ -84,6 +84,20 @@ struct SettingsView: View {
             Text("Открывается список всех протоколов, которые умеет приложение. Выключенные не попадают в список при импорте и обновлении подписки.")
         }
         .sheet(isPresented: $showProtocols) { protocolsSheet }
+    }
+
+    /// Подписка с самым близким сроком окончания.
+    private var nearestExpiring: Subscription? {
+        var best: Subscription?
+        for subscription in store.subscriptions {
+            guard let expire = subscription.expire else { continue }
+            if let current = best?.expire {
+                if expire < current { best = subscription }
+            } else {
+                best = subscription
+            }
+        }
+        return best
     }
 
     private var protocolsSummary: String {
@@ -276,11 +290,10 @@ struct SettingsView: View {
     private var alertsSection: some View {
         Section {
             Toggle("Напомнить за 3 дня до конца подписки", isOn: $prefs.notifyExpiry)
-            if let nearest = store.subscriptions.compactMap({ $0.expire }).min() {
-                HStack {
-                    Text("Ближайшее окончание")
-                    Spacer()
-                    Text(Self.dateFormatter.string(from: nearest))
+            if let nearest = nearestExpiring {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Ближайшее окончание").font(.subheadline)
+                    Text(nearest.name + " · " + Self.dateFormatter.string(from: nearest.expire ?? Date()))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
