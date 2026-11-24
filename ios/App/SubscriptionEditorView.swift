@@ -83,8 +83,8 @@ struct SubscriptionEditorView: View {
                         presentation.wrappedValue.dismiss()
                     } label: {
                         Image(systemName: "checkmark")
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(Theme.accent)
-                            .fontWeight(.semibold)
                     }
                 }
             }
@@ -201,8 +201,8 @@ struct SubscriptionSettingsView: View {
                         save()
                     } label: {
                         Image(systemName: "checkmark")
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(Theme.accent)
-                            .fontWeight(.semibold)
                     }
                 }
             }
