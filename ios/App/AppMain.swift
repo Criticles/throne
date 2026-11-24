@@ -17,6 +17,7 @@ struct RootView: View {
     @StateObject private var prefs = Prefs()
     @StateObject private var rules = RuleStore()
     @StateObject private var traffic = TrafficMonitor()
+    @StateObject private var updater = UpdateChecker()
     private let upkeep = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -33,6 +34,7 @@ struct RootView: View {
         .environmentObject(prefs)
         .environmentObject(rules)
         .environmentObject(traffic)
+        .environmentObject(updater)
         .accentColor(Theme.accent)
         .onOpenURL { url in
             // throne://import?url=<ссылка> — так профиль приходит из QR или другого приложения.
@@ -46,6 +48,7 @@ struct RootView: View {
             Task {
                 await store.autoUpdateIfNeeded()
                 await rules.autoUpdateIfNeeded()
+                await scheduleExpiryAlerts()
             }
         }
         .task {
@@ -53,6 +56,19 @@ struct RootView: View {
             // поэтому проверяем при запуске — и пока приложение открыто, по таймеру.
             await store.autoUpdateIfNeeded()
             await rules.autoUpdateIfNeeded()
+            await updater.check()
+            await scheduleExpiryAlerts()
+        }
+    }
+}
+
+extension RootView {
+    /// Напоминания о конце подписки: одно уведомление на подписку, за 3 дня.
+    private func scheduleExpiryAlerts() async {
+        guard prefs.notifyExpiry else { return }
+        _ = await SubscriptionAlerts.requestPermission()
+        for subscription in store.subscriptions {
+            await SubscriptionAlerts.schedule(subscription)
         }
     }
 }

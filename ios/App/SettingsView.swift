@@ -6,6 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var engine: DevEngine
     @EnvironmentObject private var prefs: Prefs
+    @EnvironmentObject private var updater: UpdateChecker
 
     var body: some View {
         NavigationView {
@@ -14,6 +15,7 @@ struct SettingsView: View {
                 protocolsSection
                 subscriptionsSection
                 networkSection
+                alertsSection
                 journalSection
                 vpnSection
                 aboutSection
@@ -119,10 +121,10 @@ struct SettingsView: View {
                     Text(subscription.trafficText)
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    if let expire = subscription.expire {
-                        Text("до \(Self.dateFormatter.string(from: expire))")
+                    if subscription.expire != nil {
+                        Text(Self.expiryText(subscription))
                             .font(.caption2)
-                            .foregroundColor(expire < Date() ? .red : .secondary)
+                            .foregroundColor(Self.expiryColor(subscription))
                     }
                     Toggle("Автообновление каждые \(subscription.intervalHours) ч",
                            isOn: Binding(
@@ -202,6 +204,27 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Уведомления
+
+    private var alertsSection: some View {
+        Section {
+            Toggle("Напомнить за 3 дня до конца подписки", isOn: $prefs.notifyExpiry)
+            if let nearest = store.subscriptions.compactMap({ $0.expire }).min() {
+                HStack {
+                    Text("Ближайшее окончание")
+                    Spacer()
+                    Text(Self.dateFormatter.string(from: nearest))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        } header: {
+            Text("Уведомления")
+        } footer: {
+            Text("Уведомление ставит система: оно придёт, даже если приложение закрыто. Нужно разрешение на уведомления — iOS спросит при первом запуске.")
+        }
+    }
+
     // MARK: - Журнал и статистика
 
     private var journalSection: some View {
@@ -246,6 +269,25 @@ struct SettingsView: View {
                 Spacer()
                 Text(Self.appVersion).foregroundColor(.secondary)
             }
+            HStack {
+                Text("Обновление")
+                Spacer()
+                Text(updater.status.isEmpty ? "не проверялось" : updater.status)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.trailing)
+            }
+            Button {
+                Task { await updater.check() }
+            } label: {
+                Label(updater.checking ? "Проверяю…" : "Проверить обновление", systemImage: "arrow.down.circle")
+            }
+            .disabled(updater.checking)
+            if let release = updater.available {
+                Link(destination: release.url) {
+                    Label("Скачать " + release.version, systemImage: "square.and.arrow.down")
+                }
+            }
             Link(destination: URL(string: "https://github.com/Criticles/throne")!) {
                 Label("Исходники на GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
             }
@@ -259,6 +301,21 @@ struct SettingsView: View {
         formatter.dateFormat = "dd.MM.yyyy HH:mm"
         return formatter
     }()
+
+    private static func expiryText(_ subscription: Subscription) -> String {
+        guard let expire = subscription.expire else { return "" }
+        let left = SubscriptionAlerts.daysLeft(subscription) ?? 0
+        let date = dateFormatter.string(from: expire)
+        if left < 0 { return "истекла " + date }
+        return "до " + date + " · осталось " + String(left) + " дн."
+    }
+
+    private static func expiryColor(_ subscription: Subscription) -> Color {
+        let left = SubscriptionAlerts.daysLeft(subscription) ?? 0
+        if left < 0 { return .red }
+        if left <= 3 { return .orange }
+        return .secondary
+    }
 
     private static func shortURL(_ raw: String) -> String {
         guard let url = URL(string: raw) else { return raw }

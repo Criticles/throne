@@ -104,6 +104,7 @@ final class ProfileStore: ObservableObject {
 
     /// Удалить подписку вместе со всеми её серверами.
     func remove(_ subscription: Subscription) {
+        SubscriptionAlerts.cancel(subscription)
         profiles.removeAll { $0.group == subscription.name }
         subscriptions.removeAll { $0.id == subscription.id }
         if let selectedID, !profiles.contains(where: { $0.id == selectedID }) {

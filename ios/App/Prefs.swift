@@ -127,6 +127,10 @@ final class Prefs: ObservableObject {
     @Published var ipv6: Bool {
         didSet { defaults.set(ipv6, forKey: "prefs.ipv6") }
     }
+    /// Напоминание за 3 дня до конца подписки (локальное уведомление).
+    @Published var notifyExpiry: Bool {
+        didSet { defaults.set(notifyExpiry, forKey: "prefs.notifyExpiry") }
+    }
 
     init() {
         routingMode = RoutingMode(rawValue: defaults.string(forKey: "prefs.routing") ?? "") ?? .rules
@@ -143,5 +147,6 @@ final class Prefs: ObservableObject {
         let storedMTU = defaults.integer(forKey: "prefs.tunMTU")
         tunMTU = storedMTU == 0 ? 9000 : storedMTU
         ipv6 = defaults.object(forKey: "prefs.ipv6") as? Bool ?? true
+        notifyExpiry = defaults.object(forKey: "prefs.notifyExpiry") as? Bool ?? true
     }
 }
