@@ -13,6 +13,24 @@ struct ProbeResult {
     var millis: Int?
     var error: String?
 
+    /// Одна фраза на любой провал: подробности — в «Сведениях» и журнале,
+    /// в списке пользователю достаточно «Недоступен».
+    static let unavailable = "Недоступен"
+
+    /// Третья строка строки списка: флаг, страна по-русски и выходной IP.
+    /// nil — значит провал, тогда показываем `ProbeResult.unavailable`.
+    var exitLine: String? {
+        guard ok else { return nil }
+        var parts: [String] = []
+        if let name = Probe.countryName(code: countryCode, fallback: country) {
+            parts.append(name)
+        }
+        if let ip, !ip.isEmpty {
+            parts.append(ip)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     /// «🇫🇮 FI · 186 мс» — для строки списка: страна кодом, чтобы всё влезало в одну строку.
     var shortSummary: String {
         guard ok else { return error ?? "нет связи" }
@@ -137,8 +155,10 @@ enum Probe {
         // Прогрев: поднимаем туннель и TLS. Его время в замер не входит.
         guard (try? await session.data(from: url)) != nil else { return nil }
 
+        // Четыре пробы вместо трёх: у WireTurn первая после простоя всё ещё может
+        // включать пересборку SRTP-сессии, и минимум из четырёх её срезает.
         var best: Int?
-        for _ in 0..<3 {
+        for _ in 0..<4 {
             let clock = Date()
             guard let (data, response) = try? await session.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200,

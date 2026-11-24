@@ -56,6 +56,18 @@ final class ProfileStore: ObservableObject {
         return names
     }
 
+    /// Свободное имя папки: «criticles», «criticles 2», «criticles 3»…
+    /// Нужно при повторном добавлении той же подписки: без этого второй импорт молча
+    /// ложился бы в существующую папку, и «несколько профилей» не получалось.
+    func uniqueFolder(basedOn raw: String) -> String {
+        let base = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = base.isEmpty ? "Подписка" : base
+        guard folders.contains(name) else { return name }
+        var index = 2
+        while folders.contains("\(name) \(index)") { index += 1 }
+        return "\(name) \(index)"
+    }
+
     func count(in folder: String) -> Int {
         profiles.filter { ($0.group ?? Self.manualFolder) == folder }.count
     }
@@ -359,17 +371,21 @@ final class ProfileStore: ObservableObject {
     /// Остальные — по «личности сервера» (протокол + хост + порт): панель присылает один и тот же
     /// сервер дважды, ссылкой в base64-списке и куском JSON-конфига, и без этого в списке
     /// оказывались два одинаковых VLESS и две одинаковые Hysteria2.
+    ///
+    /// Папка входит в ключ: одну и ту же подписку можно добавить второй раз в другую папку,
+    /// и серверы там будут свои (раньше второй импорт молча сливался с первым).
     private func dedupeKey(_ profile: Profile) -> String {
+        let folder = profile.group ?? Self.manualFolder
         switch profile.kind {
         case .turnable, .wireturn:
             // Это не дубли: wireturn несёт WG-обвязку, turnable — «сырой» конфиг.
             // Пользователь сам увидит, какой путь рабочий, поэтому держим оба.
-            return "\(profile.kind.rawValue)|\(profile.name)"
+            return "\(folder)|\(profile.kind.rawValue)|\(profile.name)"
         default:
             if let identity = Self.serverIdentity(profile.payload) {
-                return identity
+                return "\(folder)|\(identity)"
             }
-            return "\(profile.kind.rawValue)|\(profile.name)|\(profile.payload)"
+            return "\(folder)|\(profile.kind.rawValue)|\(profile.name)|\(profile.payload)"
         }
     }
 
@@ -474,11 +490,13 @@ final class ProfileStore: ObservableObject {
         return added
     }
 
-    /// Подписка в списке одна на URL: повторный импорт только обновляет дату и счётчик.
+    /// Подписка в списке одна на пару «ссылка + папка»: повторный импорт в ту же папку только
+    /// обновляет дату и счётчик, а импорт в другую папку — это отдельная подписка со своими
+    /// серверами (так одну и ту же ссылку можно положить в несколько папок).
     private func recordSubscription(url: String, name: String, userinfo: String? = nil) {
         let inFolder = profiles.filter { $0.group == name }.count
         let limits = Self.parseUserinfo(userinfo)
-        if let index = subscriptions.firstIndex(where: { $0.url == url }) {
+        if let index = subscriptions.firstIndex(where: { $0.url == url && $0.name == name }) {
             subscriptions[index].name = name
             subscriptions[index].updated = Date()
             subscriptions[index].count = inFolder

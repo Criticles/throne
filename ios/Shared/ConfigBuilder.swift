@@ -9,6 +9,10 @@ enum ConfigBuilder {
     static let wireturnPort = 9000
     /// Локальный Clash API: через него замеряем задержку каждого сервера параллельно.
     static let clashPort = 19090
+    /// Первый порт «пробных» инбаундов: у каждого сервера живого конфига свой вход,
+    /// правило маршрута гонит его трафик строго в этот сервер. Через них пинг считается
+    /// по прогретому соединению — это RTT, а не «хендшейк + запрос».
+    static let probePortBase = 21000
 
     enum BuildError: LocalizedError {
         case badPayload(String)
@@ -88,11 +92,14 @@ enum ConfigBuilder {
     /// Зачем: тогда пинг любого сервера не требует перезапуска ядра и не рвёт текущее
     /// соединение — Clash API спрашивает задержку у конкретного outbound, а трафик идёт
     /// через `final`.
-    static func buildLive(profiles: [Profile], selected: Profile?) throws -> (json: String, tags: [UUID: String]) {
+    static func buildLive(profiles: [Profile], selected: Profile?) throws -> (json: String, tags: [UUID: String], probePorts: [UUID: Int]) {
         var outbounds: [[String: Any]] = []
         var endpoints: [[String: Any]] = []
         var tags: [UUID: String] = [:]
         var selectedTag: String?
+        /// Кого можно проверить своим инбаундом: route.rules умеет ссылаться только на
+        /// outbound'ы, WireGuard-эндпоинты в правиле не назвать — их проверяем по очереди.
+        var probeable: [(id: UUID, tag: String)] = []
 
         for profile in profiles {
             let tag = "s\(tags.count)"
@@ -102,16 +109,19 @@ enum ConfigBuilder {
                 var outbound = vlessOutbound(link)
                 outbound["tag"] = tag
                 outbounds.append(outbound)
+                probeable.append((profile.id, tag))
             case .hysteria2:
                 guard let link = Hysteria2Link.parse(profile.payload) else { continue }
                 var outbound = hysteria2Outbound(link)
                 outbound["tag"] = tag
                 outbounds.append(outbound)
+                probeable.append((profile.id, tag))
             case .mieru:
                 guard let link = MieruLink.parse(profile.payload) else { continue }
                 var outbound = mieruOutbound(link)
                 outbound["tag"] = tag
                 outbounds.append(outbound)
+                probeable.append((profile.id, tag))
             case .wireguard, .amneziawg:
                 guard let wg = WireGuardConfig.parse(profile.payload) else { continue }
                 endpoints.append(wireguardEndpoint(
@@ -132,6 +142,9 @@ enum ConfigBuilder {
                 guard let entry = Self.customEntry(payload: profile.payload, tag: tag) else { continue }
                 endpoints.append(contentsOf: entry.endpoints)
                 outbounds.append(contentsOf: entry.outbounds)
+                if !entry.outbounds.isEmpty {
+                    probeable.append((profile.id, tag))
+                }
             default:
                 continue
             }
@@ -148,12 +161,29 @@ enum ConfigBuilder {
             throw BuildError.unsupported("профиль «\(selected.name)» не попал в общий конфиг")
         }
 
+        // Пробные входы: по одному на сервер. Пинг через такой вход идёт сразу в свой сервер,
+        // поэтому мерить можно все серверы разом и без перезапуска ядра.
+        var inbounds: [[String: Any]] = [inbound()]
+        var rules: [[String: Any]] = []
+        var probePorts: [UUID: Int] = [:]
+        for (index, entry) in probeable.enumerated() {
+            let port = probePortBase + index
+            inbounds.append([
+                "type": "mixed",
+                "tag": "probe-\(entry.tag)",
+                "listen": "127.0.0.1",
+                "listen_port": port,
+            ])
+            rules.append(["inbound": ["probe-\(entry.tag)"], "outbound": entry.tag])
+            probePorts[entry.id] = port
+        }
+
         var config: [String: Any] = [
             "log": ["level": "info", "timestamp": true],
-            "dns": dnsConfig(detour: selected?.kind == .wireguard ? selectedTag : nil),
-            "inbounds": [inbound()],
+            "dns": dnsConfig(),
+            "inbounds": inbounds,
             "outbounds": outbounds + [["type": "direct", "tag": "direct"]],
-            "route": ["final": selectedTag ?? "direct", "auto_detect_interface": false],
+            "route": ["final": selectedTag ?? "direct", "auto_detect_interface": false, "rules": rules],
             "experimental": clashAPI(),
         ]
         if !endpoints.isEmpty { config["endpoints"] = endpoints }
@@ -161,7 +191,7 @@ enum ConfigBuilder {
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8)
         else { throw BuildError.encodingFailed }
-        return (json, tags)
+        return (json, tags, probePorts)
     }
 
     /// Один конфиг со всеми серверами сразу — для параллельного пинга через Clash API.
@@ -235,25 +265,16 @@ enum ConfigBuilder {
     /// DNS ядра: системный резолвер, DoH или DoT — из настроек приложения.
     /// Без блока `dns` sing-box не резолвит имена из SOCKS-запросов, и проверка падает
     /// с «bad URL»/ошибкой прокси.
-    private static func dnsConfig(detour: String? = nil) -> [String: Any] {
+    ///
+    /// Резолвим всегда снаружи туннеля, даже для WireGuard: панельный DNS вида
+    /// `udp 1.1.1.1 detour=<endpoint>` отправляет UDP-запрос в туннель, которому ещё не
+    /// дослали хендшейк, — первый запрос теряется и ждёт 10 секунд. Так выглядело
+    /// «WARP не работает»: туннель поднимался, а DNS в нём молчал.
+    private static func dnsConfig() -> [String: Any] {
         // Настройка пользователя: системный резолвер, DoH или DoT.
         let mode = UserDefaults.standard.string(forKey: "prefs.dnsMode") ?? "system"
         let configured = UserDefaults.standard.string(forKey: "prefs.dnsServer") ?? "https://1.1.1.1/dns-query"
         let host = URL(string: configured)?.host ?? configured
-
-        if let detour {
-            // Внутри WireGuard системный резолвер недоступен: DNS идёт через сам туннель.
-            return [
-                "servers": [[
-                    "type": "udp",
-                    "server": "1.1.1.1",
-                    "detour": detour,
-                    "tag": "dns-remote",
-                ]],
-                "final": "dns-remote",
-                "strategy": "ipv4_only",
-            ]
-        }
 
         switch mode {
         case "doh":
@@ -306,7 +327,7 @@ enum ConfigBuilder {
         let tag = (endpoint["tag"] as? String) ?? "wg-out"
         return [
             "log": ["level": "info", "timestamp": true],
-            "dns": dnsConfig(detour: tag),
+            "dns": dnsConfig(),
             "inbounds": [inbound()],
             "endpoints": [endpoint],
             "route": ["final": tag, "auto_detect_interface": false],
@@ -587,11 +608,10 @@ enum ConfigBuilder {
         if config["log"] == nil {
             config["log"] = ["level": "info", "timestamp": true]
         }
-        if config["dns"] == nil {
-            // У WireGuard-профилей системный DNS подменён провайдером — резолвим через туннель.
-            let endpointTag = ((config["endpoints"] as? [[String: Any]])?.first?["tag"] as? String)
-            config["dns"] = dnsConfig(detour: endpointTag)
-        }
+        // Панельный DNS резолвит через сам туннель (`udp 1.1.1.1 detour=<endpoint>`): UDP-запрос
+        // уходит раньше, чем WireGuard дослал хендшейк, теряется и ждёт 10 секунд. Из-за этого
+        // WARP-серверы выглядели нерабочими. Свой DNS резолвит снаружи, туннель получает готовый IP.
+        config["dns"] = dnsConfig()
 
         var route = (config["route"] as? [String: Any]) ?? [:]
         // Панель ставит true, а платформы (NE) в dev-режиме нет: ядро падает с

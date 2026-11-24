@@ -103,7 +103,7 @@ struct ProfilesView: View {
                 folderSection
                 serverSection
             }
-            .listStyle(.insetGrouped)
+            .listStyle(.plain)
             .searchable(text: $query, prompt: "Сервер или протокол")
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
@@ -358,6 +358,9 @@ struct ProfilesView: View {
                   speed: engine.speed[profile.id],
                   busy: engine.bulkRunning || engine.speedRunning != nil,
                   onPing: { Task { await engine.check(profile: profile) } })
+            // Строка во всю ширину телефона: без отступов карточки, как в настройках iOS.
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
             .contentShape(Rectangle())
             .onTapGesture { store.select(profile.id) }
             .onLongPressGesture { detailsProfile = profile }
@@ -466,6 +469,8 @@ struct ProfilesView: View {
 
     // MARK: - Шторки
 
+    private var activeFolderName: String { folder ?? ProfileStore.manualFolder }
+
     private var addSheet: some View {
         NavigationView {
             Form {
@@ -474,10 +479,20 @@ struct ProfilesView: View {
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .keyboardType(.URL)
-                    Toggle("Создать новую папку", isOn: $createFolder)
+                }
+                Section {
+                    Picker("Куда добавить", selection: $createFolder) {
+                        Text("Новая папка").tag(true)
+                        Text("В «\(activeFolderName)»").tag(false)
+                    }
+                    .pickerStyle(.segmented)
                     if createFolder {
                         TextField("Имя папки", text: $addTitle)
                     }
+                } footer: {
+                    Text(createFolder
+                         ? "Серверы лягут в новую папку. Одну и ту же подписку можно добавить несколько раз — папки не сольются."
+                         : "Серверы добавятся в текущую папку «\(activeFolderName)» рядом с уже импортированными.")
                 }
                 Section {
                     Button("Взять из буфера обмена") { importClipboard() }
@@ -567,7 +582,10 @@ struct ProfilesView: View {
         let typed = addTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let name: String?
         if createFolder {
-            name = typed.isEmpty ? nil : typed
+            // Пустое имя — берём имя хоста панели; занятое — добавляем « 2», чтобы
+            // повторный импорт той же подписки дал отдельную папку, а не слился со старой.
+            let base = typed.isEmpty ? ProfileStore.folderName(for: input) : typed
+            name = store.uniqueFolder(basedOn: base)
         } else {
             name = folder ?? ProfileStore.manualFolder
         }
@@ -657,7 +675,9 @@ struct ProfilesView: View {
     }
 }
 
-/// Строка списка: название, бейдж протокола и пинг с результатом.
+/// Строка списка из трёх строк: название, бейдж протокола, флаг страны и выходной IP.
+/// Справа — «Пинг»: после замера на его месте цифра (нажатие повторяет тест),
+/// после теста скорости она поднимается, а под ней появляется скорость.
 struct ServerRow: View {
     let profile: Profile
     let selected: Bool
@@ -667,6 +687,9 @@ struct ServerRow: View {
     let onPing: () -> Void
 
     private var result: ProbeResult? { bulk?.result }
+    /// Идёт замер именно этого сервера: строка показывает кружок вместо «Пинг».
+    private var checking: Bool { bulk != nil && bulk?.done == false }
+    private var millis: Int? { result?.ok == true ? result?.millis : nil }
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -678,6 +701,7 @@ struct ServerRow: View {
                 HStack(spacing: 6) {
                     Text(profile.name)
                         .font(.subheadline.weight(.medium))
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     if profile.favorite {
                         Image(systemName: "star.fill").font(.caption2).foregroundColor(.yellow)
@@ -691,27 +715,55 @@ struct ServerRow: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    PlaqueButton(title: "Пинг", icon: "waveform.path.ecg", action: onPing)
-                    if let result {
-                        Text(result.shortSummary)
-                            .font(.caption2.weight(.medium))
-                            .foregroundColor(result.ok ? Theme.pingColor(result.millis) : .red)
-                            .lineLimit(1)
-                    } else if let ip = bulk?.result?.ip {
-                        Text(ip).font(.caption2).foregroundColor(.secondary)
-                    }
-                    Spacer(minLength: 0)
+                // Третья строка появляется только по результатам пинга.
+                if let result {
+                    Text(result.exitLine ?? ProbeResult.unavailable)
+                        .font(.caption2.weight(.medium))
+                        .foregroundColor(result.ok ? .secondary : .red)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .disabled(busy)
+            }
 
+            Spacer(minLength: 6)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                pingControl
                 if let speed {
-                    Text(String(format: "↓ %.1f · ↑ %.1f Мбит/с", speed.downMbps, speed.upMbps))
-                        .font(.caption2)
+                    Text(String(format: "↓ %.1f · ↑ %.1f", speed.downMbps, speed.upMbps))
+                        .font(.caption2.weight(.medium))
                         .foregroundColor(.green)
+                        .lineLimit(1)
                 }
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private var pingControl: some View {
+        if checking {
+            ProgressView()
+                .scaleEffect(0.7)
+                .frame(width: 44, height: 22)
+        } else if let millis {
+            Button(action: onPing) {
+                Text("\(millis) мс")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(Theme.pingColor(millis))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Theme.pingColor(millis).opacity(0.12))
+                    )
+            }
+            .buttonStyle(.borderless)
+            .disabled(busy)
+        } else {
+            PlaqueButton(title: "Пинг", icon: "waveform.path.ecg", action: onPing)
+                .disabled(busy)
+        }
     }
 }

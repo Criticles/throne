@@ -18,6 +18,9 @@ final class DevEngine: ObservableObject {
     private var platform: DevPlatform?
     /// Теги outbound'ов живого конфига: сервер → имя в ядре (для Clash API).
     private var liveTags: [UUID: String] = [:]
+    /// Локальный порт пробы для сервера из живого конфига: пинг идёт в свой инбаунд,
+    /// поэтому соединение не рвётся, а замер — это RTT, а не «хендшейк + запрос».
+    private var probePorts: [UUID: Int] = [:]
     /// Активный профиль: по нему восстанавливаем `final` после перезапуска конфига.
     private(set) var activeProfileID: UUID?
     private lazy var turnable = TurnableEngine { [weak self] line in
@@ -132,6 +135,7 @@ final class DevEngine: ObservableObject {
                let built = try? ConfigBuilder.buildLive(profiles: candidates, selected: profile) {
                 config = built.json
                 liveTags = built.tags
+                probePorts = built.probePorts
                 append("ядро: \(candidates.count) серверов в одном конфиге, активен \(profile.name)")
             } else {
                 if !Self.needsTransport(profile), candidates.count > 1 {
@@ -139,6 +143,7 @@ final class DevEngine: ObservableObject {
                 }
                 config = try ConfigBuilder.build(profile: profile)
                 liveTags = [:]
+                probePorts = [:]
             }
 
             // WireTurn и Turnable-с-ключами: сначала транспорт, иначе wireguard-эндпоинту некуда стучаться.
@@ -240,6 +245,7 @@ final class DevEngine: ObservableObject {
         transportOnly = false
         activeProfileID = nil
         liveTags = [:]
+        probePorts = [:]
         activeCoreName = "—"
         connectedSince = nil
         turnable.stop()
@@ -339,8 +345,8 @@ final class DevEngine: ObservableObject {
         append("проверка всех серверов завершена")
     }
 
-    /// Параллельный замер. Если ядро уже держит все серверы в живом конфиге — просто
-    /// спрашиваем Clash API, ничего не перезапуская и не разрывая соединение.
+    /// Параллельный замер. Если ядро уже держит все серверы в живом конфиге — пингуем
+    /// каждый через его собственный инбаунд (`probe-<tag>` → правило → этот сервер).
     /// Возвращает профили, которые так проверить нельзя.
     private func measure(_ profiles: [Profile]) async -> [Profile] {
         let targets = profiles.filter { Self.parallelKinds.contains($0.kind) }
@@ -363,29 +369,44 @@ final class DevEngine: ObservableObject {
             guard running else { return profiles }
         }
 
-        for _ in 0..<10 {
-            if await ClashApi.version() != nil { break }
-            try? await Task.sleep(nanoseconds: 300_000_000)
-        }
+        // Ждём, пока ядро откроет порты: и основной, и пробные поднимаются вместе.
+        guard await waitListening() else { return profiles }
 
-        let target = Self.pingTarget
-        let available = targets.filter { liveTags[$0.id] != nil }
-        // Запускаем ВСЕ замеры разом: Clash API сам решает, кого ждать, а результат
-        // появляется у всех серверов почти одновременно — как в настольном Throne.
-        await withTaskGroup(of: (UUID, Int?).self) { group in
-            for profile in available {
-                let tag = liveTags[profile.id] ?? ""
-                group.addTask { (profile.id, await ClashApi.delay(tag: tag, url: target)) }
+        let available = targets.filter { probePorts[$0.id] != nil }
+        var measured: Set<UUID> = []
+        // Все замеры разом: у каждого сервера свой вход, поэтому они не мешают друг другу.
+        // Внутри Probe — прогрев соединения и минимум из нескольких проб, то есть RTT.
+        await withTaskGroup(of: (UUID, ProbeResult?).self) { group in
+            for profile in available where !cancelRequested {
+                guard let port = probePorts[profile.id] else { continue }
+                group.addTask { (profile.id, await Probe.timed(port: port, timeout: 12)) }
             }
-            for await (id, millis) in group {
+            for await (id, result) in group {
+                measured.insert(id)
                 guard let row = bulk.firstIndex(where: { $0.id == id }) else { continue }
-                bulk[row].result = ProbeResult(ok: millis != nil, millis: millis,
-                                               error: millis == nil ? "нет ответа через туннель" : nil)
+                if let result {
+                    bulk[row].result = result
+                } else if let tag = liveTags[id] {
+                    // Резерв, если пробный вход почему-то молчит: Clash-задержка. В неё входит
+                    // хендшейк (цифры будут выше), но строка не останется без ответа.
+                    let millis = await ClashApi.delay(tag: tag, url: Self.pingTarget)
+                    bulk[row].result = ProbeResult(ok: millis != nil, millis: millis,
+                                                   error: millis == nil ? "нет ответа" : nil)
+                } else {
+                    bulk[row].result = ProbeResult(ok: false, error: "нет ответа")
+                }
                 bulk[row].done = true
             }
         }
-        append("параллельный пинг: \(available.count) серверов")
-        return rest
+        append("параллельный пинг: \(measured.count) серверов")
+
+        // Кого нельзя проверить своим входом (WireGuard-эндпоинты, панельные JSON без
+        // outbound'а) — отдаём в поочерёдную проверку, иначе строка осталась бы без ответа.
+        var remaining = rest
+        for profile in targets where !measured.contains(profile.id) {
+            if !remaining.contains(where: { $0.id == profile.id }) { remaining.append(profile) }
+        }
+        return remaining
     }
 
     /// Поочерёдная проверка: старт профиля → проба → стоп.
@@ -536,17 +557,28 @@ final class DevEngine: ObservableObject {
     func check(profile: Profile) async {
         guard !bulkRunning else { return }
         bulkRunning = true
+        defer { bulkRunning = false }
         let row = BulkRow(id: profile.id, name: profile.name, badge: profile.badge ?? profile.kind.title)
         if let existing = bulk.firstIndex(where: { $0.id == profile.id }) {
             bulk[existing] = row
         } else {
             bulk.append(row)
         }
-        guard let index = bulk.firstIndex(where: { $0.id == profile.id }) else {
-            bulkRunning = false
+        guard let index = bulk.firstIndex(where: { $0.id == profile.id }) else { return }
+        append("проверка: \(profile.name) [\(profile.kind.title)]")
+
+        // Ядро уже держит этот сервер в живом конфиге — пингуем через его собственный вход:
+        // соединение не рвётся, ответ приходит за секунду. Перезапуск нужен только тем,
+        // кого в живом конфиге нет (WireGuard-эндпоинты, Xray, WireTurn).
+        if running, !transportOnly, let port = probePorts[profile.id] {
+            let result = await Probe.timed(port: port, timeout: 12)
+                ?? ProbeResult(ok: false, error: "таймаут проверки")
+            bulk[index].result = result
+            bulk[index].done = true
+            append("итог: \(profile.name) → \(result.summary)")
             return
         }
-        append("проверка: \(profile.name) [\(profile.kind.title)]")
+
         start(profile: profile)
         if await waitListening() {
             let timeout: Double = Self.needsTransport(profile) ? 20 : 12
@@ -561,7 +593,6 @@ final class DevEngine: ObservableObject {
         }
         bulk[index].done = true
         stop()
-        bulkRunning = false
     }
 
     /// Ждём, пока ядро откроет локальный порт (до 10 с), не блокируя интерфейс.

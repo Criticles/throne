@@ -60,7 +60,7 @@ struct SubscriptionEditorView: View {
                     for subscription in victims { store.remove(subscription) }
                 }
             } footer: {
-                Text("Нажатие — настройки подписки. Долгое нажатие и перетаскивание — порядок вкладок в «Серверах». Свайп влево — удалить.")
+                Text("Нажатие — настройки подписки. Свайп влево — удалить.")
             }
         }
         .listStyle(.insetGrouped)
@@ -69,15 +69,12 @@ struct SubscriptionEditorView: View {
             ToolbarItem(placement: .principal) {
                 Text("Подписки").font(.headline)
             }
-            ToolbarItem(placement: .cancellationAction) {
+            ToolbarItem(placement: .navigationBarLeading) {
                 Button {
                     presentation.wrappedValue.dismiss()
                 } label: {
                     Image(systemName: "chevron.left")
                 }
-            }
-            ToolbarItem(placement: .navigationBarLeading) {
-                EditButton().font(.caption)
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
