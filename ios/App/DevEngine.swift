@@ -233,6 +233,11 @@ final class DevEngine: ObservableObject {
             }
             activeProfileID = profile.id
             activeCoreName = "sing-box"
+            // Узел хендшейка — в журнал: ядро адрес не печатает, а без него мёртвый WARP не отличить
+            // от «не разрешился домен».
+            if let peer = ConfigBuilder.endpointPeerLine(profile) {
+                append(peer)
+            }
             append("старт: \(profile.name) [\(profile.kind.title)] → локально \(socksAddress)")
             if let note = profile.note {
                 append("внимание: \(note)")
@@ -500,14 +505,13 @@ final class DevEngine: ObservableObject {
                 continue
             }
             let transport = Self.needsTransport(profile)
-            // WireGuard/WARP: первый DNS-запрос уходит раньше, чем дослан хендшейк, и ядро его
-            // не повторяет — первая попытка честно падает по таймауту. Вторая идёт уже по
-            // поднятому туннелю, поэтому дедлайн здесь шире, чем у остальных.
+            // Endpoint-профилям (WireGuard, WARP, AWG, WireTurn/Turnable) шлём IP-литерал: домена
+            // в схеме нет вовсе, поэтому DNS-таймауты 10 с из лога больше не участвуют, а живой
+            // эндпоинт отвечает за 2–4 с. Мёртвый (WARP без валидных ключей) не отвечает никогда —
+            // 16 с хватает, чтобы это увидеть, и не задерживает весь прогон.
             let endpointKind = ConfigBuilder.isEndpointProfile(profile)
-            // Endpoint-профилям (WireGuard, WARP, AWG) шлём IP-литерал: домен резолвил бы их
-            // собственный резолвер, а он на сетях с фильтрацией отдаёт чужой адрес.
-            let deadline = Date().addingTimeInterval(transport ? 40 : (endpointKind ? 26 : 12))
-            var result = await Probe.timed(port: proxyPort, timeout: transport ? 20 : (endpointKind ? 8 : 12),
+            let deadline = Date().addingTimeInterval(transport ? 40 : (endpointKind ? 16 : 12))
+            var result = await Probe.timed(port: proxyPort, timeout: transport ? 20 : (endpointKind ? 6 : 12),
                                            addressOnly: endpointKind)
                 ?? ProbeResult(ok: false, error: "таймаут проверки")
             while !result.ok, Date() < deadline {

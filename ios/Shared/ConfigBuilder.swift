@@ -481,6 +481,12 @@ enum ConfigBuilder {
         switch profile.kind {
         case .wireguard, .amneziawg:
             return true
+        // WireTurn/Turnable — тоже WG-эндпоинт (наружу смотрит 127.0.0.1:9000), и пробный
+        // запрос по домену у них упирается в DNS внутри туннеля: первый запрос уходит раньше
+        // хендшейка и честно ждёт 10 с таймаута (видно в логе как exchange4/exchange6 deadline).
+        // IP-литерал убирает DNS из схемы целиком.
+        case .wireturn, .turnable:
+            return true
         case .custom:
             guard let data = profile.payload.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data),
@@ -490,6 +496,43 @@ enum ConfigBuilder {
             return !endpoints.isEmpty
         default:
             return false
+        }
+    }
+
+    /// Что пишем в журнал перед стартом endpoint-профиля: узел, к которому реально пойдёт
+    /// хендшейк. Ядро печатает только «sending handshake initiation» без адреса, поэтому без
+    /// этой строки разбор мёртвого WARP-профиля упирается в догадки.
+    static func endpointPeerLine(_ profile: Profile) -> String? {
+        guard let host = endpointHost(profile) else { return nil }
+        if isIPAddress(host) { return "узел: \(host)" }
+        return "узел: \(host) → \(resolveHost(host) ?? "не разрешился")"
+    }
+
+    /// Хост хендшейка: адрес из `wg://`-ссылки, `wgConfig.endpoint` подписки wireturn
+    /// или `peers[0].address` JSON-подписки.
+    private static func endpointHost(_ profile: Profile) -> String? {
+        switch profile.kind {
+        case .wireguard, .amneziawg:
+            return WireGuardConfig.parse(profile.payload)?.host
+        case .wireturn, .turnable:
+            guard let data = profile.payload.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  let root = object as? [String: Any],
+                  let wg = root["wgConfig"] as? [String: Any],
+                  let endpoint = wg["endpoint"] as? String
+            else { return nil }
+            return endpoint.split(separator: ":").first.map(String.init)
+        case .custom:
+            guard let data = profile.payload.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  let root = object as? [String: Any],
+                  let endpoints = root["endpoints"] as? [[String: Any]],
+                  let peers = endpoints.first?["peers"] as? [[String: Any]],
+                  let address = peers.first?["address"] as? String
+            else { return nil }
+            return address.split(separator: ":").first.map(String.init)
+        default:
+            return nil
         }
     }
 
