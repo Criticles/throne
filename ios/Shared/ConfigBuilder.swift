@@ -78,7 +78,17 @@ enum ConfigBuilder {
             }
             config = try wireturnConfig(profile.payload, mtu: wireturnMTU)
         case .custom:
-            config = try customConfig(profile.payload)
+            // «JSON подписки» панели содержит все её серверы. Для одного профиля берём только
+            // его запись: иначе проверка поднимает десять чужих серверов, а `final` уходит в
+            // панельный прокси — замер и подключение достаются не тому серверу, что выбран.
+            if let entry = Self.customEntry(payload: profile.payload, tag: "s0"),
+               let only = entry.endpoints.first ?? entry.outbounds.first {
+                config = entry.endpoints.isEmpty
+                    ? try directConfig(outbound: only)
+                    : endpointConfig(endpoint: only)
+            } else {
+                config = try customConfig(profile.payload)
+            }
         }
 
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
@@ -97,12 +107,15 @@ enum ConfigBuilder {
         var endpoints: [[String: Any]] = []
         var tags: [UUID: String] = [:]
         var selectedTag: String?
+        /// Если выбран WireGuard-эндпоинт, DNS должен идти внутри его туннеля.
+        var selectedEndpointTag: String?
         /// Кого можно проверить своим инбаундом: route.rules умеет ссылаться только на
         /// outbound'ы, WireGuard-эндпоинты в правиле не назвать — их проверяем по очереди.
         var probeable: [(id: UUID, tag: String)] = []
 
         for profile in profiles {
             let tag = "s\(tags.count)"
+            var producedEndpoint = false
             switch profile.kind {
             case .vless:
                 guard let link = try? VLESSLink.parse(profile.payload) else { continue }
@@ -135,6 +148,7 @@ enum ConfigBuilder {
                     peerPort: wg.port,
                     amnezia: wg.amnezia
                 ))
+                producedEndpoint = true
             case .custom:
                 // «JSON подписки» — это готовый кусок конфига панели: у WG там endpoint,
                 // у остальных outbound. Раньше такие профили выпадали из живого конфига,
@@ -142,6 +156,7 @@ enum ConfigBuilder {
                 guard let entry = Self.customEntry(payload: profile.payload, tag: tag) else { continue }
                 endpoints.append(contentsOf: entry.endpoints)
                 outbounds.append(contentsOf: entry.outbounds)
+                producedEndpoint = !entry.endpoints.isEmpty
                 if !entry.outbounds.isEmpty {
                     probeable.append((profile.id, tag))
                 }
@@ -149,7 +164,10 @@ enum ConfigBuilder {
                 continue
             }
             tags[profile.id] = tag
-            if profile.id == selected?.id { selectedTag = tag }
+            if profile.id == selected?.id {
+                selectedTag = tag
+                if producedEndpoint { selectedEndpointTag = tag }
+            }
         }
 
         guard !outbounds.isEmpty || !endpoints.isEmpty else {
@@ -180,7 +198,7 @@ enum ConfigBuilder {
 
         var config: [String: Any] = [
             "log": ["level": "info", "timestamp": true],
-            "dns": dnsConfig(),
+            "dns": dnsConfig(detour: selectedEndpointTag).block,
             "inbounds": inbounds,
             "outbounds": outbounds + [["type": "direct", "tag": "direct"]],
             "route": ["final": selectedTag ?? "direct", "auto_detect_interface": false, "rules": rules],
@@ -238,7 +256,7 @@ enum ConfigBuilder {
 
         let config: [String: Any] = [
             "log": ["level": "warn", "timestamp": true],
-            "dns": dnsConfig(),
+            "dns": dnsConfig().block,
             // Инбаунд не нужен для замеров, но с ним ядро ведёт себя как обычно (и пишет порт в лог).
             "inbounds": [inbound()],
             "outbounds": outbounds + [["type": "direct", "tag": "direct"]],
@@ -263,14 +281,41 @@ enum ConfigBuilder {
     // MARK: - Обвязка
 
     /// DNS ядра: системный резолвер, DoH или DoT — из настроек приложения.
-    /// Без блока `dns` sing-box не резолвит имена из SOCKS-запросов, и проверка падает
-    /// с «bad URL»/ошибкой прокси.
     ///
-    /// Резолвим всегда снаружи туннеля, даже для WireGuard: панельный DNS вида
-    /// `udp 1.1.1.1 detour=<endpoint>` отправляет UDP-запрос в туннель, которому ещё не
-    /// дослали хендшейк, — первый запрос теряется и ждёт 10 секунд. Так выглядело
-    /// «WARP не работает»: туннель поднимался, а DNS в нём молчал.
-    private static func dnsConfig() -> [String: Any] {
+    /// Для WireGuard-эндпоинтов резолвим **внутри туннеля**: системный резолвер на сетях
+    /// с фильтрацией отдаёт подменённые адреса (www.cloudflare.com → 198.20.0.6, адрес
+    /// чужой сети), и TCP уходит в никуда — ровно то, что выглядело как «wg не работает».
+    /// VLESS/hysteria2/mieru передают домен серверу и от местного DNS не зависят, поэтому
+    /// им хватает обычного резолвера. DoH по TCP, как в панели: UDP-запрос успевает уйти
+    /// раньше хендшейка и теряется, а повторные попытки в клиенте доводят проверку.
+    private static func dnsConfig(detour: String? = nil, udpThroughTunnel: Bool = false) -> (block: [String: Any], tag: String) {
+        if let detour {
+            if udpThroughTunnel {
+                // WireTurn: UDP-DNS через туннель здесь проверен на практике, TLS поверх
+                // медленного VK-релея только добавил бы задержку к каждой проверке.
+                return ([
+                    "servers": [[
+                        "type": "udp",
+                        "server": "1.1.1.1",
+                        "tag": "dns-remote",
+                        "detour": detour,
+                    ]],
+                    "final": "dns-remote",
+                    "strategy": "ipv4_only",
+                ], "dns-remote")
+            }
+            return ([
+                "servers": [[
+                    "type": "https",
+                    "server": "1.1.1.1",
+                    "tag": "dns-remote",
+                    "detour": detour,
+                ]],
+                "final": "dns-remote",
+                "strategy": "ipv4_only",
+            ], "dns-remote")
+        }
+
         // Настройка пользователя: системный резолвер, DoH или DoT.
         let mode = UserDefaults.standard.string(forKey: "prefs.dnsMode") ?? "system"
         let configured = UserDefaults.standard.string(forKey: "prefs.dnsServer") ?? "https://1.1.1.1/dns-query"
@@ -278,21 +323,21 @@ enum ConfigBuilder {
 
         switch mode {
         case "doh":
-            return [
+            return ([
                 "servers": [["type": "https", "server": host, "tag": "dns-remote"]],
                 "final": "dns-remote",
-            ]
+            ], "dns-remote")
         case "dot":
-            return [
+            return ([
                 "servers": [["type": "tls", "server": host, "tag": "dns-remote"]],
                 "final": "dns-remote",
-            ]
+            ], "dns-remote")
         default:
             // Формат 1.12+: у сервера есть тип. Старый вид {"address": "local"} удалён в 1.14.
-            return [
+            return ([
                 "servers": [["type": "local", "tag": "dns-local"]],
                 "final": "dns-local",
-            ]
+            ], "dns-local")
         }
     }
 
@@ -315,7 +360,7 @@ enum ConfigBuilder {
         guard let tag = outbound["tag"] as? String else { throw BuildError.encodingFailed }
         return [
             "log": ["level": "info", "timestamp": true],
-            "dns": dnsConfig(),
+            "dns": dnsConfig().block,
             "inbounds": [inbound()],
             "outbounds": [outbound],
             "route": ["final": tag, "auto_detect_interface": false],
@@ -323,14 +368,20 @@ enum ConfigBuilder {
         ]
     }
 
-    private static func endpointConfig(endpoint: [String: Any]) -> [String: Any] {
+    private static func endpointConfig(endpoint: [String: Any], udpThroughTunnel: Bool = false) -> [String: Any] {
         let tag = (endpoint["tag"] as? String) ?? "wg-out"
+        // DNS внутри туннеля: снаружи резолвер отдаёт подменённые адреса (см. dnsConfig).
+        let dns = dnsConfig(detour: tag, udpThroughTunnel: udpThroughTunnel)
         return [
             "log": ["level": "info", "timestamp": true],
-            "dns": dnsConfig(),
+            "dns": dns.block,
             "inbounds": [inbound()],
             "endpoints": [endpoint],
-            "route": ["final": tag, "auto_detect_interface": false],
+            "route": [
+                "final": tag,
+                "auto_detect_interface": false,
+                "default_domain_resolver": dns.tag,
+            ],
             "experimental": clashAPI(),
         ]
     }
@@ -452,9 +503,33 @@ enum ConfigBuilder {
         return inet_pton(AF_INET6, host, &v6) == 1
     }
 
-    /// Системный резолв имени в IP (getaddrinfo). nil — если имя не разрешилось.
+    /// Адрес узла до поднятия туннеля. Сначала DoH по IP (запрос не зависит от местного
+    /// резолвера), и только потом системный `getaddrinfo`.
+    ///
+    /// Почему: на сетях с фильтрацией системный резолвер отдаёт подменённые адреса
+    /// (www.cloudflare.com → 198.20.0.6). Для WARP это фатально: `engage.cloudflareclient.com`
+    /// превращается в чужой IP, WireGuard шлёт хендшейк в пустоту — «WARP не работает».
     private static func resolveHost(_ host: String) -> String? {
         if isIPAddress(host) { return host }
+        // Один и тот же узел встречается у десятка профилей: второй раз в сеть не идём.
+        resolvedHostsLock.lock()
+        let cached = resolvedHosts[host]
+        resolvedHostsLock.unlock()
+        if let cached { return cached }
+
+        let resolved = resolveHostDoH(host) ?? resolveHostSystem(host)
+        if let resolved {
+            resolvedHostsLock.lock()
+            resolvedHosts[host] = resolved
+            resolvedHostsLock.unlock()
+        }
+        return resolved
+    }
+
+    private static var resolvedHosts: [String: String] = [:]
+    private static let resolvedHostsLock = NSLock()
+
+    private static func resolveHostSystem(_ host: String) -> String? {
         var hints = addrinfo(ai_flags: 0, ai_family: AF_UNSPEC, ai_socktype: SOCK_DGRAM,
                              ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
         var result: UnsafeMutablePointer<addrinfo>?
@@ -470,6 +545,40 @@ enum ConfigBuilder {
                 }
             }
             pointer = current.pointee.ai_next
+        }
+        return nil
+    }
+
+    /// DNS-over-HTTPS по адресу, а не по имени: имя резолвить нечем — резолвер и есть проблема.
+    private static func resolveHostDoH(_ host: String) -> String? {
+        let endpoints = [
+            "https://1.1.1.1/dns-query?name=\(host)&type=A",
+            "https://8.8.8.8/resolve?name=\(host)&type=A",
+        ]
+        for endpoint in endpoints {
+            guard let url = URL(string: endpoint) else { continue }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5
+            request.setValue("application/dns-json", forHTTPHeaderField: "accept")
+
+            let semaphore = DispatchSemaphore(value: 0)
+            var answer: String?
+            URLSession.shared.dataTask(with: request) { data, _, _ in
+                defer { semaphore.signal() }
+                guard let data,
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let answers = object["Answer"] as? [[String: Any]]
+                else { return }
+                // Тип 1 — A-запись. CNAME пропускаем: нужен адрес, а не имя.
+                for record in answers where (record["type"] as? Int) == 1 {
+                    if let address = record["data"] as? String, isIPAddress(address) {
+                        answer = address
+                        return
+                    }
+                }
+            }.resume()
+            _ = semaphore.wait(timeout: .now() + 6)
+            if let answer { return answer }
         }
         return nil
     }
@@ -538,7 +647,7 @@ enum ConfigBuilder {
             keepAlive: Int(wg["persistentKeepalive"] as? String ?? "") ?? 25,
             peerHost: host,
             peerPort: port
-        ))
+        ), udpThroughTunnel: true)
         return config
     }
 
@@ -626,15 +735,20 @@ enum ConfigBuilder {
         if config["log"] == nil {
             config["log"] = ["level": "info", "timestamp": true]
         }
-        // Панельный DNS резолвит через сам туннель (`udp 1.1.1.1 detour=<endpoint>`): UDP-запрос
-        // уходит раньше, чем WireGuard дослал хендшейк, теряется и ждёт 10 секунд. Из-за этого
-        // WARP-серверы выглядели нерабочими. Свой DNS резолвит снаружи, туннель получает готовый IP.
-        config["dns"] = dnsConfig()
+        // DNS: если в конфиге есть WireGuard-эндпоинт — резолвим внутри него (панельный вариант
+        // `udp 1.1.1.1 detour=<endpoint>` терял первый запрос до хендшейка, а системный резолвер
+        // отдаёт подменённые адреса). Для обычных outbound'ов хватает системного.
+        let endpointTag = ((config["endpoints"] as? [[String: Any]])?.first?["tag"] as? String)
+        let dns = dnsConfig(detour: endpointTag)
+        config["dns"] = dns.block
 
         var route = (config["route"] as? [String: Any]) ?? [:]
         // Панель ставит true, а платформы (NE) в dev-режиме нет: ядро падает с
         // «no available network interface» на любом outbound. Поэтому не «если nil», а всегда.
         route["auto_detect_interface"] = false
+        // Панель оставляет здесь ссылку на свой сервер ("local"/"proxy"). После подмены DNS
+        // такого тега нет — имена резолвились бы с ошибкой, поэтому указываем свой.
+        route["default_domain_resolver"] = dns.tag
 
         // Эндпоинты WireGuard приходят с доменом в piere (WARP: engage.cloudflareclient.com).
         // Резолвить его через туннель нельзя — туннеля ещё нет, поэтому подставляем IP заранее.

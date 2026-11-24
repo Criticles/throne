@@ -415,7 +415,9 @@ final class DevEngine: ObservableObject {
         await withTaskGroup(of: (UUID, ProbeResult?).self) { group in
             for profile in available where !cancelRequested && !Task.isCancelled {
                 guard let port = probePorts[profile.id] else { continue }
-                group.addTask { (profile.id, await Probe.timed(port: port, timeout: 12)) }
+                // 8 с: один мёртвый сервер не должен задерживать всю пачку — иначе
+                // «параллельный» замер ждёт его одного и выглядит как зависание.
+                group.addTask { (profile.id, await Probe.timed(port: port, timeout: 8)) }
             }
             for await (id, result) in group {
                 measured.insert(id)
@@ -476,7 +478,7 @@ final class DevEngine: ObservableObject {
             // поднятому туннелю, поэтому дедлайн здесь шире, чем у остальных.
             let endpointKind = ConfigBuilder.isEndpointProfile(profile)
             let deadline = Date().addingTimeInterval(transport ? 40 : (endpointKind ? 26 : 12))
-            var result = await Probe.timed(port: proxyPort, timeout: transport ? 20 : (endpointKind ? 10 : 12))
+            var result = await Probe.timed(port: proxyPort, timeout: transport ? 20 : (endpointKind ? 8 : 12))
                 ?? ProbeResult(ok: false, error: "таймаут проверки")
             while !result.ok, Date() < deadline {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
