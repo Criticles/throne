@@ -434,12 +434,17 @@ final class DevEngine: ObservableObject {
                 stop()
                 continue
             }
-            let deadline = Date().addingTimeInterval(Self.needsTransport(profile) ? 40 : 12)
-            var result = await Probe.timed(port: proxyPort, timeout: Self.needsTransport(profile) ? 20 : 12)
+            let transport = Self.needsTransport(profile)
+            // WireGuard/WARP: первый DNS-запрос уходит раньше, чем дослан хендшейк, и ядро его
+            // не повторяет — первая попытка честно падает по таймауту. Вторая идёт уже по
+            // поднятому туннелю, поэтому дедлайн здесь шире, чем у остальных.
+            let endpointKind = ConfigBuilder.isEndpointProfile(profile)
+            let deadline = Date().addingTimeInterval(transport ? 40 : (endpointKind ? 26 : 12))
+            var result = await Probe.timed(port: proxyPort, timeout: transport ? 20 : (endpointKind ? 10 : 12))
                 ?? ProbeResult(ok: false, error: "таймаут проверки")
             while !result.ok, Date() < deadline {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                result = await Probe.timed(port: proxyPort, timeout: 10) ?? result
+                result = await Probe.timed(port: proxyPort, timeout: 8) ?? result
             }
             bulk[index].result = result
             bulk[index].done = true

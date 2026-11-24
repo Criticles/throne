@@ -426,6 +426,24 @@ enum ConfigBuilder {
         return root["wg"] is [String: Any]
     }
 
+    /// Профиль поднимает WireGuard-эндпоинт (WARP, `wg://` или панельный JSON с `endpoints`).
+    /// У таких первая проба может упасть на DNS, пока идёт хендшейк, — им нужен запас по времени.
+    static func isEndpointProfile(_ profile: Profile) -> Bool {
+        switch profile.kind {
+        case .wireguard, .amneziawg:
+            return true
+        case .custom:
+            guard let data = profile.payload.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  let root = object as? [String: Any]
+            else { return false }
+            let endpoints = root["endpoints"] as? [[String: Any]] ?? []
+            return !endpoints.isEmpty
+        default:
+            return false
+        }
+    }
+
     /// Уже IP-литерал? Тогда резолв не нужен.
     private static func isIPAddress(_ host: String) -> Bool {
         var v4 = in_addr()
