@@ -207,10 +207,10 @@ struct ProfilesView: View {
                               systemImage: profile.favorite ? "star.slash" : "star")
                     }
                     Button {
-                        noteText = profile.note ?? ""
+                        noteText = profile.userNote ?? ""
                         noteProfile = profile
                     } label: {
-                        Label(profile.note == nil ? "Добавить заметку" : "Изменить заметку",
+                        Label(profile.userNote == nil ? "Добавить заметку" : "Изменить заметку",
                               systemImage: "text.bubble")
                     }
                     if let link = shareLink(profile) {
@@ -561,7 +561,7 @@ struct ServerRow: View {
 
                 HStack(spacing: 6) {
                     ProtocolBadge(text: profile.badge ?? profile.kind.title)
-                    if let note = profile.note {
+                    if let note = profile.userNote {
                         Text(note)
                             .font(.caption2)
                             .foregroundColor(.secondary)

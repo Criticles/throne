@@ -39,6 +39,6 @@ struct Profile: Codable, Identifiable, Hashable {
     var group: String? = nil
     /// Избранное: держим наверху списка.
     var favorite = false
-    /// Заметка пользователя к серверу.
-    var note: String? = nil
+    /// Заметка пользователя к серверу (не путать с `note` — предупреждением о сборке).
+    var userNote: String? = nil
 }

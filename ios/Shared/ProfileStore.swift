@@ -65,7 +65,7 @@ final class ProfileStore: ObservableObject {
     func setNote(_ text: String, for profile: Profile) {
         guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        profiles[index].note = trimmed.isEmpty ? nil : trimmed
+        profiles[index].userNote = trimmed.isEmpty ? nil : trimmed
         save()
     }
 
