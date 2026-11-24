@@ -301,7 +301,6 @@ enum ConfigBuilder {
                         "detour": detour,
                     ]],
                     "final": "dns-remote",
-                    "strategy": "ipv4_only",
                 ], "dns-remote")
             }
             return ([
@@ -312,7 +311,6 @@ enum ConfigBuilder {
                     "detour": detour,
                 ]],
                 "final": "dns-remote",
-                "strategy": "ipv4_only",
             ], "dns-remote")
         }
 
