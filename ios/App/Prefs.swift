@@ -55,6 +55,35 @@ final class Prefs: ObservableObject {
         }
     }
 
+    enum DNSMode: String, CaseIterable, Identifiable {
+        case system, doh, dot
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .system: return "Системный"
+            case .doh: return "DoH"
+            case .dot: return "DoT"
+            }
+        }
+
+        var hint: String {
+            switch self {
+            case .system: return "Резолвер провайдера. Быстро, но ответы могут подменяться."
+            case .doh: return "DNS поверх HTTPS — не подменяется по пути."
+            case .dot: return "DNS поверх TLS на 853-м порту."
+            }
+        }
+    }
+
+    enum TUNStack: String, CaseIterable, Identifiable {
+        case gvisor, system, mixed
+
+        var id: String { rawValue }
+        var title: String { rawValue }
+    }
+
     private let defaults = UserDefaults.standard
 
     @Published var routingMode: RoutingMode {
@@ -72,6 +101,32 @@ final class Prefs: ObservableObject {
     @Published var sortOrder: SortOrder {
         didSet { defaults.set(sortOrder.rawValue, forKey: "prefs.sort") }
     }
+    @Published var favoriteFirst: Bool {
+        didSet { defaults.set(favoriteFirst, forKey: "prefs.favoriteFirst") }
+    }
+    /// Автовыбор быстрейшего сервера после параллельного пинга.
+    @Published var autoFastest: Bool {
+        didSet { defaults.set(autoFastest, forKey: "prefs.autoFastest") }
+    }
+    /// Финальный outbound: куда идёт всё, что не поймало ни одно правило.
+    @Published var finalAction: RuleAction {
+        didSet { defaults.set(finalAction.rawValue, forKey: "prefs.finalAction") }
+    }
+    @Published var dnsMode: DNSMode {
+        didSet { defaults.set(dnsMode.rawValue, forKey: "prefs.dnsMode") }
+    }
+    @Published var dnsServer: String {
+        didSet { defaults.set(dnsServer, forKey: "prefs.dnsServer") }
+    }
+    @Published var tunStack: TUNStack {
+        didSet { defaults.set(tunStack.rawValue, forKey: "prefs.tunStack") }
+    }
+    @Published var tunMTU: Int {
+        didSet { defaults.set(tunMTU, forKey: "prefs.tunMTU") }
+    }
+    @Published var ipv6: Bool {
+        didSet { defaults.set(ipv6, forKey: "prefs.ipv6") }
+    }
 
     init() {
         routingMode = RoutingMode(rawValue: defaults.string(forKey: "prefs.routing") ?? "") ?? .rules
@@ -79,5 +134,14 @@ final class Prefs: ObservableObject {
         blockAds = defaults.object(forKey: "prefs.blockAds") as? Bool ?? false
         xrayPreference = XrayPreference(rawValue: defaults.string(forKey: "prefs.xray") ?? "") ?? .xhttpAndReality
         sortOrder = SortOrder(rawValue: defaults.string(forKey: "prefs.sort") ?? "") ?? .name
+        favoriteFirst = defaults.object(forKey: "prefs.favoriteFirst") as? Bool ?? true
+        autoFastest = defaults.object(forKey: "prefs.autoFastest") as? Bool ?? false
+        finalAction = RuleAction(rawValue: defaults.string(forKey: "prefs.finalAction") ?? "") ?? .proxy
+        dnsMode = DNSMode(rawValue: defaults.string(forKey: "prefs.dnsMode") ?? "") ?? .system
+        dnsServer = defaults.string(forKey: "prefs.dnsServer") ?? "https://1.1.1.1/dns-query"
+        tunStack = TUNStack(rawValue: defaults.string(forKey: "prefs.tunStack") ?? "") ?? .gvisor
+        let storedMTU = defaults.integer(forKey: "prefs.tunMTU")
+        tunMTU = storedMTU == 0 ? 9000 : storedMTU
+        ipv6 = defaults.object(forKey: "prefs.ipv6") as? Bool ?? true
     }
 }

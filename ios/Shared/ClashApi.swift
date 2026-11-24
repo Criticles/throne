@@ -19,7 +19,8 @@ enum ClashApi {
         guard let url = URL(string: "http://127.0.0.1:\(port)/version") else { return nil }
         guard let (data, response) = try? await session.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+              let parsed = try? JSONSerialization.jsonObject(with: data),
+              let object = parsed as? [String: Any]
         else { return nil }
         return object["version"] as? String
     }
@@ -39,7 +40,8 @@ enum ClashApi {
         guard let url = components.url else { return nil }
         guard let (data, response) = try? await session.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+              let parsed = try? JSONSerialization.jsonObject(with: data),
+              let object = parsed as? [String: Any]
         else { return nil }
         if let delay = object["delay"] as? Int, delay > 0 { return delay }
         if let delay = object["delay"] as? Double, delay > 0 { return Int(delay) }
@@ -61,11 +63,12 @@ enum ClashApi {
         guard let url = URL(string: "http://127.0.0.1:\(port)/connections") else { return [] }
         guard let (data, response) = try? await session.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let parsed = try? JSONSerialization.jsonObject(with: data),
+              let object = parsed as? [String: Any],
               let list = object["connections"] as? [[String: Any]]
         else { return [] }
 
-        return list.compactMap { item in
+        return list.map { item in
             let metadata = item["metadata"] as? [String: Any]
             let host = (metadata?["host"] as? String)
                 ?? (metadata?["destinationIP"] as? String)

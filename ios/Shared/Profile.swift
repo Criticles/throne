@@ -37,4 +37,8 @@ struct Profile: Codable, Identifiable, Hashable {
     var badge: String? = nil
     /// Папка в списке — подписка, из которой пришёл сервер (nil = добавлен вручную).
     var group: String? = nil
+    /// Избранное: держим наверху списка.
+    var favorite = false
+    /// Заметка пользователя к серверу.
+    var note: String? = nil
 }

@@ -82,6 +82,10 @@ final class TunnelController: ObservableObject {
         manager.protocolConfiguration = proto
         manager.localizedDescription = "Throne"
         manager.isEnabled = true
+        // Always-on: iOS сам поднимает туннель при появлении сети и перезапускает его
+        // после падения. Без on-demand VPN остаётся выключенным до ручного включения.
+        manager.isOnDemandEnabled = true
+        manager.onDemandRules = [NEOnDemandRuleConnect()]
         do {
             try await manager.saveToPreferences()
             try await manager.loadFromPreferences()

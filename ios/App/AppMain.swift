@@ -16,6 +16,8 @@ struct RootView: View {
     @StateObject private var engine = DevEngine()
     @StateObject private var prefs = Prefs()
     @StateObject private var rules = RuleStore()
+    @StateObject private var traffic = TrafficMonitor()
+    private let upkeep = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
 
     var body: some View {
         TabView {
@@ -30,7 +32,28 @@ struct RootView: View {
         .environmentObject(engine)
         .environmentObject(prefs)
         .environmentObject(rules)
+        .environmentObject(traffic)
         .accentColor(Theme.accent)
+        .onOpenURL { url in
+            // throne://import?url=<ссылка> — так профиль приходит из QR или другого приложения.
+            guard url.scheme?.lowercased() == "throne" else { return }
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               let value = components.queryItems?.first(where: { $0.name == "url" })?.value {
+                Task { await store.importAny(value) }
+            }
+        }
+        .onReceive(upkeep) { _ in
+            Task {
+                await store.autoUpdateIfNeeded()
+                await rules.autoUpdateIfNeeded()
+            }
+        }
+        .task {
+            // Автообновление подписок и наборов правил: фоновых задач iOS не даёт,
+            // поэтому проверяем при запуске — и пока приложение открыто, по таймеру.
+            await store.autoUpdateIfNeeded()
+            await rules.autoUpdateIfNeeded()
+        }
     }
 }
 

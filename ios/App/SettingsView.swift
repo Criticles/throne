@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var engine: DevEngine
+    @EnvironmentObject private var prefs: Prefs
 
     var body: some View {
         NavigationView {
@@ -12,6 +13,7 @@ struct SettingsView: View {
                 coreSection
                 protocolsSection
                 subscriptionsSection
+                networkSection
                 journalSection
                 vpnSection
                 aboutSection
@@ -114,6 +116,20 @@ struct SettingsView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
+                    Text(subscription.trafficText)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    if let expire = subscription.expire {
+                        Text("до \(Self.dateFormatter.string(from: expire))")
+                            .font(.caption2)
+                            .foregroundColor(expire < Date() ? .red : .secondary)
+                    }
+                    Toggle("Автообновление каждые \(subscription.intervalHours) ч",
+                           isOn: Binding(
+                            get: { subscription.autoUpdate },
+                            set: { on in store.setAutoUpdate(on, intervalHours: subscription.intervalHours, for: subscription) }
+                           ))
+                        .font(.caption)
                 }
                 .padding(.vertical, 2)
                 .contextMenu {
@@ -140,6 +156,49 @@ struct SettingsView: View {
             Text("Подписки")
         } footer: {
             Text("Долгое нажатие — обновить или удалить. Удаление подписки убирает и её серверы.")
+        }
+    }
+
+    // MARK: - Сеть
+
+    private var networkSection: some View {
+        Section {
+            Picker("DNS", selection: $prefs.dnsMode) {
+                ForEach(Prefs.DNSMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            if prefs.dnsMode != .system {
+                TextField("https://1.1.1.1/dns-query", text: $prefs.dnsServer)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .font(.system(.footnote, design: .monospaced))
+            }
+            Text(prefs.dnsMode.hint)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+            Picker("Стек TUN", selection: $prefs.tunStack) {
+                ForEach(Prefs.TUNStack.allCases) { stack in
+                    Text(stack.title).tag(stack)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Stepper(value: $prefs.tunMTU, in: 1280...9000, step: 20) {
+                HStack {
+                    Text("MTU туннеля")
+                    Spacer()
+                    Text("\(prefs.tunMTU)")
+                        .font(.system(.subheadline, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+            }
+            Toggle("IPv6 в туннеле", isOn: $prefs.ipv6)
+        } header: {
+            Text("DNS и туннель")
+        } footer: {
+            Text("DNS применяется сразу. Стек, MTU и IPv6 включаются в конфиг сборки через Network Extension — в dev-режиме TUN не поднимается.")
         }
     }
 

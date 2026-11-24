@@ -6,6 +6,7 @@ struct ProfilesView: View {
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var engine: DevEngine
     @EnvironmentObject private var prefs: Prefs
+    @EnvironmentObject private var traffic: TrafficMonitor
 
     @State private var folder: String? = nil
     @State private var query = ""
@@ -13,6 +14,10 @@ struct ProfilesView: View {
     @State private var showAdd = false
     @State private var addText = ""
     @State private var addTitle = ""
+    @State private var showScanner = false
+    @State private var qrProfile: Profile?
+    @State private var noteProfile: Profile?
+    @State private var noteText = ""
 
     private var rowsByID: [UUID: DevEngine.BulkRow] {
         var map: [UUID: DevEngine.BulkRow] = [:]
@@ -29,18 +34,21 @@ struct ProfilesView: View {
                 || (profile.badge ?? profile.kind.title).localizedCaseInsensitiveContains(query)
         }
         let map = rowsByID
+        let ordered: [Profile]
         switch prefs.sortOrder {
         case .name:
-            return filtered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            ordered = filtered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         case .kind:
-            return filtered.sorted {
+            ordered = filtered.sorted {
                 ($0.badge ?? $0.kind.title).localizedCaseInsensitiveCompare($1.badge ?? $1.kind.title) == .orderedAscending
             }
         case .ping:
-            return filtered.sorted { ping($0, map) < ping($1, map) }
+            ordered = filtered.sorted { ping($0, map) < ping($1, map) }
         case .country:
-            return filtered.sorted { country($0, map) < country($1, map) }
+            ordered = filtered.sorted { country($0, map) < country($1, map) }
         }
+        guard prefs.favoriteFirst else { return ordered }
+        return ordered.sorted { $0.favorite && !$1.favorite }
     }
 
     /// Серверов в папке / сколько из них отвечает.
@@ -62,6 +70,13 @@ struct ProfilesView: View {
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
             .sheet(isPresented: $showAdd) { addSheet }
+            .sheet(isPresented: $showScanner) { scannerSheet }
+            .sheet(item: $qrProfile) { profile in
+                QRCodeSheet(title: "QR сервера", text: shareLink(profile) ?? profile.payload)
+            }
+            .sheet(item: $noteProfile) { profile in
+                noteSheet(for: profile)
+            }
         }
         .navigationViewStyle(.stack)
     }
@@ -165,6 +180,14 @@ struct ProfilesView: View {
                     }
                     .tint(.green)
                 }
+                .swipeActions(edge: .leading) {
+                    Button {
+                        store.toggleFavorite(profile)
+                    } label: {
+                        Label(profile.favorite ? "Убрать" : "В избранное", systemImage: "star")
+                    }
+                    .tint(.yellow)
+                }
                 .contextMenu {
                     Button {
                         store.select(profile.id)
@@ -177,11 +200,34 @@ struct ProfilesView: View {
                     } label: {
                         Label("Пинг", systemImage: "waveform.path.ecg")
                     }
+                    Button {
+                        store.toggleFavorite(profile)
+                    } label: {
+                        Label(profile.favorite ? "Убрать из избранного" : "В избранное",
+                              systemImage: profile.favorite ? "star.slash" : "star")
+                    }
+                    Button {
+                        noteText = profile.note ?? ""
+                        noteProfile = profile
+                    } label: {
+                        Label(profile.note == nil ? "Добавить заметку" : "Изменить заметку",
+                              systemImage: "text.bubble")
+                    }
                     if let link = shareLink(profile) {
                         Button {
                             UIPasteboard.general.string = link
                         } label: {
                             Label("Скопировать ссылку", systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            UIPasteboard.general.string = deepLink(for: profile)
+                        } label: {
+                            Label("Скопировать ссылку для Throne", systemImage: "link.badge.plus")
+                        }
+                        Button {
+                            qrProfile = profile
+                        } label: {
+                            Label("Показать QR", systemImage: "qrcode")
                         }
                     }
                     Divider()
@@ -203,7 +249,7 @@ struct ProfilesView: View {
                     ProgressView().scaleEffect(0.7)
                 }
                 HeaderButton(icon: "waveform.path.ecg", tint: Theme.accent) {
-                    Task { await engine.checkAll(profiles: visible) }
+                    Task { await checkAll() }
                 }
                 .disabled(engine.bulkRunning || visible.isEmpty)
                 HeaderButton(icon: "arrow.clockwise", tint: Theme.accent) {
@@ -242,6 +288,11 @@ struct ProfilesView: View {
                     importClipboard()
                 } label: {
                     Label("Импорт из буфера", systemImage: "doc.on.clipboard")
+                }
+                Button {
+                    showScanner = true
+                } label: {
+                    Label("Сканировать QR", systemImage: "qrcode.viewfinder")
                 }
                 if !store.subscriptions.isEmpty {
                     Divider()
@@ -349,6 +400,7 @@ struct ProfilesView: View {
     private func toggle() async {
         if engine.running {
             engine.stop()
+            traffic.stop()
             probeLine = ""
             return
         }
@@ -357,6 +409,9 @@ struct ProfilesView: View {
             return
         }
         engine.start(profile: profile)
+        if engine.running, !engine.transportOnly {
+            traffic.start(profile: profile.name)
+        }
         guard engine.running, !engine.transportOnly else { return }
         if !engine.isListening() {
             probeLine = "ядро не слушает \(engine.socksAddress)"
@@ -367,11 +422,81 @@ struct ProfilesView: View {
         probeLine = result?.summary ?? "нет связи — смотрите журнал"
     }
 
+    private func checkAll() async {
+        let wasRunning = engine.running
+        await engine.checkAll(profiles: visible)
+        // Автогруппа «быстрейший»: после серии выбираем сервер с минимальной задержкой.
+        guard prefs.autoFastest else { return }
+        let best = engine.bulk
+            .filter { $0.result?.ok == true }
+            .min { ($0.result?.millis ?? Int.max) < ($1.result?.millis ?? Int.max) }
+        guard let best, let profile = store.profiles.first(where: { $0.id == best.id }) else { return }
+        store.select(profile.id)
+        probeLine = "автовыбор: " + profile.name + " · " + (best.result?.shortSummary ?? "")
+        if wasRunning {
+            // Серия пингов гасит ядро — возвращаемся на быстрейший сервер, а не оставляем выключенным.
+            engine.start(profile: profile)
+            if engine.running, !engine.transportOnly { traffic.start(profile: profile.name) }
+        }
+    }
+
     private func check(_ profile: Profile) async {
         await engine.check(profile: profile)
         if let result = rowsByID[profile.id]?.result {
             probeLine = result.summary
         }
+    }
+
+    /// Ссылка в формате приложения: по ней Throne импортирует профиль сам.
+    private func deepLink(for profile: Profile) -> String {
+        let link = shareLink(profile) ?? profile.payload
+        let encoded = link.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? link
+        return "throne://import?url=" + encoded
+    }
+
+    private var scannerSheet: some View {
+        NavigationView {
+            QRScannerView { code in
+                showScanner = false
+                Task { await store.importAny(code) }
+            }
+            .ignoresSafeArea()
+            .navigationTitle("Наведите камеру на QR")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Закрыть") { showScanner = false }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private func noteSheet(for profile: Profile) -> some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextEditor(text: $noteText)
+                        .frame(minHeight: 120)
+                } footer: {
+                    Text("Заметка видна только вам и хранится на устройстве.")
+                }
+            }
+            .navigationTitle("Заметка")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { noteProfile = nil }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Сохранить") {
+                        store.setNote(noteText, for: profile)
+                        noteProfile = nil
+                    }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
     }
 
     /// Поделиться можно только тем профилем, у которого есть share-ссылка.
@@ -422,6 +547,11 @@ struct ServerRow: View {
                     Text(profile.name)
                         .font(.subheadline.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
+                    if profile.favorite {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundColor(.yellow)
+                    }
                     if active {
                         Image(systemName: "bolt.fill")
                             .font(.caption2)
@@ -431,6 +561,12 @@ struct ServerRow: View {
 
                 HStack(spacing: 6) {
                     ProtocolBadge(text: profile.badge ?? profile.kind.title)
+                    if let note = profile.note {
+                        Text(note)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
                     if let result {
                         Text(result.shortSummary)
                             .font(.caption2.weight(.medium))

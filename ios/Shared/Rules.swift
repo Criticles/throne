@@ -79,6 +79,25 @@ struct RouteRule: Codable, Identifiable, Hashable {
     }
 }
 
+/// Набор правил по URL: sing-box `rule_set` (бинарный .srs) или текстовый список доменов.
+struct RuleSet: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var name: String
+    var url: String
+    /// `binary` — .srs/.dat от sing-box, `source` — текстовый список доменов.
+    var format: String = "binary"
+    var updated: Date?
+    var bytes: Int = 0
+    var autoUpdate = true
+    var intervalHours = 24
+
+    static let presets: [RuleSet] = [
+        RuleSet(name: "geosite-ru", url: "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-ru.srs"),
+        RuleSet(name: "geosite-ads", url: "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"),
+        RuleSet(name: "geoip-ru", url: "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"),
+    ]
+}
+
 /// Скачанный список: geoip.dat / geosite.dat.
 struct GeoAsset: Identifiable, Hashable {
     let id: String
@@ -102,9 +121,11 @@ struct GeoAsset: Identifiable, Hashable {
 final class RuleStore: ObservableObject {
     @Published private(set) var rules: [RouteRule] = []
     @Published private(set) var assets: [GeoAsset] = GeoAsset.all
+    @Published private(set) var ruleSets: [RuleSet] = []
     @Published private(set) var status = ""
 
     private let rulesKey = "rules.items"
+    private let setsKey = "rules.sets"
     private let defaults = UserDefaults.standard
 
     init() {
@@ -248,6 +269,60 @@ final class RuleStore: ObservableObject {
         return unique.filter { $0.lowercased().contains(text) }.prefix(12).map { $0 }
     }
 
+    // MARK: - Наборы правил по URL
+
+    func addRuleSet(_ set: RuleSet) {
+        guard !ruleSets.contains(where: { $0.url == set.url }) else {
+            status = "такой набор уже добавлен"
+            return
+        }
+        ruleSets.append(set)
+        saveSets()
+        Task { await download(set) }
+    }
+
+    func deleteRuleSet(_ set: RuleSet) {
+        ruleSets.removeAll { $0.id == set.id }
+        if let url = fileURL(for: set) { try? FileManager.default.removeItem(at: url) }
+        saveSets()
+    }
+
+    func download(_ set: RuleSet) async {
+        guard let url = URL(string: set.url), let target = fileURL(for: set) else { return }
+        status = "скачиваю " + set.name + "…"
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else {
+                status = set.name + ": сервер ответил " + String((response as? HTTPURLResponse)?.statusCode ?? -1)
+                return
+            }
+            try data.write(to: target, options: .atomic)
+            if let index = ruleSets.firstIndex(where: { $0.id == set.id }) {
+                ruleSets[index].bytes = data.count
+                ruleSets[index].updated = Date()
+            }
+            saveSets()
+            status = set.name + " обновлён: " + ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+        } catch {
+            status = set.name + ": " + error.localizedDescription
+        }
+    }
+
+    /// Обновляем устаревшие наборы — вызывается при запуске приложения.
+    func autoUpdateIfNeeded() async {
+        let now = Date()
+        for set in ruleSets where set.autoUpdate {
+            if let updated = set.updated,
+               now.timeIntervalSince(updated) < TimeInterval(max(set.intervalHours, 1) * 3600) { continue }
+            await download(set)
+        }
+    }
+
+    private func saveSets() {
+        guard let data = try? JSONEncoder().encode(ruleSets) else { return }
+        defaults.set(data, forKey: setsKey)
+    }
+
     // MARK: - Гео-списки
 
     private static var rulesDirectory: URL? {
@@ -262,6 +337,11 @@ final class RuleStore: ObservableObject {
 
     func fileURL(for asset: GeoAsset) -> URL? {
         Self.rulesDirectory?.appendingPathComponent(asset.name)
+    }
+
+    func fileURL(for set: RuleSet) -> URL? {
+        let tail = URL(string: set.url)?.lastPathComponent ?? (set.name + ".srs")
+        return Self.rulesDirectory?.appendingPathComponent(set.name + "-" + tail)
     }
 
     /// Скачивает список и запоминает размер с датой. Сами списки читает ядро, не приложение.
@@ -315,6 +395,10 @@ final class RuleStore: ObservableObject {
                 RouteRule(kind: .geosite, value: "category-ads-all", action: .block, builtin: true),
             ]
             save()
+        }
+        if let data = defaults.data(forKey: setsKey),
+           let stored = try? JSONDecoder().decode([RuleSet].self, from: data) {
+            ruleSets = stored
         }
         if let stored = defaults.array(forKey: "rules.assets") as? [[String: String]] {
             for item in stored {

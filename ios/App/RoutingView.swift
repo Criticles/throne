@@ -7,6 +7,9 @@ struct RoutingView: View {
 
     @State private var draft: RouteRule?
     @State private var domain = ""
+    @State private var showSetSheet = false
+    @State private var setURL = ""
+    @State private var setName = ""
 
     var body: some View {
         NavigationView {
@@ -14,6 +17,7 @@ struct RoutingView: View {
                 modeSection
                 rulesSection
                 geoSection
+                ruleSetsSection
                 testSection
                 xraySection
             }
@@ -31,6 +35,7 @@ struct RoutingView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showSetSheet) { ruleSetSheet }
             .sheet(item: $draft) { rule in
                 RuleEditorView(rule: rule) { saved in
                     if rules.rules.contains(where: { $0.id == saved.id }) {
@@ -58,6 +63,11 @@ struct RoutingView: View {
                 .font(.footnote)
                 .foregroundColor(.secondary)
 
+            Picker("Если ни одно правило не совпало", selection: $prefs.finalAction) {
+                ForEach(RuleAction.allCases) { action in
+                    Text(action.title).tag(action)
+                }
+            }
             Toggle("Не пускать локальную сеть в туннель", isOn: $prefs.bypassLocalNetwork)
             Toggle("Блокировать рекламу и трекеры", isOn: $prefs.blockAds)
         } header: {
@@ -144,6 +154,100 @@ struct RoutingView: View {
         } footer: {
             Text("Списки Loyalsoldier: страны и категории доменов для правил geosite/geoip. " + rules.status)
         }
+    }
+
+    private var ruleSetsSection: some View {
+        Section {
+            if rules.ruleSets.isEmpty {
+                Text("наборов нет — добавьте ссылку на .srs или текстовый список")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            ForEach(rules.ruleSets) { set in
+                HStack(spacing: 12) {
+                    Image(systemName: "tray.full")
+                        .foregroundColor(.secondary)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(set.name).font(.subheadline)
+                        Text("\(set.format) · \(setSize(set)) · каждые \(set.intervalHours) ч")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await rules.download(set) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .swipeActions {
+                    Button(role: .destructive) {
+                        rules.deleteRuleSet(set)
+                    } label: {
+                        Label("Удалить", systemImage: "trash")
+                    }
+                }
+            }
+            Button {
+                setName = ""
+                setURL = ""
+                showSetSheet = true
+            } label: {
+                Label("Добавить набор по URL", systemImage: "link")
+            }
+            Menu {
+                ForEach(RuleSet.presets, id: \.id) { preset in
+                    Button(preset.name) { rules.addRuleSet(preset) }
+                }
+            } label: {
+                Label("Готовые наборы", systemImage: "plus.circle")
+            }
+        } header: {
+            Text("Наборы правил по URL")
+        } footer: {
+            Text("Наборы обновляются при запуске приложения, если прошло больше указанного интервала. " + rules.status)
+        }
+    }
+
+    private var ruleSetSheet: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("Имя набора", text: $setName)
+                    TextField("https://…/rules.srs", text: $setURL)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .keyboardType(.URL)
+                        .font(.system(.footnote, design: .monospaced))
+                } footer: {
+                    Text("Ссылка на .srs (sing-box rule-set) или текстовый список доменов. Набор обновится при запуске приложения.")
+                }
+            }
+            .navigationTitle("Набор правил")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { showSetSheet = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Добавить") {
+                        let url = setURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !url.isEmpty else { return }
+                        let name = setName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let fallback = URL(string: url)?.lastPathComponent ?? "набор"
+                        rules.addRuleSet(RuleSet(name: name.isEmpty ? fallback : name, url: url))
+                        showSetSheet = false
+                    }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private func setSize(_ set: RuleSet) -> String {
+        set.bytes > 0 ? ByteCountFormatter.string(fromByteCount: Int64(set.bytes), countStyle: .file) : "не скачан"
     }
 
     private var testSection: some View {

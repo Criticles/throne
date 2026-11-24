@@ -151,32 +151,53 @@ enum ConfigBuilder {
 
     // MARK: - Обвязка
 
-    /// Явный DNS через системный резолвер. Без блока `dns` sing-box в приложении
-    /// не резолвит имена из SOCKS-запросов, и проверка трафика падает с «bad URL»/ошибкой прокси.
+    /// DNS ядра: системный резолвер, DoH или DoT — из настроек приложения.
+    /// Без блока `dns` sing-box не резолвит имена из SOCKS-запросов, и проверка падает
+    /// с «bad URL»/ошибкой прокси.
     private static func dnsConfig(detour: String? = nil) -> [String: Any] {
-        // Системный резолвер у этого провайдера подменяет ответы (api.ipify.org → 198.20.0.68),
-        // и пакет уходит в туннель на несуществующий адрес: WG-handshake проходит, а данных нет.
-        // Для WireGuard/Turnable разрешаем имена через сам туннель.
-        guard let detour else {
-            // Формат 1.12+: у сервера есть тип. Старый вид {"address": "local"} удалён в 1.14,
-            // и ядро отказывается разбирать конфиг целиком.
+        // Настройка пользователя: системный резолвер, DoH или DoT.
+        let mode = UserDefaults.standard.string(forKey: "prefs.dnsMode") ?? "system"
+        let configured = UserDefaults.standard.string(forKey: "prefs.dnsServer") ?? "https://1.1.1.1/dns-query"
+        let host = URL(string: configured)?.host ?? configured
+
+        if let detour {
+            // Внутри WireGuard системный резолвер недоступен: DNS идёт через сам туннель.
+            return [
+                "servers": [[
+                    "type": "udp",
+                    "server": "1.1.1.1",
+                    "detour": detour,
+                    "tag": "dns-remote",
+                ]],
+                "final": "dns-remote",
+                "strategy": "ipv4_only",
+            ]
+        }
+
+        switch mode {
+        case "doh":
+            return [
+                "servers": [["type": "https", "server": host, "tag": "dns-remote"]],
+                "final": "dns-remote",
+            ]
+        case "dot":
+            return [
+                "servers": [["type": "tls", "server": host, "tag": "dns-remote"]],
+                "final": "dns-remote",
+            ]
+        default:
+            // Формат 1.12+: у сервера есть тип. Старый вид {"address": "local"} удалён в 1.14.
             return [
                 "servers": [["type": "local", "tag": "dns-local"]],
                 "final": "dns-local",
             ]
         }
-        return [
-            "servers": [
-                [
-                    "type": "udp",
-                    "server": "1.1.1.1",
-                    "detour": detour,
-                    "tag": "dns-remote",
-                ],
-            ],
-            "final": "dns-remote",
-            "strategy": "ipv4_only",
-        ]
+    }
+
+    /// Clash API нужен не только для параллельного пинга: живой трафик и список соединений
+    /// тоже берутся из него, поэтому он включён в любом dev-конфиге.
+    private static func clashAPI() -> [String: Any] {
+        ["clash_api": ["external_controller": "127.0.0.1:\(clashPort)"]]
     }
 
     private static func inbound() -> [String: Any] {
@@ -196,6 +217,7 @@ enum ConfigBuilder {
             "inbounds": [inbound()],
             "outbounds": [outbound],
             "route": ["final": tag, "auto_detect_interface": false],
+            "experimental": clashAPI(),
         ]
     }
 
@@ -207,6 +229,7 @@ enum ConfigBuilder {
             "inbounds": [inbound()],
             "endpoints": [endpoint],
             "route": ["final": tag, "auto_detect_interface": false],
+            "experimental": clashAPI(),
         ]
     }
 
@@ -480,6 +503,14 @@ enum ConfigBuilder {
             }
         }
         config["route"] = route
+
+        var experimental = (config["experimental"] as? [String: Any]) ?? [:]
+        var clash = (experimental["clash_api"] as? [String: Any]) ?? [:]
+        if clash["external_controller"] == nil {
+            clash["external_controller"] = "127.0.0.1:\(clashPort)"
+        }
+        experimental["clash_api"] = clash
+        config["experimental"] = experimental
         return config
     }
 }

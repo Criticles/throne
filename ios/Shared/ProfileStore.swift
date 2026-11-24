@@ -56,6 +56,40 @@ final class ProfileStore: ObservableObject {
         profiles.filter { ($0.group ?? Self.manualFolder) == folder }
     }
 
+    func toggleFavorite(_ profile: Profile) {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        profiles[index].favorite.toggle()
+        save()
+    }
+
+    func setNote(_ text: String, for profile: Profile) {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        profiles[index].note = trimmed.isEmpty ? nil : trimmed
+        save()
+    }
+
+    /// Автообновление подписок: по таймеру из настроек подписки.
+    /// Вызывается при запуске и пока приложение открыто — фоновых задач iOS не даёт.
+    func autoUpdateIfNeeded() async {
+        guard !loading else { return }
+        let now = Date()
+        for subscription in subscriptions where subscription.autoUpdate {
+            if let updated = subscription.updated {
+                let interval = TimeInterval(max(subscription.intervalHours, 1) * 3600)
+                if now.timeIntervalSince(updated) < interval { continue }
+            }
+            await refresh(subscription)
+        }
+    }
+
+    func setAutoUpdate(_ enabled: Bool, intervalHours: Int, for subscription: Subscription) {
+        guard let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) else { return }
+        subscriptions[index].autoUpdate = enabled
+        subscriptions[index].intervalHours = max(1, intervalHours)
+        save()
+    }
+
     func delete(_ profile: Profile) {
         profiles.removeAll { $0.id == profile.id }
         if selectedID == profile.id { selectedID = profiles.first?.id }
@@ -126,6 +160,7 @@ final class ProfileStore: ObservableObject {
         defer { loading = false }
 
         importLog = ""
+        var userinfo: String?
         let folder = name ?? Self.folderName(for: trimmed)
         log("импорт подписки: \(trimmed)")
         log("    папка: \(folder)")
@@ -134,7 +169,9 @@ final class ProfileStore: ObservableObject {
         var problems: [String] = []
 
         do {
-            let list = try await fetch(url, userAgent: "v2rayNG/1.8.5")
+            let first = try await fetch(url, userAgent: "v2rayNG/1.8.5")
+            let list = first.text
+            userinfo = first.response?.value(forHTTPHeaderField: "subscription-userinfo")
             if list.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
                 problems.append("вместо подписки пришёл HTML")
             } else {
@@ -150,7 +187,7 @@ final class ProfileStore: ObservableObject {
         // (в частности, там появляется Mieru).
         for userAgent in ["Throne/1.1.0", "Throne/0.1 (iOS)"] {
             do {
-                let configText = try await fetch(url, userAgent: userAgent)
+                let configText = try await fetch(url, userAgent: userAgent).text
                 guard configText.contains("\"outbounds\"") else { continue }
                 log("  формат: \(ProfileParser.describe(configText))")
                 added += importParsed(ProfileParser.parse(text: configText), group: folder)
@@ -163,7 +200,7 @@ final class ProfileStore: ObservableObject {
 
         // Панель отдаёт AmneziaWG только клиенту YPtun (проверено: 3 ссылки вместо 2).
         do {
-            let yptunList = try await fetch(url, userAgent: "YPtun/3.7.0")
+            let yptunList = try await fetch(url, userAgent: "YPtun/3.7.0").text
             if !yptunList.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
                 log("  формат: \(ProfileParser.describe(yptunList))")
                 added += importParsed(ProfileParser.parse(text: yptunList), group: folder)
@@ -182,7 +219,7 @@ final class ProfileStore: ObservableObject {
         for format in ["wireturn"] {
             guard let turnableURL = Self.withQuery(url, [("format", format)]) else { continue }
             do {
-                let text = try await fetch(turnableURL, userAgent: "Throne/1.1.0")
+                let text = try await fetch(turnableURL, userAgent: "Throne/1.1.0").text
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") { continue }
                 log("  формат: \(ProfileParser.describe(text))")
                 added += importParsed(ProfileParser.parse(text: text), group: folder)
@@ -197,7 +234,7 @@ final class ProfileStore: ObservableObject {
             }
         }
 
-        recordSubscription(url: trimmed, name: folder)
+        recordSubscription(url: trimmed, name: folder, userinfo: userinfo)
         if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
         } else {
@@ -225,7 +262,7 @@ final class ProfileStore: ObservableObject {
         LogStore.shared.append("импорт: \(line)", stamp: false)
     }
 
-    private func fetch(_ url: URL, userAgent: String) async throws -> String {
+    private func fetch(_ url: URL, userAgent: String) async throws -> (text: String, response: HTTPURLResponse?) {
         log("GET \(url.absoluteString)")
         log("    User-Agent: \(userAgent)")
 
@@ -247,7 +284,7 @@ final class ProfileStore: ObservableObject {
             throw NSError(domain: "orbita.subscription", code: -2,
                           userInfo: [NSLocalizedDescriptionKey: "ответ не в UTF-8"])
         }
-        return text
+        return (text, http)
     }
 
     @discardableResult
@@ -407,18 +444,58 @@ final class ProfileStore: ObservableObject {
     }
 
     /// Подписка в списке одна на URL: повторный импорт только обновляет дату и счётчик.
-    private func recordSubscription(url: String, name: String) {
+    private func recordSubscription(url: String, name: String, userinfo: String? = nil) {
         let inFolder = profiles.filter { $0.group == name }.count
+        let limits = Self.parseUserinfo(userinfo)
         if let index = subscriptions.firstIndex(where: { $0.url == url }) {
             subscriptions[index].name = name
             subscriptions[index].updated = Date()
             subscriptions[index].count = inFolder
+            if let limits {
+                subscriptions[index].upload = limits.upload
+                subscriptions[index].download = limits.download
+                subscriptions[index].total = limits.total
+                subscriptions[index].expire = limits.expire
+            }
         } else {
-            subscriptions.append(Subscription(name: name, url: url, updated: Date(), count: inFolder))
+            var subscription = Subscription(name: name, url: url, updated: Date(), count: inFolder)
+            if let limits {
+                subscription.upload = limits.upload
+                subscription.download = limits.download
+                subscription.total = limits.total
+                subscription.expire = limits.expire
+            }
+            subscriptions.append(subscription)
         }
         if let data = try? JSONEncoder().encode(subscriptions) {
             defaults.set(data, forKey: subscriptionsKey)
         }
+    }
+
+    /// `subscription-userinfo: upload=1; download=2; total=3; expire=1760000000`
+    static func parseUserinfo(_ raw: String?) -> (upload: Int64, download: Int64, total: Int64, expire: Date?)? {
+        guard let raw, !raw.isEmpty else { return nil }
+        var upload: Int64 = 0
+        var download: Int64 = 0
+        var total: Int64 = 0
+        var expire: Date?
+        for chunk in raw.split(separator: ";") {
+            let pair = chunk.split(separator: "=")
+            guard pair.count == 2 else { continue }
+            let key = pair[0].trimmingCharacters(in: .whitespaces).lowercased()
+            let value = pair[1].trimmingCharacters(in: .whitespaces)
+            switch key {
+            case "upload": upload = Int64(value) ?? 0
+            case "download": download = Int64(value) ?? 0
+            case "total": total = Int64(value) ?? 0
+            case "expire":
+                if let stamp = Double(value), stamp > 0 {
+                    expire = Date(timeIntervalSince1970: stamp)
+                }
+            default: break
+            }
+        }
+        return (upload, download, total, expire)
     }
 
     private func save() {
