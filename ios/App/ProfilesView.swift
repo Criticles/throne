@@ -7,7 +7,7 @@ struct ProfilesView: View {
     @EnvironmentObject private var prefs: Prefs
     @EnvironmentObject private var traffic: TrafficMonitor
 
-    @State private var folder: String? = nil
+    @State private var folderID: UUID? = nil
     @State private var query = ""
     @State private var probeLine = ""
     @State private var showAdd = false
@@ -21,6 +21,10 @@ struct ProfilesView: View {
     @State private var detailsProfile: Profile?
     @State private var showSubscriptions = false
     @State private var showLog = false
+    @State private var showNewFolder = false
+    @State private var folderName = ""
+    /// Куда класть новую подписку, когда выбрано «в существующую папку».
+    @State private var targetFolderID: UUID?
 
     @StateObject private var stats = TrafficStatsStore.shared
 
@@ -35,7 +39,7 @@ struct ProfilesView: View {
     private var visible: [Profile] {
         var filtered: [Profile] = []
         for profile in store.profiles {
-            let inFolder = folder == nil || (profile.group ?? ProfileStore.manualFolder) == folder
+            let inFolder = folderID == nil || profile.folderID == folderID
             guard inFolder else { continue }
             if query.isEmpty {
                 filtered.append(profile)
@@ -108,6 +112,7 @@ struct ProfilesView: View {
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
             .sheet(isPresented: $showAdd) { addSheet }
+            .sheet(isPresented: $showNewFolder) { newFolderSheet }
             .sheet(isPresented: $showScanner) { scannerSheet }
             .sheet(isPresented: $showSubscriptions) { SubscriptionEditorView() }
             .sheet(isPresented: $showLog) { NavigationView { LogsView() } }
@@ -227,14 +232,28 @@ struct ProfilesView: View {
         Section {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    FolderChip(title: "Все", count: store.profiles.count, selected: folder == nil) {
-                        folder = nil
+                    FolderChip(title: "Все", count: store.profiles.count, selected: folderID == nil) {
+                        folderID = nil
                     }
-                    ForEach(store.folders, id: \.self) { name in
-                        FolderChip(title: name, count: store.count(in: name), selected: folder == name) {
-                            folder = name
+                    ForEach(store.folders) { item in
+                        FolderChip(title: item.name,
+                                   count: store.count(in: item.id),
+                                   selected: folderID == item.id) {
+                            folderID = item.id
                         }
                     }
+                    Button {
+                        folderName = ""
+                        showNewFolder = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(Theme.accent)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(Color(uiColor: .tertiarySystemFill)))
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.vertical, 2)
                 .padding(.horizontal, 2)
@@ -242,51 +261,6 @@ struct ProfilesView: View {
             .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
-        }
-    }
-
-    private var controlsSection: some View {
-        Section {
-            HStack(spacing: 8) {
-                PlaqueButton(title: "Пинг всех", icon: "waveform.path.ecg") {
-                    Task { await checkAll() }
-                }
-                .disabled(engine.bulkRunning || visible.isEmpty)
-
-                PlaqueButton(title: "Скорость", icon: "speedometer") {
-                    Task { await speedAll() }
-                }
-                .disabled(engine.bulkRunning || engine.speedRunning != nil || visible.isEmpty)
-
-                HeaderButton(icon: "arrow.clockwise", tint: Theme.accent) {
-                    Task { await refreshCurrent() }
-                }
-                .disabled(store.subscriptions.isEmpty || store.loading)
-
-                Menu {
-                    Picker("Сортировка", selection: $prefs.sortOrder) {
-                        ForEach(Prefs.SortOrder.allCases) { order in
-                            Text(order.title).tag(order)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 26, height: 26)
-                }
-
-                Spacer()
-
-                if engine.bulkRunning || engine.speedRunning != nil {
-                    ProgressView().scaleEffect(0.7)
-                } else {
-                    Text(String(visible.count) + "/" + String(aliveCount))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-        } footer: {
-            Text("Трафик за всё время: ↑ " + Self.size(selectedTraffic.up) + " · ↓ " + Self.size(selectedTraffic.down))
         }
     }
 
@@ -305,7 +279,7 @@ struct ProfilesView: View {
         } header: {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
-                    Text(folder ?? "Все серверы")
+                    Text(folderID == nil ? "Все серверы" : store.folderName(folderID))
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Text(String(visible.count) + "/" + String(aliveCount))
@@ -320,11 +294,11 @@ struct ProfilesView: View {
                         }
                     } else {
                         HeaderButton(icon: "speedometer", tint: Theme.accent) {
-                            Task { await speedAll() }
+                            speedAll()
                         }
                         .disabled(visible.isEmpty)
                         HeaderButton(icon: "waveform.path.ecg", tint: Theme.accent) {
-                            Task { await checkAll() }
+                            checkAll()
                         }
                         .disabled(visible.isEmpty)
                     }
@@ -357,7 +331,7 @@ struct ProfilesView: View {
                   bulk: rowsByID[profile.id],
                   speed: engine.speed[profile.id],
                   busy: engine.bulkRunning || engine.speedRunning != nil,
-                  onPing: { Task { await engine.check(profile: profile) } })
+                  onPing: { engine.runCheck(profile: profile) })
             // Строка во всю ширину телефона: без отступов карточки, как в настройках iOS.
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
@@ -392,10 +366,10 @@ struct ProfilesView: View {
                 Button { Task { await connect(profile) } } label: {
                     Label("Подключиться", systemImage: "power")
                 }
-                Button { Task { await engine.check(profile: profile) } } label: {
+                Button { engine.runCheck(profile: profile) } label: {
                     Label("Пинг", systemImage: "waveform.path.ecg")
                 }
-                Button { Task { await engine.measureSpeed(profile: profile) } } label: {
+                Button { engine.runSpeedAll(profiles: [profile]) } label: {
                     Label("Скорость", systemImage: "speedometer")
                 }
                 Button { store.toggleFavorite(profile) } label: {
@@ -438,7 +412,13 @@ struct ProfilesView: View {
         }
         ToolbarItem(placement: .navigationBarTrailing) {
             Menu {
-                Button { addText = ""; addTitle = ""; showAdd = true } label: {
+                Button {
+                    addText = ""
+                    addTitle = ""
+                    targetFolderID = folderID
+                    createFolder = true
+                    showAdd = true
+                } label: {
                     Label("Подписка по ссылке", systemImage: "link")
                 }
                 Button { importClipboard() } label: {
@@ -456,7 +436,7 @@ struct ProfilesView: View {
                 Divider()
                 Button(role: .destructive) {
                     store.removeAll()
-                    folder = nil
+                    folderID = nil
                     probeLine = ""
                 } label: {
                     Label("Удалить все серверы", systemImage: "trash")
@@ -468,8 +448,6 @@ struct ProfilesView: View {
     }
 
     // MARK: - Шторки
-
-    private var activeFolderName: String { folder ?? ProfileStore.manualFolder }
 
     private var addSheet: some View {
         NavigationView {
@@ -483,16 +461,22 @@ struct ProfilesView: View {
                 Section {
                     Picker("Куда добавить", selection: $createFolder) {
                         Text("Новая папка").tag(true)
-                        Text("В «\(activeFolderName)»").tag(false)
+                        Text("В существующую").tag(false)
                     }
                     .pickerStyle(.segmented)
                     if createFolder {
                         TextField("Имя папки", text: $addTitle)
+                    } else {
+                        Picker("Папка", selection: $targetFolderID) {
+                            ForEach(store.folders) { item in
+                                Text(item.name + " · " + String(store.count(in: item.id))).tag(Optional(item.id))
+                            }
+                        }
                     }
                 } footer: {
                     Text(createFolder
-                         ? "Серверы лягут в новую папку. Одну и ту же подписку можно добавить несколько раз — папки не сольются."
-                         : "Серверы добавятся в текущую папку «\(activeFolderName)» рядом с уже импортированными.")
+                         ? "Серверы лягут в новую папку. Одну и ту же подписку можно добавить сколько угодно раз — папки не сольются, даже если назвать их одинаково."
+                         : "Серверы добавятся в выбранную папку рядом с теми, что там уже есть.")
                 }
                 Section {
                     Button("Взять из буфера обмена") { importClipboard() }
@@ -507,6 +491,35 @@ struct ProfilesView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Добавить") { addSubscription() }
                         .disabled(addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    /// Своя пустая папка: серверы можно добавить в неё потом, а имя поменять в «Изм.».
+    private var newFolderSheet: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("Название папки", text: $folderName)
+                } footer: {
+                    Text("Одинаковые названия разрешены: папки различаются внутренне. Переименовать можно в «Изм.».")
+                }
+            }
+            .navigationTitle("Новая папка")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { showNewFolder = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Создать") {
+                        let created = store.addFolder(name: folderName)
+                        showNewFolder = false
+                        folderID = created.id
+                    }
+                    .disabled(folderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -580,23 +593,24 @@ struct ProfilesView: View {
     private func addSubscription() {
         let input = addText.trimmingCharacters(in: .whitespacesAndNewlines)
         let typed = addTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name: String?
+        let target: UUID
         if createFolder {
-            // Пустое имя — берём имя хоста панели; занятое — добавляем « 2», чтобы
-            // повторный импорт той же подписки дал отдельную папку, а не слился со старой.
+            // Пустое имя — имя хоста панели; занятое имя не правим: одинаковые папки разрешены.
             let base = typed.isEmpty ? ProfileStore.folderName(for: input) : typed
-            name = store.uniqueFolder(basedOn: base)
+            target = store.addFolder(name: base).id
+        } else if let existing = targetFolderID {
+            target = existing
         } else {
-            name = folder ?? ProfileStore.manualFolder
+            target = store.manualFolderID ?? store.addFolder(name: ProfileStore.manualFolder).id
         }
         showAdd = false
+        folderID = target
         Task {
             if input.lowercased().hasPrefix("http") {
-                await store.importFromURL(input, name: name)
+                await store.importFromURL(input, folderID: target)
             } else {
                 store.importFromText(input)
             }
-            if let name { folder = name }
         }
     }
 
@@ -610,7 +624,7 @@ struct ProfilesView: View {
     }
 
     private func refreshCurrent() async {
-        if let name = folder, let subscription = store.subscriptions.first(where: { $0.name == name }) {
+        if let folderID, let subscription = store.subscription(in: folderID) {
             await store.refresh(subscription)
         } else {
             await refreshAll()
@@ -650,17 +664,21 @@ struct ProfilesView: View {
         await connect(profile)
     }
 
-    private func checkAll() async {
-        await engine.checkAll(profiles: visible)
-        guard prefs.autoFastest, let fastest else { return }
-        store.select(fastest.id)
+    private func checkAll() {
+        engine.runCheckAll(profiles: visible) { [engine, store, prefs] in
+            guard prefs.autoFastest else { return }
+            var best: (id: UUID, millis: Int)?
+            for row in engine.bulk {
+                guard row.result?.ok == true, let millis = row.result?.millis else { continue }
+                if best == nil || millis < best!.millis { best = (row.id, millis) }
+            }
+            if let best { store.select(best.id) }
+        }
     }
 
     /// Тест скорости по всем серверам папки — по очереди, каждый требует своего туннеля.
-    private func speedAll() async {
-        for profile in visible {
-            await engine.measureSpeed(profile: profile)
-        }
+    private func speedAll() {
+        engine.runSpeedAll(profiles: visible)
     }
 
     private func shareLink(_ profile: Profile) -> String? {
@@ -715,9 +733,9 @@ struct ServerRow: View {
                     }
                 }
 
-                // Третья строка появляется только по результатам пинга.
+                // Третья строка появляется только по результатам пинга: флаг и страна.
                 if let result {
-                    Text(result.exitLine ?? ProbeResult.unavailable)
+                    Text(result.countryLine ?? ProbeResult.unavailable)
                         .font(.caption2.weight(.medium))
                         .foregroundColor(result.ok ? .secondary : .red)
                         .lineLimit(2)

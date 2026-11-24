@@ -17,6 +17,13 @@ struct ProbeResult {
     /// в списке пользователю достаточно «Недоступен».
     static let unavailable = "Недоступен"
 
+    /// Третья строка строки списка: флаг и страна по-русски (без адреса — он в «Сведениях»).
+    /// nil — значит провал, тогда показываем `ProbeResult.unavailable`.
+    var countryLine: String? {
+        guard ok else { return nil }
+        return Probe.countryName(code: countryCode, fallback: country)
+    }
+
     /// Третья строка строки списка: флаг, страна по-русски и выходной IP.
     /// nil — значит провал, тогда показываем `ProbeResult.unavailable`.
     var exitLine: String? {

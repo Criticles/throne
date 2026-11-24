@@ -7,6 +7,9 @@ struct Subscription: Codable, Identifiable, Hashable {
     var url: String
     var updated: Date?
     var count: Int = 0
+    /// Папка, в которую пришли серверы этой подписки. Одна подписка — одна папка,
+    /// но папки с одинаковыми именами бывают разные, поэтому связь по идентификатору.
+    var folderID: UUID? = nil
 
     /// Автообновление по таймеру: проверяем при запуске и пока приложение открыто.
     var autoUpdate: Bool = true

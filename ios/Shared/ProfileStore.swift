@@ -12,12 +12,15 @@ final class ProfileStore: ObservableObject {
     @Published private(set) var loading = false
     /// Полный журнал импорта: запрос → ответ панели → что распознали → что приняли/отбросили.
     @Published private(set) var importLog: String = ""
-    /// Подписки — «папки» списка серверов; профили помнят свою папку в `group`.
+    /// Подписки — источник серверов: каждая помнит свою папку.
     @Published private(set) var subscriptions: [Subscription] = []
+    /// Папки серверов. Имена могут повторяться — различаем по `id`.
+    @Published private(set) var folders: [Folder] = []
 
     private let profilesKey = "dev.profiles"
     private let selectedKey = "dev.selectedProfile"
     private let subscriptionsKey = "dev.subscriptions"
+    private let foldersKey = "dev.folders"
     private let kindsKey = "dev.allowedKinds"
 
     /// Профили, добавленные ссылкой из буфера, живут в этой папке.
@@ -41,39 +44,83 @@ final class ProfileStore: ObservableObject {
         return profiles.first { $0.id == selectedID }
     }
 
-    /// Папки для переключателя сверху: реальные подписки + «Вручную».
-    var folders: [String] {
-        // Сначала подписки (даже если серверов ещё нет — вкладка должна появиться),
-        // потом папки, которые есть только у профилей.
-        var names: [String] = []
-        for subscription in subscriptions where !names.contains(subscription.name) {
-            names.append(subscription.name)
-        }
-        for profile in profiles {
-            let name = profile.group ?? Self.manualFolder
-            if !names.contains(name) { names.append(name) }
-        }
-        return names
+    /// Папка для ручных серверов: одна на всё приложение.
+    var manualFolderID: UUID? {
+        folders.first { $0.name == Self.manualFolder }?.id
     }
 
-    /// Свободное имя папки: «criticles», «criticles 2», «criticles 3»…
-    /// Нужно при повторном добавлении той же подписки: без этого второй импорт молча
-    /// ложился бы в существующую папку, и «несколько профилей» не получалось.
-    func uniqueFolder(basedOn raw: String) -> String {
+    func folder(_ id: UUID?) -> Folder? {
+        guard let id else { return nil }
+        return folders.first { $0.id == id }
+    }
+
+    func folderName(_ id: UUID?) -> String {
+        folder(id)?.name ?? "Все"
+    }
+
+    /// Подпись папки подписки: имя папки, иначе — старое имя подписки.
+    func folderName(for subscription: Subscription) -> String {
+        folder(subscription.folderID)?.name ?? subscription.name
+    }
+
+    /// Новая папка. Имя не обязано быть уникальным: две папки «criticles» — это норма.
+    func addFolder(name: String) -> Folder {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folder = Folder(name: trimmed.isEmpty ? "Папка" : trimmed)
+        folders.append(folder)
+        saveFolders()
+        return folder
+    }
+
+    /// Переименование папки: серверы и подписка остаются на месте, меняется подпись.
+    func renameFolder(_ id: UUID, to newName: String) {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let index = folders.firstIndex(where: { $0.id == id }),
+              folders[index].name != name
+        else { return }
+        folders[index].name = name
+        saveFolders()
+        status = "папка переименована: " + name
+    }
+
+    /// Удаление папки вместе с её серверами и подпиской.
+    func deleteFolder(_ id: UUID) {
+        profiles.removeAll { $0.folderID == id }
+        for subscription in subscriptions where subscription.folderID == id {
+            SubscriptionAlerts.cancel(subscription)
+        }
+        subscriptions.removeAll { $0.folderID == id }
+        folders.removeAll { $0.id == id }
+        if let selectedID, !profiles.contains(where: { $0.id == selectedID }) {
+            self.selectedID = profiles.first?.id
+        }
+        save()
+        status = "папка удалена"
+    }
+
+    func count(in folderID: UUID?) -> Int {
+        profiles(in: folderID).count
+    }
+
+    func profiles(in folderID: UUID?) -> [Profile] {
+        guard let folderID else { return profiles }
+        return profiles.filter { $0.folderID == folderID }
+    }
+
+    func subscription(in folderID: UUID) -> Subscription? {
+        subscriptions.first { $0.folderID == folderID }
+    }
+
+    /// Свободное имя папки по умолчанию: «criticles», «criticles 2»…
+    /// Пользователь может оставить и одинаковые имена — это просто подпись.
+    func uniqueFolderName(basedOn raw: String) -> String {
         let base = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = base.isEmpty ? "Подписка" : base
-        guard folders.contains(name) else { return name }
+        let taken = Set(folders.map { $0.name })
+        guard taken.contains(name) else { return name }
         var index = 2
-        while folders.contains("\(name) \(index)") { index += 1 }
+        while taken.contains("\(name) \(index)") { index += 1 }
         return "\(name) \(index)"
-    }
-
-    func count(in folder: String) -> Int {
-        profiles.filter { ($0.group ?? Self.manualFolder) == folder }.count
-    }
-
-    func profiles(in folder: String) -> [Profile] {
-        profiles.filter { ($0.group ?? Self.manualFolder) == folder }
     }
 
     func toggleFavorite(_ profile: Profile) {
@@ -86,6 +133,13 @@ final class ProfileStore: ObservableObject {
         guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         profiles[index].userNote = trimmed.isEmpty ? nil : trimmed
+        save()
+    }
+
+    /// Перенос сервера в другую папку.
+    func move(_ profile: Profile, to folderID: UUID) {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        profiles[index].folderID = folderID
         save()
     }
 
@@ -117,18 +171,18 @@ final class ProfileStore: ObservableObject {
         save()
     }
 
-    /// Переименовать подписку — заодно переезжают её серверы (папка = имя подписки).
+    /// Переименовать подписку — это же имя папки, куда пришли её серверы.
     func rename(_ subscription: Subscription, to newName: String) {
+        if let folderID = subscription.folderID {
+            renameFolder(folderID, to: newName)
+            return
+        }
         let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != subscription.name else { return }
-        for index in profiles.indices where profiles[index].group == subscription.name {
-            profiles[index].group = name
-        }
-        if let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) {
-            subscriptions[index].name = name
-        }
+        guard !name.isEmpty,
+              let index = subscriptions.firstIndex(where: { $0.id == subscription.id })
+        else { return }
+        subscriptions[index].name = name
         save()
-        status = "подписка переименована: " + name
     }
 
     func delete(_ profile: Profile) {
@@ -138,15 +192,20 @@ final class ProfileStore: ObservableObject {
         status = "удалён: \(profile.name)"
     }
 
-    /// Обновить одну подписку по её ссылке.
+    /// Обновить одну подписку по её ссылке — в ту же папку.
     func refresh(_ subscription: Subscription) async {
-        await importFromURL(subscription.url, name: subscription.name)
+        await importFromURL(subscription.url, folderID: subscription.folderID)
     }
 
-    /// Удалить подписку вместе со всеми её серверами.
+    /// Удалить подписку вместе с её папкой и серверами.
     func remove(_ subscription: Subscription) {
         SubscriptionAlerts.cancel(subscription)
-        profiles.removeAll { $0.group == subscription.name }
+        if let folderID = subscription.folderID {
+            profiles.removeAll { $0.folderID == folderID }
+            folders.removeAll { $0.id == folderID }
+        } else {
+            profiles.removeAll { $0.group == subscription.name }
+        }
         subscriptions.removeAll { $0.id == subscription.id }
         if let selectedID, !profiles.contains(where: { $0.id == selectedID }) {
             self.selectedID = profiles.first?.id
@@ -174,7 +233,8 @@ final class ProfileStore: ObservableObject {
             status = "в тексте не нашлось поддерживаемых профилей"
             return 0
         }
-        let added = merge(parsed)
+        let target = manualFolderID ?? addFolder(name: Self.manualFolder).id
+        let added = merge(parsed, folderID: target)
         status = "добавлено профилей: \(added) (всего \(profiles.count))"
         return added
     }
@@ -184,13 +244,14 @@ final class ProfileStore: ObservableObject {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
         if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
-            await importFromURL(trimmed)
+            await importFromURL(trimmed, folderID: nil)
         } else {
             importFromText(trimmed)
         }
     }
 
-    func importFromURL(_ raw: String, name: String? = nil) async {
+    /// Импорт подписки. `folderID` — куда положить серверы; nil — создать папку по имени хоста.
+    func importFromURL(_ raw: String, folderID: UUID?) async {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme,
               scheme == "http" || scheme == "https"
@@ -203,9 +264,9 @@ final class ProfileStore: ObservableObject {
 
         importLog = ""
         var userinfo: String?
-        let folder = name ?? Self.folderName(for: trimmed)
+        let target = self.folder(folderID) ?? addFolder(name: Self.folderName(for: trimmed))
         log("импорт подписки: \(trimmed)")
-        log("    папка: \(folder)")
+        log("    папка: \(target.name)")
 
         var added = 0
         var problems: [String] = []
@@ -218,7 +279,7 @@ final class ProfileStore: ObservableObject {
                 problems.append("вместо подписки пришёл HTML")
             } else {
                 log("  формат: \(ProfileParser.describe(list))")
-                added += importParsed(ProfileParser.parse(text: list), group: folder)
+                added += importParsed(ProfileParser.parse(text: list), folderID: target.id)
             }
         } catch {
             problems.append("список: \(Self.describe(error))")
@@ -232,7 +293,7 @@ final class ProfileStore: ObservableObject {
                 let configText = try await fetch(url, userAgent: userAgent).text
                 guard configText.contains("\"outbounds\"") else { continue }
                 log("  формат: \(ProfileParser.describe(configText))")
-                added += importParsed(ProfileParser.parse(text: configText), group: folder)
+                added += importParsed(ProfileParser.parse(text: configText), folderID: target.id)
                 break
             } catch {
                 problems.append("конфиг (\(userAgent)): \(Self.describe(error))")
@@ -245,7 +306,7 @@ final class ProfileStore: ObservableObject {
             let yptunList = try await fetch(url, userAgent: "YPtun/3.7.0").text
             if !yptunList.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
                 log("  формат: \(ProfileParser.describe(yptunList))")
-                added += importParsed(ProfileParser.parse(text: yptunList), group: folder)
+                added += importParsed(ProfileParser.parse(text: yptunList), folderID: target.id)
             }
         } catch {
             problems.append("AWG: \(Self.describe(error))")
@@ -264,7 +325,7 @@ final class ProfileStore: ObservableObject {
                 let text = try await fetch(turnableURL, userAgent: "Throne/1.1.0").text
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") { continue }
                 log("  формат: \(ProfileParser.describe(text))")
-                added += importParsed(ProfileParser.parse(text: text), group: folder)
+                added += importParsed(ProfileParser.parse(text: text), folderID: target.id)
                 // Не break: запрашиваем оба формата. wireturn идёт первым, поэтому дедуп по имени
                 // оставляет именно его (в нём есть WG-обвязка), а turnable добавит только те узлы,
                 // которых в wireturn нет — если такие вообще найдутся.
@@ -276,7 +337,7 @@ final class ProfileStore: ObservableObject {
             }
         }
 
-        recordSubscription(url: trimmed, name: folder, userinfo: userinfo)
+        recordSubscription(url: trimmed, name: target.name, folderID: target.id, userinfo: userinfo)
         if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
         } else {
@@ -289,10 +350,12 @@ final class ProfileStore: ObservableObject {
     func removeAll() {
         profiles = []
         subscriptions = []
+        folders = []
         selectedID = nil
         defaults.removeObject(forKey: profilesKey)
         defaults.removeObject(forKey: selectedKey)
         defaults.removeObject(forKey: subscriptionsKey)
+        defaults.removeObject(forKey: foldersKey)
         status = "список очищен"
     }
 
@@ -330,7 +393,7 @@ final class ProfileStore: ObservableObject {
     }
 
     @discardableResult
-    private func importParsed(_ parsed: [Profile], group: String? = nil) -> Int {
+    private func importParsed(_ parsed: [Profile], folderID: UUID?) -> Int {
         guard !parsed.isEmpty else {
             log("  → профилей не найдено")
             return 0
@@ -345,7 +408,7 @@ final class ProfileStore: ObservableObject {
             log("  → отфильтровано по настройкам протоколов: \(parsed.count - allowed.count)")
         }
         guard !allowed.isEmpty else { return 0 }
-        return merge(allowed, group: group)
+        return merge(allowed, folderID: folderID)
     }
 
     private static func describe(_ error: Error) -> String {
@@ -372,10 +435,10 @@ final class ProfileStore: ObservableObject {
     /// сервер дважды, ссылкой в base64-списке и куском JSON-конфига, и без этого в списке
     /// оказывались два одинаковых VLESS и две одинаковые Hysteria2.
     ///
-    /// Папка входит в ключ: одну и ту же подписку можно добавить второй раз в другую папку,
-    /// и серверы там будут свои (раньше второй импорт молча сливался с первым).
+    /// Папка входит в ключ: одну и ту же подписку можно добавить второй раз в другую папку
+    /// (даже с тем же названием), и серверы там будут свои.
     private func dedupeKey(_ profile: Profile) -> String {
-        let folder = profile.group ?? Self.manualFolder
+        let folder = profile.folderID?.uuidString ?? "-"
         switch profile.kind {
         case .turnable, .wireturn:
             // Это не дубли: wireturn несёт WG-обвязку, turnable — «сырой» конфиг.
@@ -460,17 +523,17 @@ final class ProfileStore: ObservableObject {
     }
 
     @discardableResult
-    private func merge(_ incoming: [Profile], group: String? = nil) -> Int {
+    private func merge(_ incoming: [Profile], folderID: UUID?) -> Int {
         var added = 0
         for candidate in incoming {
             var profile = candidate
-            // Папка — свойство подписки, а не сервера: при обновлении той же подписки
+            // Папка — свойство импорта, а не сервера: при обновлении той же подписки
             // профиль остаётся один, но переезжает в актуальную папку.
-            if let group { profile.group = group }
+            if let folderID { profile.folderID = folderID }
             let key = dedupeKey(profile)
             if let index = profiles.firstIndex(where: { dedupeKey($0) == key }) {
-                if let group, profiles[index].group != group {
-                    profiles[index].group = group
+                if let folderID, profiles[index].folderID != folderID {
+                    profiles[index].folderID = folderID
                     save()
                 }
                 log("    дубль, пропущен: \(profile.name) [\(key)]")
@@ -490,13 +553,14 @@ final class ProfileStore: ObservableObject {
         return added
     }
 
-    /// Подписка в списке одна на пару «ссылка + папка»: повторный импорт в ту же папку только
-    /// обновляет дату и счётчик, а импорт в другую папку — это отдельная подписка со своими
-    /// серверами (так одну и ту же ссылку можно положить в несколько папок).
-    private func recordSubscription(url: String, name: String, userinfo: String? = nil) {
-        let inFolder = profiles.filter { $0.group == name }.count
+    /// Одна подписка на папку: повторный импорт в ту же папку обновляет дату и счётчик,
+    /// а импорт в другую папку — отдельная подписка со своими серверами
+    /// (так одну и ту же ссылку можно положить в несколько папок, даже с одним названием).
+    private func recordSubscription(url: String, name: String, folderID: UUID?, userinfo: String? = nil) {
+        let inFolder = folderID.map { id in profiles.filter { $0.folderID == id }.count } ?? 0
         let limits = Self.parseUserinfo(userinfo)
-        if let index = subscriptions.firstIndex(where: { $0.url == url && $0.name == name }) {
+        if let folderID,
+           let index = subscriptions.firstIndex(where: { $0.url == url && $0.folderID == folderID }) {
             subscriptions[index].name = name
             subscriptions[index].updated = Date()
             subscriptions[index].count = inFolder
@@ -508,6 +572,7 @@ final class ProfileStore: ObservableObject {
             }
         } else {
             var subscription = Subscription(name: name, url: url, updated: Date(), count: inFolder)
+            subscription.folderID = folderID
             if let limits {
                 subscription.upload = limits.upload
                 subscription.download = limits.download
@@ -547,13 +612,24 @@ final class ProfileStore: ObservableObject {
         return (upload, download, total, expire)
     }
 
+    private func saveFolders() {
+        if let data = try? JSONEncoder().encode(folders) {
+            defaults.set(data, forKey: foldersKey)
+        }
+    }
+
     private func save() {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         defaults.set(data, forKey: profilesKey)
+        saveFolders()
         // Счётчики в «Подписках» берём из фактического состава папок.
         if !subscriptions.isEmpty {
             for index in subscriptions.indices {
-                subscriptions[index].count = profiles.filter { $0.group == subscriptions[index].name }.count
+                if let folderID = subscriptions[index].folderID {
+                    subscriptions[index].count = profiles.filter { $0.folderID == folderID }.count
+                } else {
+                    subscriptions[index].count = profiles.filter { $0.group == subscriptions[index].name }.count
+                }
             }
             if let data = try? JSONEncoder().encode(subscriptions) {
                 defaults.set(data, forKey: subscriptionsKey)
@@ -579,6 +655,53 @@ final class ProfileStore: ObservableObject {
         if let data = defaults.data(forKey: subscriptionsKey),
            let stored = try? JSONDecoder().decode([Subscription].self, from: data) {
             subscriptions = stored
+        }
+        if let data = defaults.data(forKey: foldersKey),
+           let stored = try? JSONDecoder().decode([Folder].self, from: data) {
+            folders = stored
+        }
+        migrateFolders()
+        saveFolders()
+    }
+
+    /// Переход со старой схемы «папка = имя подписки» на папки с идентификаторами.
+    private func migrateFolders() {
+        if folders.isEmpty {
+            var names: [String] = []
+            for subscription in subscriptions where !names.contains(subscription.name) {
+                names.append(subscription.name)
+            }
+            for profile in profiles {
+                let name = profile.group ?? Self.manualFolder
+                if !names.contains(name) { names.append(name) }
+            }
+            folders = names.map { Folder(name: $0.isEmpty ? "Подписка" : $0) }
+        }
+        if !folders.contains(where: { $0.name == Self.manualFolder }) {
+            folders.append(Folder(name: Self.manualFolder))
+        }
+        let manual = folders.first { $0.name == Self.manualFolder }?.id
+
+        // Профили: папка по прежнему имени группы.
+        for index in profiles.indices where profiles[index].folderID == nil {
+            let name = profiles[index].group ?? Self.manualFolder
+            profiles[index].folderID = folders.first { $0.name == name }?.id ?? manual
+        }
+
+        // Подписки: каждой своя папка. Совпадение имён допустимо — берём свободную,
+        // а если свободной нет, создаём ещё одну с тем же названием.
+        var claimed = Set<UUID>(subscriptions.compactMap { $0.folderID })
+        for index in subscriptions.indices where subscriptions[index].folderID == nil {
+            let name = subscriptions[index].name.isEmpty ? "Подписка" : subscriptions[index].name
+            if let match = folders.first(where: { $0.name == name && !claimed.contains($0.id) }) {
+                subscriptions[index].folderID = match.id
+                claimed.insert(match.id)
+            } else {
+                let folder = Folder(name: name)
+                folders.append(folder)
+                subscriptions[index].folderID = folder.id
+                claimed.insert(folder.id)
+            }
         }
     }
 }

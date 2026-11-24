@@ -69,10 +69,46 @@ final class DevEngine: ObservableObject {
     @Published private(set) var probing = false
     /// Просьба остановить серию проверок или тестов скорости.
     private var cancelRequested = false
+    /// Задача текущего замера: отмена должна прерывать запросы, а не выставлять флаг.
+    private var measurementTask: Task<Void, Never>?
 
-    /// Отмена с кнопки: серия прерывается на следующем сервере, ядро гасится.
+    /// Серия проверок отдельной задачей: её можно прервать кнопкой отмены.
+    func runCheckAll(profiles: [Profile], onFinish: (() -> Void)? = nil) {
+        measurementTask?.cancel()
+        measurementTask = Task { [weak self] in
+            await self?.checkAll(profiles: profiles)
+            guard !Task.isCancelled else { return }
+            onFinish?()
+        }
+    }
+
+    /// Тест скорости по всем серверам — тоже отдельной задачей.
+    func runSpeedAll(profiles: [Profile]) {
+        measurementTask?.cancel()
+        measurementTask = Task { [weak self] in
+            guard let self else { return }
+            for profile in profiles where !Task.isCancelled {
+                await self.measureSpeed(profile: profile)
+            }
+        }
+    }
+
+    /// Пинг одного сервера из строки списка.
+    func runCheck(profile: Profile) {
+        measurementTask?.cancel()
+        measurementTask = Task { [weak self] in
+            await self?.check(profile: profile)
+        }
+    }
+
+    /// Отмена с кнопки: прерываем задачу замера, её запросы и ядро.
     func cancelMeasurements() {
         cancelRequested = true
+        measurementTask?.cancel()
+        measurementTask = nil
+        bulkRunning = false
+        speedRunning = nil
+        probing = false
         stop()
     }
     /// Когда поднялось текущее соединение — для «сколько сервер активен».
@@ -377,7 +413,7 @@ final class DevEngine: ObservableObject {
         // Все замеры разом: у каждого сервера свой вход, поэтому они не мешают друг другу.
         // Внутри Probe — прогрев соединения и минимум из нескольких проб, то есть RTT.
         await withTaskGroup(of: (UUID, ProbeResult?).self) { group in
-            for profile in available where !cancelRequested {
+            for profile in available where !cancelRequested && !Task.isCancelled {
                 guard let port = probePorts[profile.id] else { continue }
                 group.addTask { (profile.id, await Probe.timed(port: port, timeout: 12)) }
             }
@@ -414,7 +450,7 @@ final class DevEngine: ObservableObject {
         guard !profiles.isEmpty else { return }
         var wireturnChecked = 0
         for profile in profiles {
-            if cancelRequested { return }
+            if cancelRequested || Task.isCancelled { return }
             guard let index = bulk.firstIndex(where: { $0.id == profile.id }) else { continue }
             append("проверка: \(profile.name) [\(profile.kind.title)]")
             if limitTransport, Self.needsTransport(profile) {

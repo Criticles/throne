@@ -36,7 +36,7 @@ struct SubscriptionEditorView: View {
                     } label: {
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(subscription.name)
+                                Text(store.folderName(for: subscription))
                                     .font(.subheadline.weight(.medium))
                                     .foregroundColor(.primary)
                                 Text(String(subscription.count) + " серверов"
@@ -115,9 +115,12 @@ struct SubscriptionEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Добавить") {
                         let url = addURL.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let name = addName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let typed = addName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        // Каждый импорт — своя папка: имя можно оставить и таким же, как у другой.
+                        let base = typed.isEmpty ? ProfileStore.folderName(for: url) : typed
+                        let folder = store.addFolder(name: base)
                         showAdd = false
-                        Task { await store.importFromURL(url, name: name.isEmpty ? nil : name) }
+                        Task { await store.importFromURL(url, folderID: folder.id) }
                         addURL = ""
                         addName = ""
                     }
@@ -128,8 +131,7 @@ struct SubscriptionEditorView: View {
         .navigationViewStyle(.stack)
     }
 }
-
-/// Настройки одной подписки: имя, автообновление, интервал, поделиться, удалить.
+/// Настройки одной подписки: имя папки, автообновление, интервал, поделиться, удалить.
 struct SubscriptionSettingsView: View {
     @EnvironmentObject private var store: ProfileStore
     @Environment(\.presentationMode) private var presentation
@@ -159,7 +161,7 @@ struct SubscriptionSettingsView: View {
                 } header: {
                     Text("Подписка")
                 } footer: {
-                    Text("Имя — это название папки: переименование переносит серверы в новую папку.")
+                    Text("Имя — подпись папки: серверы остаются на месте, меняется только название. Одинаковые имена разрешены.")
                 }
 
                 Section {
@@ -194,7 +196,7 @@ struct SubscriptionSettingsView: View {
                     }
                 }
             }
-            .navigationTitle(current.name)
+            .navigationTitle(store.folderName(for: current))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -216,7 +218,7 @@ struct SubscriptionSettingsView: View {
             .onAppear {
                 guard !loaded else { return }
                 loaded = true
-                name = current.name
+                name = store.folderName(for: current)
                 autoUpdate = current.autoUpdate
                 hours = current.intervalHours
             }

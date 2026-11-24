@@ -18,18 +18,23 @@ struct RootView: View {
     @StateObject private var rules = RuleStore()
     @StateObject private var traffic = TrafficMonitor()
     @StateObject private var updater = UpdateChecker()
+    @StateObject private var router = AppRouter()
     private let upkeep = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        TabView {
+        TabView(selection: $router.tab) {
             ProfilesView()
                 .tabItem { Label("Серверы", systemImage: "square.stack.3d.up.fill") }
+                .tag(0)
             RoutingView()
                 .tabItem { Label("Маршрут", systemImage: "arrow.triangle.branch") }
+                .tag(1)
             ConnectionsView()
                 .tabItem { Label("Соединения", systemImage: "arrow.left.arrow.right") }
+                .tag(2)
             SettingsView()
                 .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
+                .tag(3)
         }
         .environmentObject(store)
         .environmentObject(engine)
@@ -37,7 +42,11 @@ struct RootView: View {
         .environmentObject(rules)
         .environmentObject(traffic)
         .environmentObject(updater)
+        .environmentObject(router)
         .accentColor(Theme.accent)
+        .sheet(item: $router.insert) { prefill in
+            RouteInsertView(prefill: prefill)
+        }
         .onOpenURL { url in
             // throne://import?url=<ссылка> — так профиль приходит из QR или другого приложения.
             guard url.scheme?.lowercased() == "throne" else { return }

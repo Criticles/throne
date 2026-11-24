@@ -106,50 +106,91 @@ struct RoutePlanEntry: Codable, Identifiable, Hashable {
     /// Атрибут условия: domain, domain_suffix, rule_set, process_name…
     var attr = "domain"
     var value = ""
+    /// Куда направить совпадение: proxy / direct / reject / имя сервера.
+    var target: String? = nil
 
     var title: String {
-        kind == "outbound" ? "Outbound: " + value : attr + ": " + value
+        if kind == "outbound" { return "Outbound: " + value }
+        let destination = target ?? "proxy"
+        return attr + ": " + value + " → " + destination
     }
 
-    init(id: UUID = UUID(), kind: String = "rule", attr: String = "domain", value: String = "") {
+    init(id: UUID = UUID(), kind: String = "rule", attr: String = "domain",
+         value: String = "", target: String? = nil) {
         self.id = id
         self.kind = kind
         self.attr = attr
         self.value = value
+        self.target = target
     }
 
-    /// Планы, сохранённые до появления `attr`, должны читаться: поля необязательные.
+    /// Планы, сохранённые до появления новых полей, должны читаться: они необязательные.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = (try container.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
         kind = (try container.decodeIfPresent(String.self, forKey: .kind)) ?? "rule"
         attr = (try container.decodeIfPresent(String.self, forKey: .attr)) ?? "domain"
         value = (try container.decodeIfPresent(String.self, forKey: .value)) ?? ""
+        target = try container.decodeIfPresent(String.self, forKey: .target)
     }
 }
 
-/// Атрибуты маршрутизации, которые понимает sing-box. В интерфейсе показываем
-/// сначала те, которыми реально пользуются (порядок = популярность).
+/// Атрибуты маршрутизации, которые понимает sing-box. Порядок — как в настольном клиенте:
+/// пользователь ищет глазами знакомый список, а не алфавит.
 enum RouteAttribute {
     static let all: [String] = [
+        "ip_version", "network", "protocol", "inbound",
         "domain", "domain_suffix", "domain_keyword", "domain_regex",
-        "rule_set", "process_name", "package_name", "protocol", "network",
-        "ip_cidr", "source_ip_cidr", "source_ip_is_private", "ip_is_private",
-        "port", "port_range", "source_port", "source_port_range",
-        "inbound", "wifi_ssid", "wifi_bssid", "process_path", "process_path_regex",
-        "ip_version", "invert",
+        "source_ip_cidr", "source_ip_is_private", "ip_cidr", "ip_is_private",
+        "source_port", "source_port_range", "port", "port_range",
+        "process_name", "process_path", "process_path_regex", "package_name",
+        "wifi_ssid", "wifi_bssid", "rule_set", "invert",
+        "outbound", "override_address", "override_port", "override_destination",
+        "tls_spoof", "tls_spoof_method", "method", "no_drop", "strategy",
     ]
 
+    /// Значения выбираются из готового списка: в этих полях опечатка ломает правило.
+    static let enumerated: Set<String> = [
+        "network", "protocol", "ip_version", "inbound", "rule_set",
+        "ip_is_private", "source_ip_is_private", "invert", "no_drop",
+        "tls_spoof_method", "method", "strategy", "ip_version",
+    ]
+
+    static func needsChoice(_ attr: String) -> Bool {
+        enumerated.contains(attr)
+    }
+
+    /// Варианты для кнопки «Выбрать». Пусто — значит атрибут пишется текстом.
+    static func options(_ attr: String) -> [String] {
+        switch attr {
+        case "network": return ["tcp", "udp"]
+        case "protocol": return ["dns", "http", "tls", "quic", "stun", "bittorrent", "dtls"]
+        case "ip_version": return ["4", "6"]
+        case "inbound": return ["mixed-in", "tun-in"]
+        case "ip_is_private", "source_ip_is_private", "invert", "no_drop": return ["true", "false"]
+        case "tls_spoof_method": return ["fake_tls", "fake_http"]
+        case "method": return ["GET", "POST", "HEAD"]
+        case "strategy": return ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]
+        case "outbound": return ["proxy", "direct", "reject"]
+        case "rule_set":
+            return RouteCatalog.geositeTags.map { "geosite-" + $0 } + RouteCatalog.geoipCodes.map { "geoip-" + $0 }
+        default: return []
+        }
+    }
+
+    /// Подсказки под полем ввода: что писать, пока пользователь не запомнил формат.
     static func hint(_ attr: String) -> String {
         switch attr {
         case "domain": return "точный домен: claude.ai"
         case "domain_suffix": return "домен и поддомены: example.com"
         case "domain_keyword": return "слово в домене: ads"
         case "domain_regex": return "регулярное выражение по домену"
-        case "rule_set": return "набор: geosite-ru, geoip-ru, geosite-spotify@ads"
+        case "rule_set": return "набор: geosite-ru, geoip-ru, geosite-spotify"
         case "process_name": return "имя процесса: Telegram.exe"
+        case "process_path": return "путь к процессу"
+        case "process_path_regex": return "регулярное выражение по пути"
         case "package_name": return "пакет Android: org.telegram.messenger"
-        case "protocol": return "dns, http, tls, bittorrent"
+        case "protocol": return "dns, http, tls, quic, stun, bittorrent"
         case "network": return "tcp или udp"
         case "ip_cidr": return "получатель: 10.0.0.0/8"
         case "source_ip_cidr": return "источник: 192.168.0.0/16"
@@ -159,21 +200,35 @@ enum RouteAttribute {
         case "port_range": return "диапазон: 1000:2000"
         case "source_port": return "порт источника"
         case "source_port_range": return "диапазон портов источника"
-        case "inbound": return "тег входящего соединения"
+        case "inbound": return "тег входящего соединения: mixed-in"
         case "wifi_ssid": return "имя Wi-Fi сети"
         case "wifi_bssid": return "BSSID сети"
-        case "process_path": return "путь к процессу"
-        case "process_path_regex": return "регулярное выражение по пути"
         case "ip_version": return "4 или 6"
         case "invert": return "true — инвертировать условие"
+        case "outbound": return "куда направить: proxy, direct, reject или сервер"
+        case "override_address": return "подменить адрес назначения"
+        case "override_port": return "подменить порт назначения"
+        case "override_destination": return "true — отдавать подменённый адрес"
+        case "tls_spoof": return "подмена TLS (для обхода блокировок)"
+        case "tls_spoof_method": return "fake_tls или fake_http"
+        case "method": return "HTTP-метод: GET, POST, HEAD"
+        case "no_drop": return "true — не отбрасывать пакеты"
+        case "strategy": return "prefer_ipv4, ipv6_only…"
         default: return ""
         }
     }
+
+    /// Быстрая подсказка «нужен ли выбор» — для кнопки в строке записи.
+    static func displayValue(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "не задано" : trimmed
+    }
 }
 
-/// План маршрутизации: что делать по умолчанию и список записей по порядку.
-/// Формат совпадает с тем, что понимает сборка через Network Extension.
-struct RoutePlan: Codable {
+/// Профиль маршрутизации: что делать по умолчанию и список записей по порядку.
+/// Профилей может быть несколько; активный применяется к ядру.
+struct RoutePlan: Codable, Identifiable {
+    var id = UUID()
     var name = "Маршрут"
     var finalTarget = "proxy"
     var entries: [RoutePlanEntry] = []
@@ -182,10 +237,13 @@ struct RoutePlan: Codable {
     var proxyList = ""
     var blockList = ""
     var warpList = ""
+    var updated: Date?
 
-    init(name: String = "Маршрут", finalTarget: String = "proxy",
+    init(id: UUID = UUID(), name: String = "Маршрут", finalTarget: String = "proxy",
          entries: [RoutePlanEntry] = [], directList: String = "",
-         proxyList: String = "", blockList: String = "", warpList: String = "") {
+         proxyList: String = "", blockList: String = "", warpList: String = "",
+         updated: Date? = nil) {
+        self.id = id
         self.name = name
         self.finalTarget = finalTarget
         self.entries = entries
@@ -193,10 +251,12 @@ struct RoutePlan: Codable {
         self.proxyList = proxyList
         self.blockList = blockList
         self.warpList = warpList
+        self.updated = updated
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try container.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
         name = (try container.decodeIfPresent(String.self, forKey: .name)) ?? "Маршрут"
         finalTarget = (try container.decodeIfPresent(String.self, forKey: .finalTarget)) ?? "proxy"
         entries = (try container.decodeIfPresent([RoutePlanEntry].self, forKey: .entries)) ?? []
@@ -204,6 +264,18 @@ struct RoutePlan: Codable {
         proxyList = (try container.decodeIfPresent(String.self, forKey: .proxyList)) ?? ""
         blockList = (try container.decodeIfPresent(String.self, forKey: .blockList)) ?? ""
         warpList = (try container.decodeIfPresent(String.self, forKey: .warpList)) ?? ""
+        updated = try container.decodeIfPresent(Date.self, forKey: .updated)
+    }
+
+    /// Короткая подпись для списка профилей: «proxy · 6 правил · 2 списка».
+    var summary: String {
+        let rules = entries.count
+        let lists = [directList, proxyList, blockList, warpList]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+        var parts = ["по умолчанию: " + finalTarget]
+        parts.append("\(rules) записей")
+        if lists > 0 { parts.append("\(lists) списка") }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -225,18 +297,49 @@ struct GeoAsset: Identifiable, Hashable {
     ]
 }
 
+/// Справочники подсказок маршрутизации. Без актора: их читают и хранилище правил,
+/// и редактор атрибутов (у него нет доступа к главному актору в статических вызовах).
+enum RouteCatalog {
+    static let geositeTags: [String] = [
+        "geolocation-!cn", "geolocation-ru", "cn", "ru", "category-ads-all", "category-ads",
+        "category-games", "category-media", "category-social-media-ru", "category-porn",
+        "apple", "google", "google-scholar", "youtube", "telegram", "github", "gitlab",
+        "openai", "anthropic", "netflix", "spotify", "discord", "twitch", "steam", "epicgames",
+        "microsoft", "meta", "twitter", "instagram", "tiktok", "whatsapp", "cloudflare",
+        "cloudfront", "amazon", "ebay", "paypal", "binance", "booking", "speedtest", "dropbox",
+        "slack", "notion", "figma", "adobe", "jetbrains", "unity", "vk", "yandex", "mailru",
+        "ok", "ozon", "wildberries", "kinopoisk", "ivi", "sber", "tinkoff", "gosuslugi",
+    ]
+
+    static let geoipCodes: [String] = [
+        "ru", "de", "fi", "ee", "lv", "lt", "pl", "se", "no", "dk", "nl", "be", "fr", "it",
+        "es", "pt", "ch", "at", "cz", "sk", "hu", "ro", "bg", "gr", "tr", "ua", "by", "md",
+        "ge", "am", "az", "kz", "uz", "kg", "tj", "tm", "us", "ca", "gb", "ie", "jp", "kr",
+        "cn", "hk", "tw", "sg", "in", "ae", "il", "br", "ar", "cl", "au", "nz", "za", "eg",
+    ]
+}
+
 /// Правила маршрутизации и гео-списки. Хранится в UserDefaults, файлы — в Application Support.
 @MainActor
 final class RuleStore: ObservableObject {
     @Published private(set) var rules: [RouteRule] = []
     @Published private(set) var assets: [GeoAsset] = GeoAsset.all
     @Published private(set) var ruleSets: [RuleSet] = []
-    @Published private(set) var plan = RoutePlan()
+    /// Профили маршрутизации: несколько наборов правил, применяется активный.
+    @Published private(set) var plans: [RoutePlan] = []
+    @Published private(set) var activePlanID: UUID?
     @Published private(set) var status = ""
+
+    /// Активный профиль: к нему обращаются список маршрутов и редактор.
+    var plan: RoutePlan {
+        plans.first { $0.id == activePlanID } ?? plans.first ?? RoutePlan()
+    }
 
     private let rulesKey = "rules.items"
     private let setsKey = "rules.sets"
-    private let planKey = "rules.plan"
+    private let plansKey = "rules.plans"
+    private let activePlanKey = "rules.activePlan"
+    private let legacyPlanKey = "rules.plan"
     private let defaults = UserDefaults.standard
 
     init() {
@@ -338,24 +441,9 @@ final class RuleStore: ObservableObject {
 
     // MARK: - Подсказки при вводе правила
 
-    /// Каталог популярных тегов: подсказываем то, что реально встречается в списках.
-    static let geositeTags: [String] = [
-        "geolocation-!cn", "geolocation-ru", "cn", "ru", "category-ads-all", "category-ads",
-        "category-games", "category-media", "category-social-media-ru", "category-porn",
-        "apple", "google", "google-scholar", "youtube", "telegram", "github", "gitlab",
-        "openai", "anthropic", "netflix", "spotify", "discord", "twitch", "steam", "epicgames",
-        "microsoft", "meta", "twitter", "instagram", "tiktok", "whatsapp", "cloudflare",
-        "cloudfront", "amazon", "ebay", "paypal", "binance", "booking", "speedtest", "dropbox",
-        "slack", "notion", "figma", "adobe", "jetbrains", "unity", "vk", "yandex", "mailru",
-        "ok", "ozon", "wildberries", "kinopoisk", "ivi", "sber", "tinkoff", "gosuslugi",
-    ]
-
-    static let geoipCodes: [String] = [
-        "ru", "de", "fi", "ee", "lv", "lt", "pl", "se", "no", "dk", "nl", "be", "fr", "it",
-        "es", "pt", "ch", "at", "cz", "sk", "hu", "ro", "bg", "gr", "tr", "ua", "by", "md",
-        "ge", "am", "az", "kz", "uz", "kg", "tj", "tm", "us", "ca", "gb", "ie", "jp", "kr",
-        "cn", "hk", "tw", "sg", "in", "ae", "il", "br", "ar", "cl", "au", "nz", "za", "eg",
-    ]
+    /// Каталоги подсказок живут в `RouteCatalog` (без актора): их читает и редактор атрибутов.
+    static var geositeTags: [String] { RouteCatalog.geositeTags }
+    static var geoipCodes: [String] { RouteCatalog.geoipCodes }
 
     /// Подсказки под поле ввода: теги, коды стран и уже добавленные значения.
     func suggestions(for kind: RuleKind, query: String) -> [String] {
@@ -380,30 +468,121 @@ final class RuleStore: ObservableObject {
         return unique.filter { $0.lowercased().contains(text) }.prefix(12).map { $0 }
     }
 
-    // MARK: - Расширенная маршрутизация
+    // MARK: - Профили маршрутизации
+
+    func plan(with id: UUID?) -> RoutePlan? {
+        guard let id else { return nil }
+        return plans.first { $0.id == id }
+    }
+
+    /// Новый профиль: пустой, с тем же «по умолчанию», что у активного.
+    @discardableResult
+    func addPlan(name: String = "Новый профиль") -> RoutePlan {
+        var created = RoutePlan(name: name)
+        created.finalTarget = plan.finalTarget
+        created.updated = Date()
+        plans.append(created)
+        activePlanID = created.id
+        savePlans()
+        status = "профиль создан: " + created.name
+        return created
+    }
+
+    @discardableResult
+    func duplicatePlan(_ id: UUID) -> RoutePlan? {
+        guard var copy = plan(with: id) else { return nil }
+        copy.id = UUID()
+        copy.name += " — копия"
+        copy.updated = Date()
+        plans.append(copy)
+        savePlans()
+        status = "профиль скопирован: " + copy.name
+        return copy
+    }
 
     func savePlan(_ plan: RoutePlan) {
-        self.plan = plan
-        if let data = try? JSONEncoder().encode(plan) {
-            defaults.set(data, forKey: planKey)
+        var updated = plan
+        updated.updated = Date()
+        if let index = plans.firstIndex(where: { $0.id == updated.id }) {
+            plans[index] = updated
+        } else {
+            plans.append(updated)
         }
-        status = "план маршрутизации сохранён"
+        activePlanID = updated.id
+        savePlans()
+        status = "профиль сохранён: " + updated.name
     }
 
+    func activate(_ id: UUID) {
+        guard plans.contains(where: { $0.id == id }) else { return }
+        activePlanID = id
+        defaults.set(id.uuidString, forKey: activePlanKey)
+        status = "активный профиль: " + plan.name
+    }
+
+    func deletePlan(_ id: UUID) {
+        plans.removeAll { $0.id == id }
+        if plans.isEmpty { plans = [RoutePlan(name: "По правилам")] }
+        if activePlanID == id { activePlanID = plans.first?.id }
+        savePlans()
+        status = "профиль удалён"
+    }
+
+    func renamePlan(_ id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = plans.firstIndex(where: { $0.id == id }) else { return }
+        plans[index].name = trimmed
+        plans[index].updated = Date()
+        savePlans()
+    }
+
+    /// Добавить запись в конкретный профиль — из «Соединений» или из редактора.
+    func addEntry(_ entry: RoutePlanEntry, to planID: UUID) {
+        guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
+        plans[index].entries.append(entry)
+        plans[index].updated = Date()
+        savePlans()
+        status = "запись добавлена в «\(plans[index].name)»: \(entry.title)"
+    }
+
+    // MARK: - Импорт и экспорт
+
+    /// JSON профиля — он же предпросмотр.
     func planJSON(_ plan: RoutePlan) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(plan),
-              let text = String(data: data, encoding: .utf8) else { return "{}" }
-        return text
+        RouteCodec.encode(plan)
     }
 
-    func applyPlanJSON(_ text: String) -> Bool {
-        guard let data = text.data(using: .utf8),
-              let parsed = try? JSONDecoder().decode(RoutePlan.self, from: data)
-        else { return false }
-        savePlan(parsed)
-        return true
+    /// Ссылка Throne: `throne://route?plan=<процент-кодированный JSON>`.
+    func planLink(_ plan: RoutePlan) -> String {
+        RouteCodec.link(plan)
+    }
+
+    /// Импорт: сам понимает, JSON в буфере или ссылка Throne.
+    @discardableResult
+    func importPlan(from text: String) -> RoutePlan? {
+        guard var imported = RouteCodec.decode(text) else {
+            status = "не разобрать: нужен JSON профиля или ссылка throne://route"
+            return nil
+        }
+        imported.id = UUID()
+        imported.updated = Date()
+        if imported.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            imported.name = "Импортированный"
+        }
+        plans.append(imported)
+        activePlanID = imported.id
+        savePlans()
+        status = "профиль импортирован: " + imported.name
+        return imported
+    }
+
+    private func savePlans() {
+        if let data = try? JSONEncoder().encode(plans) {
+            defaults.set(data, forKey: plansKey)
+        }
+        if let activePlanID {
+            defaults.set(activePlanID.uuidString, forKey: activePlanKey)
+        }
     }
 
     // MARK: - Свои гео-списки
@@ -561,10 +740,7 @@ final class RuleStore: ObservableObject {
            let stored = try? JSONDecoder().decode([RuleSet].self, from: data) {
             ruleSets = stored
         }
-        if let data = defaults.data(forKey: planKey),
-           let stored = try? JSONDecoder().decode(RoutePlan.self, from: data) {
-            plan = stored
-        }
+        loadPlans()
         if let stored = defaults.array(forKey: "rules.assets") as? [[String: String]] {
             for item in stored {
                 guard let id = item["id"] else { continue }
@@ -584,5 +760,98 @@ final class RuleStore: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Профили маршрутизации: массив + активный. Старый одиночный план (`rules.plan`)
+    /// переносится в профили при первом запуске новой сборки.
+    private func loadPlans() {
+        if let data = defaults.data(forKey: plansKey),
+           let stored = try? JSONDecoder().decode([RoutePlan].self, from: data),
+           !stored.isEmpty {
+            plans = stored
+        }
+        if plans.isEmpty {
+            if let data = defaults.data(forKey: legacyPlanKey),
+               let legacy = try? JSONDecoder().decode(RoutePlan.self, from: data) {
+                plans = [legacy]
+            } else {
+                plans = [RoutePlan(name: "По правилам")]
+            }
+        }
+        if let raw = defaults.string(forKey: activePlanKey), let id = UUID(uuidString: raw),
+           plans.contains(where: { $0.id == id }) {
+            activePlanID = id
+        } else {
+            activePlanID = plans.first?.id
+        }
+        savePlans()
+    }
+}
+
+/// Кодирование профиля маршрутизации: JSON и ссылка `throne://route`.
+/// Импорт сам понимает, что лежит в буфере — JSON, ссылка с `?plan=` или base64 от JSON.
+enum RouteCodec {
+    static func encode(_ plan: RoutePlan) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(plan),
+              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+
+    static func link(_ plan: RoutePlan) -> String {
+        let compact = encode(plan).replacingOccurrences(of: "\n", with: "")
+        let encoded = compact.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? compact
+        return "throne://route?plan=" + encoded
+    }
+
+    static func decode(_ raw: String) -> RoutePlan? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if text.lowercased().hasPrefix("throne://") { return decodeLink(text) }
+        if let plan = decodeJSON(text) { return plan }
+        // Иногда из чата копируют только полезную нагрузку — base64 без схемы.
+        if let data = Data(base64Encoded: text, options: [.ignoreUnknownCharacters]),
+           let plan = try? JSONDecoder().decode(RoutePlan.self, from: data) {
+            return plan
+        }
+        return nil
+    }
+
+    private static func decodeLink(_ text: String) -> RoutePlan? {
+        // `throne://route?plan=<json или base64>`
+        if let components = URLComponents(string: text),
+           let value = components.queryItems?.first(where: { $0.name == "plan" })?.value,
+           !value.isEmpty {
+            if let plan = decodeJSON(value) { return plan }
+            if let plan = decodeBase64(value) { return plan }
+        }
+        // `throne://route/<base64url>` — формат настольного клиента.
+        if let components = URLComponents(string: text) {
+            let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if !path.isEmpty, let plan = decodeBase64(path) { return plan }
+        }
+        // Хвост после «throne://route/», если URLComponents не справился с экзотикой.
+        if let range = text.range(of: "route/") {
+            let tail = String(text[range.upperBound...])
+            if let plan = decodeBase64(tail) { return plan }
+        }
+        return nil
+    }
+
+    private static func decodeJSON(_ text: String) -> RoutePlan? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(RoutePlan.self, from: data)
+    }
+
+    private static func decodeBase64(_ text: String) -> RoutePlan? {
+        var value = text
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while value.count % 4 != 0 { value += "=" }
+        guard let data = Data(base64Encoded: value, options: [.ignoreUnknownCharacters]),
+              let json = String(data: data, encoding: .utf8)
+        else { return nil }
+        return decodeJSON(json)
     }
 }

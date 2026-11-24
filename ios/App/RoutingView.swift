@@ -28,15 +28,15 @@ struct RoutingView: View {
     private var advancedSection: some View {
         Section {
             NavigationLink {
-                AdvancedRouteView()
+                RouteProfilesView()
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "arrow.triangle.branch")
                         .foregroundColor(Theme.accent)
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Маршрутизация").font(.subheadline.weight(.medium))
-                        Text("активно: " + rules.plan.name)
+                        Text("Профили маршрутизации").font(.subheadline.weight(.medium))
+                        Text("активно: " + rules.plan.name + " · профилей: " + String(rules.plans.count))
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -47,17 +47,21 @@ struct RoutingView: View {
 
     private var modeSection: some View {
         Section {
-            Picker("Режим", selection: $prefs.routingMode) {
-                ForEach(Prefs.RoutingMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+            // Режим и его пояснение — одна строка: между ними не должно быть пустого места.
+            VStack(alignment: .leading, spacing: 4) {
+                Picker("Режим", selection: $prefs.routingMode) {
+                    ForEach(Prefs.RoutingMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
-            .listRowSeparator(.hidden)
+                .pickerStyle(.segmented)
+                .labelsHidden()
 
-            Text(prefs.routingMode.hint)
-                .font(.footnote)
-                .foregroundColor(.secondary)
+                Text(prefs.routingMode.hint)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 2)
 
             Picker("Если ни одно правило не совпало", selection: $prefs.finalAction) {
                 ForEach(RuleAction.allCases) { action in

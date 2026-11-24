@@ -1,13 +1,16 @@
 import SwiftUI
 
-/// Маршрутизация: два вида — упрощённый (четыре списка, как в Throne на ПК) и расширенный
-/// (записи «правило → outbound»). Экспорт и импорт — JSON или ссылка `throne://route`.
+/// Редактор профиля маршрутизации: упрощённый вид (четыре списка) и расширенный
+/// (записи «атрибут → значение»). Атрибуты — полным списком, значения — отдельным экраном
+/// с подсказками; снизу предпросмотр JSON профиля.
 struct AdvancedRouteView: View {
     @EnvironmentObject private var rules: RuleStore
     @EnvironmentObject private var store: ProfileStore
     @Environment(\.presentationMode) private var presentation
 
-    @State private var name = "Маршрут"
+    let planID: UUID
+
+    @State private var name = ""
     @State private var finalTarget = "proxy"
     @State private var directList = ""
     @State private var proxyList = ""
@@ -15,9 +18,13 @@ struct AdvancedRouteView: View {
     @State private var warpList = ""
     @State private var entries: [RoutePlanEntry] = []
     @State private var tab = 0
-    @State private var showTransfer = false
-    @State private var message = ""
     @State private var loaded = false
+
+    @State private var showAddEntry = false
+    @State private var editingEntry: RoutePlanEntry?
+    @State private var valueText = ""
+    @State private var showPreview = false
+    @State private var showExport = false
 
     private var targets: [String] {
         var list = ["proxy", "direct", "reject"]
@@ -28,7 +35,8 @@ struct AdvancedRouteView: View {
     }
 
     private var plan: RoutePlan {
-        RoutePlan(name: name,
+        RoutePlan(id: planID,
+                  name: name,
                   finalTarget: finalTarget,
                   entries: entries,
                   directList: directList,
@@ -46,26 +54,41 @@ struct AdvancedRouteView: View {
             } else {
                 extendedSection
             }
-            transferSection
+            previewSection
         }
-        .navigationTitle("Маршрутизация")
+        .navigationTitle(name.isEmpty ? "Профиль" : name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Сохранить") { save() }
             }
         }
-        .sheet(isPresented: $showTransfer) {
-            RouteTransferView(plan: plan) { imported in
-                apply(imported)
+        .sheet(isPresented: $showAddEntry) {
+            RouteAttributePicker { attr in
+                add(attr)
             }
+        }
+        .sheet(item: $editingEntry) { entry in
+            RouteValueView(attr: entry.attr,
+                           targets: targets,
+                           value: valueText) { updated in
+                apply(updated, to: entry)
+            }
+        }
+        .sheet(isPresented: $showPreview) {
+            RouteJSONSheet(title: name, text: rules.planJSON(plan))
+        }
+        .sheet(isPresented: $showExport) {
+            RouteExportView(plan: plan)
         }
         .onAppear(perform: load)
     }
 
+    // MARK: - Секции
+
     private var commonSection: some View {
         Section {
-            TextField("Название правила", text: $name)
+            TextField("Название профиля", text: $name)
             Picker("Общий outbound", selection: $finalTarget) {
                 ForEach(targets, id: \.self) { target in
                     Text(target).tag(target)
@@ -86,7 +109,6 @@ struct AdvancedRouteView: View {
             }
             .pickerStyle(.segmented)
         }
-        .listRowSeparator(.hidden)
     }
 
     private var simplifiedSection: some View {
@@ -104,76 +126,97 @@ struct AdvancedRouteView: View {
 
     private var extendedSection: some View {
         Section {
-            ForEach($entries) { $entry in
-                VStack(alignment: .leading, spacing: 6) {
-                    Picker("Тип", selection: $entry.kind) {
-                        Text("Правило").tag("rule")
-                        Text("Outbound").tag("outbound")
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-
-                    if entry.kind == "rule" {
-                        Picker("Атрибут", selection: $entry.attr) {
-                            ForEach(RouteAttribute.all, id: \.self) { attr in
-                                Text(attr).tag(attr)
-                            }
-                        }
-                        .font(.caption)
-                        TextField(RouteAttribute.hint(entry.attr), text: $entry.value)
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                            .font(.system(.footnote, design: .monospaced))
-                        Text(RouteAttribute.hint(entry.attr))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    } else {
-                        Picker("Цель", selection: $entry.value) {
-                            ForEach(targets, id: \.self) { target in
-                                Text(target).tag(target)
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 2)
+            ForEach(entries) { entry in
+                entryRow(entry)
             }
             .onDelete { offsets in
                 entries.remove(atOffsets: offsets)
             }
 
-            Menu {
-                Menu("Правило") {
-                    ForEach(RouteAttribute.all.prefix(10), id: \.self) { attr in
-                        Button(attr) {
-                            entries.append(RoutePlanEntry(kind: "rule", attr: attr, value: ""))
-                        }
-                    }
-                }
-                Button {
-                    entries.append(RoutePlanEntry(kind: "outbound", attr: "outbound", value: "direct"))
-                } label: {
-                    Label("Outbound", systemImage: "arrow.turn.down.right")
-                }
+            Button {
+                showAddEntry = true
             } label: {
                 Label("Добавить запись", systemImage: "plus.circle")
             }
         } header: {
             Text("Записи по порядку")
         } footer: {
-            Text("Срабатывает первая подходящая запись — порядок можно менять перетаскиванием в режиме правки.")
+            Text("Срабатывает первая подходящая запись. Нажмите на название атрибута, чтобы вписать значение; «Выбрать» — готовые варианты.")
         }
     }
 
-    private var transferSection: some View {
+    private var previewSection: some View {
         Section {
             Button {
-                showTransfer = true
+                showPreview = true
             } label: {
-                Label("Экспорт и импорт", systemImage: "square.and.arrow.up.on.square")
+                Label("Предварительный просмотр JSON", systemImage: "curlybraces")
+            }
+            Button {
+                showExport = true
+            } label: {
+                Label("Экспорт (JSON или Throne)", systemImage: "square.and.arrow.up")
             }
         } footer: {
-            Text(message.isEmpty ? "JSON или ссылка throne://route — можно перенести правило между устройствами." : message)
+            Text(rules.status.isEmpty
+                 ? "Предпросмотр показывает ровно тот JSON, который уйдёт при экспорте."
+                 : rules.status)
         }
+    }
+
+    // MARK: - Строка записи
+
+    private func entryRow(_ entry: RoutePlanEntry) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                valueText = entry.value
+                editingEntry = entry
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.attr)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Theme.accent)
+                    Text(RouteAttribute.displayValue(entry.value))
+                        .font(.caption2)
+                        .foregroundColor(entry.value.isEmpty ? .red : .secondary)
+                        .lineLimit(1)
+                }
+            }
+            .buttonStyle(.borderless)
+
+            Spacer(minLength: 4)
+
+            if entry.kind == "rule" {
+                Menu {
+                    ForEach(targets, id: \.self) { target in
+                        Button(target) { setTarget(target, entry) }
+                    }
+                } label: {
+                    Text(entry.target ?? "proxy")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(Theme.accent)
+                }
+            }
+
+            if RouteAttribute.needsChoice(entry.attr) {
+                Button("Выбрать") {
+                    valueText = entry.value
+                    editingEntry = entry
+                }
+                .font(.caption2.weight(.medium))
+                .buttonStyle(.borderless)
+            }
+
+            Button {
+                entries.removeAll { $0.id == entry.id }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.vertical, 2)
     }
 
     private func domainEditor(title: String, text: Binding<String>, hint: String) -> some View {
@@ -191,68 +234,228 @@ struct AdvancedRouteView: View {
         .padding(.vertical, 2)
     }
 
+    // MARK: - Действия
+
     private func load() {
         guard !loaded else { return }
         loaded = true
-        name = rules.plan.name
-        finalTarget = rules.plan.finalTarget
-        directList = rules.plan.directList
-        proxyList = rules.plan.proxyList
-        blockList = rules.plan.blockList
-        warpList = rules.plan.warpList
-        entries = rules.plan.entries
+        guard let stored = rules.plan(with: planID) else { return }
+        name = stored.name
+        finalTarget = stored.finalTarget
+        directList = stored.directList
+        proxyList = stored.proxyList
+        blockList = stored.blockList
+        warpList = stored.warpList
+        entries = stored.entries
     }
 
-    private func apply(_ imported: RoutePlan) {
-        name = imported.name
-        finalTarget = imported.finalTarget
-        directList = imported.directList
-        proxyList = imported.proxyList
-        blockList = imported.blockList
-        warpList = imported.warpList
-        entries = imported.entries
-        message = "план импортирован: " + imported.name
+    private func add(_ attr: String) {
+        let entry = RoutePlanEntry(kind: attr == "outbound" ? "outbound" : "rule",
+                                   attr: attr,
+                                   value: attr == "outbound" ? "proxy" : "")
+        entries.append(entry)
+        valueText = entry.value
+        // Сразу открываем значение: лишний тап по только что добавленной записи не нужен.
+        // Небольшая задержка — список атрибутов должен успеть закрыться.
+        let id = entry.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            if let created = entries.first(where: { $0.id == id }) {
+                editingEntry = created
+            }
+        }
+    }
+
+    private func apply(_ updated: String, to entry: RoutePlanEntry) {
+        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        entries[index].value = updated
+    }
+
+    private func setTarget(_ target: String, _ entry: RoutePlanEntry) {
+        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        entries[index].target = target
     }
 
     private func save() {
         rules.savePlan(plan)
-        message = "сохранено: " + name
+        presentation.wrappedValue.dismiss()
     }
 }
 
-/// Экспорт/импорт плана: JSON и ссылка `throne://route?plan=…`.
-struct RouteTransferView: View {
+/// Полный список атрибутов — открывается сразу по «Добавить запись».
+struct RouteAttributePicker: View {
     @Environment(\.presentationMode) private var presentation
-    @State private var text = ""
-    @State private var error = ""
+    @State private var query = ""
 
-    let plan: RoutePlan
-    let onImport: (RoutePlan) -> Void
+    let onPick: (String) -> Void
+
+    private var attributes: [String] {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !text.isEmpty else { return RouteAttribute.all }
+        return RouteAttribute.all.filter { $0.contains(text) }
+    }
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 10) {
-                TextEditor(text: $text)
-                    .font(.system(.caption2, design: .monospaced))
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(uiColor: .secondarySystemBackground)))
-                if !error.isEmpty {
-                    Text(error).font(.caption).foregroundColor(.red)
+            List {
+                Section {
+                    Button {
+                        onPick("outbound")
+                        presentation.wrappedValue.dismiss()
+                    } label: {
+                        HStack {
+                            Text("outbound").font(.subheadline.weight(.medium))
+                            Spacer()
+                            Text("куда направить").font(.caption2).foregroundColor(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Принудительный outbound")
                 }
-                HStack(spacing: 8) {
-                    Button("JSON") { text = Self.encode(plan) }
-                        .buttonStyle(.bordered)
-                    Button("Ссылка") { text = Self.link(plan) }
-                        .buttonStyle(.bordered)
-                    Spacer()
-                    Button("Импорт") { importText() }
-                        .buttonStyle(.borderedProminent)
+
+                Section {
+                    ForEach(attributes, id: \.self) { attr in
+                        Button {
+                            onPick(attr)
+                            presentation.wrappedValue.dismiss()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(attr).font(.subheadline).foregroundColor(.primary)
+                                    if RouteAttribute.needsChoice(attr) {
+                                        Image(systemName: "list.bullet")
+                                            .font(.caption2)
+                                            .foregroundColor(Theme.accent)
+                                    }
+                                }
+                                Text(RouteAttribute.hint(attr))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Атрибуты")
                 }
-                .font(.caption)
             }
-            .padding()
-            .navigationTitle("Экспорт и импорт")
+            .listStyle(.insetGrouped)
+            .searchable(text: $query, prompt: "Атрибут")
+            .navigationTitle("Атрибут")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Закрыть") { presentation.wrappedValue.dismiss() }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+}
+
+/// Экран значения атрибута: поле ввода с подсказками и, если надо, готовые варианты.
+struct RouteValueView: View {
+    @Environment(\.presentationMode) private var presentation
+
+    let attr: String
+    let targets: [String]
+    @State private var text: String
+    let onDone: (String) -> Void
+
+    init(attr: String, targets: [String], value: String, onDone: @escaping (String) -> Void) {
+        self.attr = attr
+        self.targets = targets
+        _text = State(initialValue: value)
+        self.onDone = onDone
+    }
+
+    private var options: [String] {
+        if attr == "outbound" { return targets }
+        return RouteAttribute.options(attr)
+    }
+
+    private var filtered: [String] {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return options }
+        return options.filter { $0.lowercased().contains(query) }
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("Значение", text: $text)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .font(.system(.footnote, design: .monospaced))
+                    if options.isEmpty {
+                        Text(RouteAttribute.hint(attr))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text(attr)
+                }
+
+                if !filtered.isEmpty {
+                    Section {
+                        ForEach(filtered.prefix(40), id: \.self) { option in
+                            Button {
+                                text = option
+                            } label: {
+                                HStack {
+                                    Text(option)
+                                        .font(.system(.footnote, design: .monospaced))
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    if option == text {
+                                        Image(systemName: "checkmark")
+                                            .font(.caption)
+                                            .foregroundColor(Theme.accent)
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Выбрать")
+                    } footer: {
+                        Text("Можно вписать своё значение — список только подсказывает.")
+                    }
+                }
+            }
+            .navigationTitle(attr)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { presentation.wrappedValue.dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") {
+                        onDone(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                        presentation.wrappedValue.dismiss()
+                    }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+}
+
+/// Предпросмотр JSON профиля: тот же текст, что при экспорте.
+struct RouteJSONSheet: View {
+    @Environment(\.presentationMode) private var presentation
+
+    let title: String
+    let text: String
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                Text(text)
+                    .font(.system(.caption2, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -266,43 +469,7 @@ struct RouteTransferView: View {
                     }
                 }
             }
-            .onAppear { if text.isEmpty { text = Self.encode(plan) } }
         }
         .navigationViewStyle(.stack)
-    }
-
-    private func importText() {
-        guard let parsed = Self.decode(text) else {
-            error = "не разобрать: нужен JSON плана или ссылка throne://route"
-            return
-        }
-        error = ""
-        onImport(parsed)
-        presentation.wrappedValue.dismiss()
-    }
-
-    private static func encode(_ plan: RoutePlan) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(plan),
-              let text = String(data: data, encoding: .utf8) else { return "{}" }
-        return text
-    }
-
-    private static func link(_ plan: RoutePlan) -> String {
-        let compact = encode(plan).replacingOccurrences(of: "\n", with: "")
-        let encoded = compact.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? compact
-        return "throne://route?plan=" + encoded
-    }
-
-    private static func decode(_ raw: String) -> RoutePlan? {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.hasPrefix("throne://"), let components = URLComponents(string: text),
-           let value = components.queryItems?.first(where: { $0.name == "plan" })?.value,
-           let data = value.data(using: .utf8) {
-            return try? JSONDecoder().decode(RoutePlan.self, from: data)
-        }
-        guard let data = text.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(RoutePlan.self, from: data)
     }
 }

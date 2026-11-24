@@ -88,11 +88,11 @@ struct ServerDetailsView: View {
                     }
                     HStack(spacing: 8) {
                         PlaqueButton(title: "Пинг", icon: "waveform.path.ecg") {
-                            Task { await engine.check(profile: profile) }
+                            engine.runCheck(profile: profile)
                         }
                         .disabled(engine.bulkRunning)
                         PlaqueButton(title: "Скорость", icon: "speedometer") {
-                            Task { await engine.measureSpeed(profile: profile) }
+                            engine.runSpeedAll(profiles: [profile])
                         }
                         .disabled(engine.speedRunning != nil || engine.bulkRunning)
                         Spacer()
