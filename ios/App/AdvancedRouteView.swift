@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// Редактор профиля маршрутизации: упрощённый вид (четыре списка) и расширенный
-/// (записи «атрибут → значение»). Атрибуты — полным списком, значения — отдельным экраном
-/// с подсказками; снизу предпросмотр JSON профиля.
+/// Редактор профиля маршрутизации: упрощённый вид (четыре списка) и расширенный.
+///
+/// Расширенный вид устроен как в настольном Throne: сначала создаётся **папка с атрибутами**
+/// (у неё есть название, действие и outbound), а внутри неё уже лежат атрибуты со значениями.
+/// Порядок папок = порядок применения: первая сверху сработает первой.
 struct AdvancedRouteView: View {
     @EnvironmentObject private var rules: RuleStore
     @EnvironmentObject private var store: ProfileStore
@@ -16,13 +18,13 @@ struct AdvancedRouteView: View {
     @State private var proxyList = ""
     @State private var blockList = ""
     @State private var warpList = ""
-    @State private var entries: [RoutePlanEntry] = []
+    @State private var folders: [RoutePlanRule] = []
     @State private var tab = 0
     @State private var loaded = false
 
-    @State private var showAddEntry = false
-    @State private var editingEntry: RoutePlanEntry?
-    @State private var valueText = ""
+    @State private var editingRule: RoutePlanRule?
+    @State private var showNewRule = false
+    @State private var newRuleName = ""
     @State private var showPreview = false
     @State private var showExport = false
 
@@ -38,7 +40,7 @@ struct AdvancedRouteView: View {
         RoutePlan(id: planID,
                   name: name,
                   finalTarget: finalTarget,
-                  entries: entries,
+                  rules: folders,
                   directList: directList,
                   proxyList: proxyList,
                   blockList: blockList,
@@ -63,17 +65,15 @@ struct AdvancedRouteView: View {
                 Button("Сохранить") { save() }
             }
         }
-        .sheet(isPresented: $showAddEntry) {
-            RouteAttributePicker { attr in
-                add(attr)
+        .sheet(item: $editingRule) { rule in
+            RouteRuleEditorView(rule: rule, targets: targets) { updated in
+                if let index = folders.firstIndex(where: { $0.id == updated.id }) {
+                    folders[index] = updated
+                }
             }
         }
-        .sheet(item: $editingEntry) { entry in
-            RouteValueView(attr: entry.attr,
-                           targets: targets,
-                           value: valueText) { updated in
-                apply(updated, to: entry)
-            }
+        .sheet(isPresented: $showNewRule) {
+            newRuleSheet
         }
         .sheet(isPresented: $showPreview) {
             RouteJSONSheet(title: name, text: rules.planJSON(plan))
@@ -97,7 +97,7 @@ struct AdvancedRouteView: View {
         } header: {
             Text("Основное")
         } footer: {
-            Text("Сюда идёт всё, что не поймала ни одна запись: proxy — выбранный сервер, direct — напрямую, reject — блокировать.")
+            Text("Сюда идёт всё, что не поймала ни одна папка: proxy — выбранный сервер, direct — напрямую, reject — блокировать.")
         }
     }
 
@@ -126,22 +126,26 @@ struct AdvancedRouteView: View {
 
     private var extendedSection: some View {
         Section {
-            ForEach(entries) { entry in
-                entryRow(entry)
+            ForEach(folders) { rule in
+                folderRow(rule)
+            }
+            .onMove { source, destination in
+                folders.move(fromOffsets: source, toOffset: destination)
             }
             .onDelete { offsets in
-                entries.remove(atOffsets: offsets)
+                folders.remove(atOffsets: offsets)
             }
 
             Button {
-                showAddEntry = true
+                newRuleName = ""
+                showNewRule = true
             } label: {
-                Label("Добавить запись", systemImage: "plus.circle")
+                Label("Добавить папку с атрибутами", systemImage: "folder.badge.plus")
             }
         } header: {
-            Text("Записи по порядку")
+            Text("Папки с атрибутами")
         } footer: {
-            Text("Срабатывает первая подходящая запись. Нажмите на название атрибута, чтобы вписать значение; «Выбрать» — готовые варианты.")
+            Text("Первая папка сверху срабатывает первой. Внутри папки — атрибуты, а «куда пускать» задаётся один раз для всей папки.")
         }
     }
 
@@ -164,59 +168,83 @@ struct AdvancedRouteView: View {
         }
     }
 
-    // MARK: - Строка записи
+    // MARK: - Строка папки
 
-    private func entryRow(_ entry: RoutePlanEntry) -> some View {
+    private func folderRow(_ rule: RoutePlanRule) -> some View {
         HStack(spacing: 8) {
             Button {
-                valueText = entry.value
-                editingEntry = entry
+                editingRule = rule
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.attr)
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(Theme.accent)
-                    Text(RouteAttribute.displayValue(entry.value))
+                    Text(rule.name.isEmpty ? "Папка" : rule.name)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Text(rule.subtitle)
                         .font(.caption2)
-                        .foregroundColor(entry.value.isEmpty ? .red : .secondary)
+                        .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
 
-            Spacer(minLength: 4)
-
-            if entry.kind == "rule" {
-                Menu {
-                    ForEach(targets, id: \.self) { target in
-                        Button(target) { setTarget(target, entry) }
-                    }
+            Menu {
+                Button {
+                    moveRule(rule, by: -1)
                 } label: {
-                    Text(entry.target ?? "proxy")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundColor(Theme.accent)
+                    Label("Выше", systemImage: "arrow.up")
                 }
-            }
-
-            if RouteAttribute.needsChoice(entry.attr) {
-                Button("Выбрать") {
-                    valueText = entry.value
-                    editingEntry = entry
+                .disabled(folders.first?.id == rule.id)
+                Button {
+                    moveRule(rule, by: 1)
+                } label: {
+                    Label("Ниже", systemImage: "arrow.down")
                 }
-                .font(.caption2.weight(.medium))
-                .buttonStyle(.borderless)
-            }
-
-            Button {
-                entries.removeAll { $0.id == entry.id }
+                .disabled(folders.last?.id == rule.id)
+                Button(role: .destructive) {
+                    folders.removeAll { $0.id == rule.id }
+                } label: {
+                    Label("Удалить папку", systemImage: "trash")
+                }
             } label: {
-                Image(systemName: "trash")
-                    .font(.caption)
-                    .foregroundColor(.red)
+                Image(systemName: "ellipsis.circle")
+                    .font(.body)
+                    .foregroundColor(.secondary)
             }
             .buttonStyle(.borderless)
         }
         .padding(.vertical, 2)
+    }
+
+    private var newRuleSheet: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("Название папки", text: $newRuleName)
+                } footer: {
+                    Text("Например: «Блок рекламы» или «YouTube через proxy». Атрибуты добавляются внутри папки — после создания.")
+                }
+            }
+            .navigationTitle("Новая папка")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { showNewRule = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Создать") {
+                        let created = RoutePlanRule(name: newRuleName.trimmingCharacters(in: .whitespacesAndNewlines))
+                        folders.append(created)
+                        showNewRule = false
+                        editingRule = created
+                    }
+                    .disabled(newRuleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
     }
 
     private func domainEditor(title: String, text: Binding<String>, hint: String) -> some View {
@@ -236,6 +264,13 @@ struct AdvancedRouteView: View {
 
     // MARK: - Действия
 
+    private func moveRule(_ rule: RoutePlanRule, by offset: Int) {
+        guard let index = folders.firstIndex(where: { $0.id == rule.id }) else { return }
+        let target = index + offset
+        guard folders.indices.contains(target) else { return }
+        folders.swapAt(index, target)
+    }
+
     private func load() {
         guard !loaded else { return }
         loaded = true
@@ -246,33 +281,7 @@ struct AdvancedRouteView: View {
         proxyList = stored.proxyList
         blockList = stored.blockList
         warpList = stored.warpList
-        entries = stored.entries
-    }
-
-    private func add(_ attr: String) {
-        let entry = RoutePlanEntry(kind: attr == "outbound" ? "outbound" : "rule",
-                                   attr: attr,
-                                   value: attr == "outbound" ? "proxy" : "")
-        entries.append(entry)
-        valueText = entry.value
-        // Сразу открываем значение: лишний тап по только что добавленной записи не нужен.
-        // Небольшая задержка — список атрибутов должен успеть закрыться.
-        let id = entry.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            if let created = entries.first(where: { $0.id == id }) {
-                editingEntry = created
-            }
-        }
-    }
-
-    private func apply(_ updated: String, to entry: RoutePlanEntry) {
-        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
-        entries[index].value = updated
-    }
-
-    private func setTarget(_ target: String, _ entry: RoutePlanEntry) {
-        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
-        entries[index].target = target
+        folders = stored.rules
     }
 
     private func save() {
@@ -281,7 +290,153 @@ struct AdvancedRouteView: View {
     }
 }
 
-/// Полный список атрибутов — открывается сразу по «Добавить запись».
+/// Редактор одной папки: название, действие, outbound и список атрибутов внутри.
+struct RouteRuleEditorView: View {
+    @Environment(\.presentationMode) private var presentation
+
+    let targets: [String]
+    let onSave: (RoutePlanRule) -> Void
+
+    @State private var rule: RoutePlanRule
+    @State private var showAttrPicker = false
+    @State private var editingAttr: RoutePlanAttr?
+
+    init(rule: RoutePlanRule, targets: [String], onSave: @escaping (RoutePlanRule) -> Void) {
+        self.targets = targets
+        self.onSave = onSave
+        _rule = State(initialValue: rule)
+    }
+
+    private var isBlocking: Binding<Bool> {
+        Binding(get: { rule.action == "reject" },
+                set: { rule.action = $0 ? "reject" : "route" })
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("Название папки", text: $rule.name)
+                    Toggle("Блокировать", isOn: isBlocking)
+                    if rule.action != "reject" {
+                        Picker("Куда пускать", selection: $rule.outbound) {
+                            ForEach(targets, id: \.self) { target in
+                                Text(target).tag(target)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Папка")
+                } footer: {
+                    Text(rule.action == "reject"
+                         ? "Всё, что попадёт под атрибуты ниже, блокируется."
+                         : "Всё, что попадёт под атрибуты ниже, уходит в этот outbound.")
+                }
+
+                Section {
+                    if rule.attrs.isEmpty {
+                        Text("Пока пусто: добавьте атрибуты — по ним папка и сработает.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(rule.attrs) { item in
+                        attrRow(item)
+                    }
+                    .onDelete { offsets in
+                        rule.attrs.remove(atOffsets: offsets)
+                    }
+                    Button {
+                        showAttrPicker = true
+                    } label: {
+                        Label("Добавить атрибут", systemImage: "plus.circle")
+                    }
+                } header: {
+                    Text("Атрибуты")
+                } footer: {
+                    Text("Условия внутри одной папки складываются: сработает, когда совпало каждое.")
+                }
+            }
+            .navigationTitle(rule.name.isEmpty ? "Папка" : rule.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { presentation.wrappedValue.dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") {
+                        onSave(rule)
+                        presentation.wrappedValue.dismiss()
+                    }
+                }
+            }
+            .sheet(isPresented: $showAttrPicker) {
+                RouteAttributePicker { attr in
+                    addAttr(attr)
+                }
+            }
+            .sheet(item: $editingAttr) { item in
+                RouteValueView(attr: item.attr, values: item.values) { updated in
+                    if let index = rule.attrs.firstIndex(where: { $0.id == item.id }) {
+                        rule.attrs[index].values = updated
+                    }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private func attrRow(_ item: RoutePlanAttr) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                editingAttr = item
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.attr)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Theme.accent)
+                    Text(item.summary)
+                        .font(.caption2)
+                        .foregroundColor(item.values.isEmpty ? .red : .secondary)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if RouteAttribute.needsChoice(item.attr) {
+                Button("Выбрать") { editingAttr = item }
+                    .font(.caption2.weight(.medium))
+                    .buttonStyle(.borderless)
+            }
+
+            Button {
+                rule.attrs.removeAll { $0.id == item.id }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func addAttr(_ attr: String) {
+        guard !rule.attrs.contains(where: { $0.attr == attr }) else { return }
+        let created = RoutePlanAttr(attr: attr)
+        rule.attrs.append(created)
+        // Сразу открываем значения: лишний тап по новой строке не нужен.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            if let fresh = rule.attrs.first(where: { $0.id == created.id }) {
+                editingAttr = fresh
+            }
+        }
+    }
+}
+
+/// Полный список атрибутов. Открывается сразу по «Добавить атрибут».
+/// `outbound` здесь нет: он принадлежит папке, а не атрибуту.
 struct RouteAttributePicker: View {
     @Environment(\.presentationMode) private var presentation
     @State private var query = ""
@@ -290,51 +445,32 @@ struct RouteAttributePicker: View {
 
     private var attributes: [String] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !text.isEmpty else { return RouteAttribute.all }
-        return RouteAttribute.all.filter { $0.contains(text) }
+        guard !text.isEmpty else { return RouteAttribute.all.filter { $0 != "outbound" } }
+        return RouteAttribute.all.filter { $0 != "outbound" && $0.contains(text) }
     }
 
     var body: some View {
         NavigationView {
             List {
-                Section {
+                ForEach(attributes, id: \.self) { attr in
                     Button {
-                        onPick("outbound")
+                        onPick(attr)
                         presentation.wrappedValue.dismiss()
                     } label: {
-                        HStack {
-                            Text("outbound").font(.subheadline.weight(.medium))
-                            Spacer()
-                            Text("куда направить").font(.caption2).foregroundColor(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("Принудительный outbound")
-                }
-
-                Section {
-                    ForEach(attributes, id: \.self) { attr in
-                        Button {
-                            onPick(attr)
-                            presentation.wrappedValue.dismiss()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(attr).font(.subheadline).foregroundColor(.primary)
-                                    if RouteAttribute.needsChoice(attr) {
-                                        Image(systemName: "list.bullet")
-                                            .font(.caption2)
-                                            .foregroundColor(Theme.accent)
-                                    }
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(attr).font(.subheadline).foregroundColor(.primary)
+                                if RouteAttribute.needsChoice(attr) {
+                                    Image(systemName: "list.bullet")
+                                        .font(.caption2)
+                                        .foregroundColor(Theme.accent)
                                 }
-                                Text(RouteAttribute.hint(attr))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
                             }
+                            Text(RouteAttribute.hint(attr))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
                     }
-                } header: {
-                    Text("Атрибуты")
                 }
             }
             .listStyle(.insetGrouped)
@@ -351,41 +487,71 @@ struct RouteAttributePicker: View {
     }
 }
 
-/// Экран значения атрибута: поле ввода с подсказками и, если надо, готовые варианты.
+/// Значения атрибута: список уже выбранных, поле для своего значения и готовые варианты.
+///
+/// Варианты отмечаются галочкой и сразу попадают в значение — в поиск ничего не подставляется.
+/// Выбранные варианты всегда стоят сверху. Если вариантов больше пяти, они открываются
+/// отдельным окном, иначе — прямо здесь.
 struct RouteValueView: View {
     @Environment(\.presentationMode) private var presentation
 
     let attr: String
-    let targets: [String]
-    @State private var text: String
-    let onDone: (String) -> Void
+    @State private var values: [String]
+    @State private var text = ""
+    @State private var showOptions = false
+    let onDone: ([String]) -> Void
 
-    init(attr: String, targets: [String], value: String, onDone: @escaping (String) -> Void) {
+    init(attr: String, values: [String], onDone: @escaping ([String]) -> Void) {
         self.attr = attr
-        self.targets = targets
-        _text = State(initialValue: value)
+        _values = State(initialValue: values)
         self.onDone = onDone
     }
 
-    private var options: [String] {
-        if attr == "outbound" { return targets }
-        return RouteAttribute.options(attr)
-    }
+    private var options: [String] { RouteAttribute.options(attr) }
+    private var manyOptions: Bool { options.count > 5 }
 
-    private var filtered: [String] {
+    /// Выбранные — сверху, остальные ниже; фильтр применяется только к невыбранным.
+    private var sortedOptions: [String] {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return options }
-        return options.filter { $0.lowercased().contains(query) }
+        let chosen = options.filter { values.contains($0) }
+        let rest = options.filter { !values.contains($0) && (query.isEmpty || $0.lowercased().contains(query)) }
+        return chosen + rest
     }
 
     var body: some View {
         NavigationView {
             Form {
+                if !values.isEmpty {
+                    Section {
+                        ForEach(values, id: \.self) { value in
+                            HStack {
+                                Text(value)
+                                    .font(.system(.footnote, design: .monospaced))
+                                Spacer()
+                                Button {
+                                    values.removeAll { $0 == value }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                    } header: {
+                        Text("Значения")
+                    }
+                }
+
                 Section {
-                    TextField("Значение", text: $text)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                        .font(.system(.footnote, design: .monospaced))
+                    HStack {
+                        TextField("Значение", text: $text)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .font(.system(.footnote, design: .monospaced))
+                        Button("Добавить") { addTyped() }
+                            .font(.caption.weight(.semibold))
+                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                     if options.isEmpty {
                         Text(RouteAttribute.hint(attr))
                             .font(.caption2)
@@ -393,31 +559,35 @@ struct RouteValueView: View {
                     }
                 } header: {
                     Text(attr)
+                } footer: {
+                    Text("Можно вписать своё значение — список только подсказывает формат.")
                 }
 
-                if !filtered.isEmpty {
+                if !options.isEmpty {
                     Section {
-                        ForEach(filtered.prefix(40), id: \.self) { option in
+                        if manyOptions {
                             Button {
-                                text = option
+                                showOptions = true
                             } label: {
                                 HStack {
-                                    Text(option)
-                                        .font(.system(.footnote, design: .monospaced))
-                                        .foregroundColor(.primary)
+                                    Text("Выбрать из вариантов")
                                     Spacer()
-                                    if option == text {
-                                        Image(systemName: "checkmark")
-                                            .font(.caption)
-                                            .foregroundColor(Theme.accent)
-                                    }
+                                    Text(String(options.count))
+                                        .foregroundColor(.secondary)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
                                 }
+                            }
+                        } else {
+                            ForEach(sortedOptions, id: \.self) { option in
+                                optionRow(option)
                             }
                         }
                     } header: {
-                        Text("Выбрать")
+                        Text("Готовые варианты")
                     } footer: {
-                        Text("Можно вписать своё значение — список только подсказывает.")
+                        Text("Нажатие отмечает вариант галочкой и сразу добавляет его к значению: выбранные держатся сверху.")
                     }
                 }
             }
@@ -429,13 +599,147 @@ struct RouteValueView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Готово") {
-                        onDone(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                        onDone(values)
                         presentation.wrappedValue.dismiss()
                     }
                 }
             }
+            .sheet(isPresented: $showOptions) {
+                RouteOptionsSheet(attr: attr, options: options, values: $values)
+            }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private func optionRow(_ option: String) -> some View {
+        Button {
+            toggle(option)
+        } label: {
+            HStack {
+                Text(option)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundColor(.primary)
+                Spacer()
+                if values.contains(option) {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Theme.accent)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggle(_ option: String) {
+        if let index = values.firstIndex(of: option) {
+            values.remove(at: index)
+        } else {
+            values.append(option)
+        }
+    }
+
+    private func addTyped() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if !values.contains(trimmed) { values.append(trimmed) }
+        text = ""
+    }
+}
+
+/// Окно выбора для атрибутов с длинным списком значений: галочки, выбранные сверху.
+struct RouteOptionsSheet: View {
+    @Environment(\.presentationMode) private var presentation
+    @Binding var values: [String]
+
+    let attr: String
+    let options: [String]
+
+    @State private var query = ""
+
+    init(attr: String, options: [String], values: Binding<[String]>) {
+        self.attr = attr
+        self.options = options
+        _values = values
+    }
+
+    private var ordered: [String] {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let chosen = options.filter { values.contains($0) }
+        let rest = options.filter { !values.contains($0) && (text.isEmpty || $0.lowercased().contains(text)) }
+        return chosen + rest
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                if !values.isEmpty {
+                    Section {
+                        ForEach(values, id: \.self) { value in
+                            HStack {
+                                Image(systemName: "checkmark")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(Theme.accent)
+                                Text(value)
+                                    .font(.system(.footnote, design: .monospaced))
+                                Spacer()
+                                Button {
+                                    values.removeAll { $0 == value }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill").foregroundColor(.red)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { toggle(value) }
+                        }
+                    } header: {
+                        Text("Выбрано: \(values.count)")
+                    }
+                }
+                Section {
+                    ForEach(ordered, id: \.self) { option in
+                        Button {
+                            toggle(option)
+                        } label: {
+                            HStack {
+                                Text(option)
+                                    .font(.system(.footnote, design: .monospaced))
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                if values.contains(option) {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(Theme.accent)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("Варианты")
+                }
+            }
+            .listStyle(.insetGrouped)
+            .searchable(text: $query, prompt: "Поиск варианта")
+            .navigationTitle(attr)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") { presentation.wrappedValue.dismiss() }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private func toggle(_ option: String) {
+        if let index = values.firstIndex(of: option) {
+            values.remove(at: index)
+        } else {
+            values.append(option)
+        }
     }
 }
 

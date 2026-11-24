@@ -45,8 +45,26 @@ final class ProfileStore: ObservableObject {
     }
 
     /// Папка для ручных серверов: одна на всё приложение.
+    ///
+    /// Больше такой папки не создаём: при добавлении серверов пользователь сам выбирает —
+    /// новая папка (по имени подписки) или существующая. Геттер оставлен для старых данных.
     var manualFolderID: UUID? {
         folders.first { $0.name == Self.manualFolder }?.id
+    }
+
+    /// Куда класть при импорте, если пользователь ничего не выбрал: последняя использованная
+    /// папка, иначе первая. Не «Вручную» — такой папки в списке быть не должно.
+    var lastFolderID: UUID? {
+        if let raw = defaults.string(forKey: "dev.lastFolder"),
+           let id = UUID(uuidString: raw),
+           folders.contains(where: { $0.id == id }) {
+            return id
+        }
+        return folders.first?.id
+    }
+
+    func rememberFolder(_ id: UUID) {
+        defaults.set(id.uuidString, forKey: "dev.lastFolder")
     }
 
     func folder(_ id: UUID?) -> Folder? {
@@ -227,26 +245,28 @@ final class ProfileStore: ObservableObject {
     }
 
     @discardableResult
-    func importFromText(_ text: String) -> Int {
+    func importFromText(_ text: String, folderID: UUID? = nil) -> Int {
         let parsed = ProfileParser.parse(text: text)
         guard !parsed.isEmpty else {
             status = "в тексте не нашлось поддерживаемых профилей"
             return 0
         }
-        let target = manualFolderID ?? addFolder(name: Self.manualFolder).id
+        // Папку больше не создаём сами: её выбирает пользователь при добавлении.
+        // Без выбора кладём в текущую, а если папок нет вовсе — создаём одну под этот импорт.
+        let target = folderID ?? lastFolderID ?? addFolder(name: "Серверы").id
         let added = merge(parsed, folderID: target)
         status = "добавлено профилей: \(added) (всего \(profiles.count))"
         return added
     }
 
     /// Одно поле ввода на всё: http(s) — подписка, иначе — одна или несколько share-ссылок.
-    func importAny(_ input: String) async {
+    func importAny(_ input: String, folderID: UUID? = nil) async {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
         if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
-            await importFromURL(trimmed, folderID: nil)
+            await importFromURL(trimmed, folderID: folderID)
         } else {
-            importFromText(trimmed)
+            importFromText(trimmed, folderID: folderID)
         }
     }
 
@@ -677,7 +697,10 @@ final class ProfileStore: ObservableObject {
             }
             folders = names.map { Folder(name: $0.isEmpty ? "Подписка" : $0) }
         }
-        if !folders.contains(where: { $0.name == Self.manualFolder }) {
+        // «Вручную» нужна только как дом для СТАРЫХ профилей без папки. Если таких нет —
+        // папку не создаём: пользователь теперь выбирает папку сам при добавлении.
+        let needsManual = profiles.contains { $0.folderID == nil && $0.group == nil }
+        if needsManual, !folders.contains(where: { $0.name == Self.manualFolder }) {
             folders.append(Folder(name: Self.manualFolder))
         }
         let manual = folders.first { $0.name == Self.manualFolder }?.id

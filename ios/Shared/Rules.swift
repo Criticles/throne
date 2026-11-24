@@ -98,7 +98,149 @@ struct RuleSet: Codable, Identifiable, Hashable {
     ]
 }
 
-/// Запись расширенной маршрутизации: правило либо принудительный outbound.
+/// Атрибут внутри папки: имя и значения. В JSON Throne это `"domain": ["a", "b"]`.
+struct RoutePlanAttr: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var attr: String = "domain"
+    var values: [String] = []
+
+    init(id: UUID = UUID(), attr: String = "domain", values: [String] = []) {
+        self.id = id
+        self.attr = attr
+        self.values = values
+    }
+
+    var summary: String {
+        values.isEmpty ? "не задано" : values.joined(separator: ", ")
+    }
+}
+
+/// Ключ для разбора произвольных полей: формат Throne кладёт атрибуты прямо в объект правила.
+struct AnyAttributeKey: CodingKey {
+    var stringValue: String
+    var intValue: Int?
+
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { self.stringValue = String(intValue); self.intValue = intValue }
+    init(_ name: String) { self.stringValue = name }
+}
+
+/// Папка с атрибутами — это одно правило маршрутизации.
+///
+/// Так устроен документ настольного Throne: у правила есть `name`, `action`, `outbound`,
+/// а условия лежат полями рядом (`domain`, `rule_set`, `process_name`…). Поэтому «куда пускать»
+/// принадлежит папке, а не каждому атрибуту — иначе outbound дублировался бы в каждой строке.
+///
+/// Порядок папок важен: сверху — то, что сработает первым.
+struct RoutePlanRule: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var name: String = "Правило"
+    /// `route` — направить в outbound, `reject` — заблокировать.
+    var action: String = "route"
+    /// Куда пускать: proxy / direct / reject / имя сервера.
+    var outbound: String = "proxy"
+    var attrs: [RoutePlanAttr] = []
+
+    init(id: UUID = UUID(), name: String = "Правило", action: String = "route",
+         outbound: String = "proxy", attrs: [RoutePlanAttr] = []) {
+        self.id = id
+        self.name = name
+        self.action = action
+        self.outbound = outbound
+        self.attrs = attrs
+    }
+
+    /// Подпись строки папки: «proxy · 3 атрибута» или «блокировать · 1 атрибут».
+    var subtitle: String {
+        let destination = action == "reject" ? "блокировать" : outbound
+        let count = attrs.count
+        let word: String
+        switch count % 100 {
+        case 11...14: word = "атрибутов"
+        default:
+            switch count % 10 {
+            case 1: word = "атрибут"
+            case 2...4: word = "атрибута"
+            default: word = "атрибутов"
+            }
+        }
+        return destination + " · " + String(count) + " " + word
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: AnyAttributeKey.self)
+
+        if let text = try? container.decode(String.self, forKey: AnyAttributeKey("id")),
+           let uuid = UUID(uuidString: text) {
+            id = uuid
+        } else if let uuid = try? container.decode(UUID.self, forKey: AnyAttributeKey("id")) {
+            id = uuid
+        }
+        name = (try container.decodeIfPresent(String.self, forKey: AnyAttributeKey("name"))) ?? "Правило"
+        action = (try container.decodeIfPresent(String.self, forKey: AnyAttributeKey("action"))) ?? "route"
+        outbound = (try container.decodeIfPresent(String.self, forKey: AnyAttributeKey("outbound")))
+            ?? (action == "reject" ? "reject" : "proxy")
+
+        // Наш прежний вид хранил атрибуты вложенным массивом объектов.
+        var collected: [RoutePlanAttr] = []
+        if let nested = try? container.decode([RoutePlanAttr].self, forKey: AnyAttributeKey("attrs")) {
+            collected = nested
+        }
+        // Формат Throne: атрибуты — это остальные ключи объекта (массив, строка или bool).
+        let service = ["id", "name", "action", "outbound", "type", "attrs", "v"]
+        for key in container.allKeys where !service.contains(key.stringValue) {
+            if let values = try? container.decode([String].self, forKey: key) {
+                collected.append(RoutePlanAttr(attr: key.stringValue, values: values))
+            } else if let single = try? container.decode(String.self, forKey: key) {
+                collected.append(RoutePlanAttr(attr: key.stringValue, values: [single]))
+            } else if let flag = try? container.decode(Bool.self, forKey: key) {
+                collected.append(RoutePlanAttr(attr: key.stringValue, values: [flag ? "true" : "false"]))
+            } else if let number = try? container.decode(Int.self, forKey: key) {
+                collected.append(RoutePlanAttr(attr: key.stringValue, values: [String(number)]))
+            }
+        }
+        // Порядок атрибутов — как в справочнике, а не как лёг JSON: так список читается.
+        attrs = collected.enumerated().sorted { left, right in
+            let a = RouteAttribute.all.firstIndex(of: left.element.attr) ?? Int.max
+            let b = RouteAttribute.all.firstIndex(of: right.element.attr) ?? Int.max
+            return a == b ? left.offset < right.offset : a < b
+        }.map { $0.element }
+    }
+
+    /// Пишем ровно тот же документ, что отдаёт настольный Throne: `action` + `outbound` +
+    /// поля-атрибуты массивами. Один формат на импорт и экспорт — меньше шансов разойтись.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: AnyAttributeKey.self)
+        try container.encode("custom", forKey: AnyAttributeKey("type"))
+        try container.encode(name, forKey: AnyAttributeKey("name"))
+        try container.encode(action, forKey: AnyAttributeKey("action"))
+        if action != "reject" {
+            try container.encode(outbound, forKey: AnyAttributeKey("outbound"))
+        }
+        try container.encode(id.uuidString, forKey: AnyAttributeKey("id"))
+        for item in attrs where !item.values.isEmpty {
+            // Настольный клиент одиночное значение пишет по-разному: `protocol` — строкой,
+            // `rule_set`/`domain` — массивом даже из одного элемента. Повторяем это, чтобы наш
+            // экспорт совпадал с его документом, а не был просто «тоже валидным».
+            if item.values.count == 1,
+               let single = item.values.first,
+               Self.scalarAttributes.contains(item.attr) {
+                try container.encode(single, forKey: AnyAttributeKey(item.attr))
+            } else {
+                try container.encode(item.values, forKey: AnyAttributeKey(item.attr))
+            }
+        }
+    }
+
+    /// Атрибуты, которые в документе Throne занимают одно значение (строка), а не список.
+    static let scalarAttributes: Set<String> = [
+        "protocol", "network", "ip_version", "inbound", "method", "strategy",
+        "tls_spoof_method", "invert", "no_drop", "ip_is_private", "source_ip_is_private",
+        "override_port", "override_address", "override_destination",
+    ]
+}
+
+/// Запись старого формата (профиль → плоский список записей). Читается только для миграции.
 struct RoutePlanEntry: Codable, Identifiable, Hashable {
     var id = UUID()
     /// `rule` — условие, `outbound` — принудительная цель.
@@ -225,13 +367,14 @@ enum RouteAttribute {
     }
 }
 
-/// Профиль маршрутизации: что делать по умолчанию и список записей по порядку.
+/// Профиль маршрутизации: что делать по умолчанию и папки с атрибутами по порядку.
 /// Профилей может быть несколько; активный применяется к ядру.
 struct RoutePlan: Codable, Identifiable {
     var id = UUID()
     var name = "Маршрут"
     var finalTarget = "proxy"
-    var entries: [RoutePlanEntry] = []
+    /// Папки с атрибутами. Порядок = порядок применения, первая сверху срабатывает первой.
+    var rules: [RoutePlanRule] = []
     /// Упрощённый вид: четыре списка доменов, как в Throne на ПК.
     var directList = ""
     var proxyList = ""
@@ -240,13 +383,13 @@ struct RoutePlan: Codable, Identifiable {
     var updated: Date?
 
     init(id: UUID = UUID(), name: String = "Маршрут", finalTarget: String = "proxy",
-         entries: [RoutePlanEntry] = [], directList: String = "",
+         rules: [RoutePlanRule] = [], directList: String = "",
          proxyList: String = "", blockList: String = "", warpList: String = "",
          updated: Date? = nil) {
         self.id = id
         self.name = name
         self.finalTarget = finalTarget
-        self.entries = entries
+        self.rules = rules
         self.directList = directList
         self.proxyList = proxyList
         self.blockList = blockList
@@ -254,12 +397,45 @@ struct RoutePlan: Codable, Identifiable {
         self.updated = updated
     }
 
+    private enum Keys: String, CodingKey {
+        case id, name, finalTarget, rules, entries, directList, proxyList, blockList, warpList, updated
+        case defaultOutbound = "default_outbound"
+        case kind, v
+    }
+
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = (try container.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+        let container = try decoder.container(keyedBy: Keys.self)
+        if let text = try? container.decode(String.self, forKey: .id),
+           let uuid = UUID(uuidString: text) {
+            id = uuid
+        } else {
+            id = (try container.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+        }
         name = (try container.decodeIfPresent(String.self, forKey: .name)) ?? "Маршрут"
-        finalTarget = (try container.decodeIfPresent(String.self, forKey: .finalTarget)) ?? "proxy"
-        entries = (try container.decodeIfPresent([RoutePlanEntry].self, forKey: .entries)) ?? []
+        // Документ Throne зовёт это `default_outbound`, наш прежний вид — `finalTarget`.
+        finalTarget = (try container.decodeIfPresent(String.self, forKey: .finalTarget))
+            ?? (try container.decodeIfPresent(String.self, forKey: .defaultOutbound))
+            ?? "proxy"
+        if let stored = try container.decodeIfPresent([RoutePlanRule].self, forKey: .rules) {
+            rules = stored
+        } else if let legacy = try container.decodeIfPresent([RoutePlanEntry].self, forKey: .entries) {
+            // Старый вид: плоский список записей. Каждая становится своей папкой с тем же
+            // именем, что было у атрибута, — данные не теряются, порядок сохраняется.
+            rules = legacy.map { entry in
+                // Запись «принудительный outbound» — это не атрибут, а сама цель папки:
+                // иначе в JSON получился бы ключ `outbound` со значением массивом.
+                if entry.attr == "outbound" {
+                    return RoutePlanRule(name: Self.legacyName(entry),
+                                         action: (entry.value == "reject") ? "reject" : "route",
+                                         outbound: entry.value.isEmpty ? "proxy" : entry.value,
+                                         attrs: [])
+                }
+                return RoutePlanRule(name: Self.legacyName(entry),
+                                     action: (entry.target == "reject") ? "reject" : "route",
+                                     outbound: entry.target ?? "proxy",
+                                     attrs: [RoutePlanAttr(attr: entry.attr, values: [entry.value])])
+            }
+        }
         directList = (try container.decodeIfPresent(String.self, forKey: .directList)) ?? ""
         proxyList = (try container.decodeIfPresent(String.self, forKey: .proxyList)) ?? ""
         blockList = (try container.decodeIfPresent(String.self, forKey: .blockList)) ?? ""
@@ -267,14 +443,47 @@ struct RoutePlan: Codable, Identifiable {
         updated = try container.decodeIfPresent(Date.self, forKey: .updated)
     }
 
-    /// Короткая подпись для списка профилей: «proxy · 6 правил · 2 списка».
+    /// Экспортируем тот же документ, что понимает настольный Throne:
+    /// `kind`, `v`, `default_outbound`, `rules[]`.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Keys.self)
+        try container.encode("throne-route-profile", forKey: .kind)
+        try container.encode(1, forKey: .v)
+        try container.encode(id.uuidString, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(finalTarget, forKey: .defaultOutbound)
+        try container.encode(rules, forKey: .rules)
+        if !directList.isEmpty { try container.encode(directList, forKey: .directList) }
+        if !proxyList.isEmpty { try container.encode(proxyList, forKey: .proxyList) }
+        if !blockList.isEmpty { try container.encode(blockList, forKey: .blockList) }
+        if !warpList.isEmpty { try container.encode(warpList, forKey: .warpList) }
+        try container.encodeIfPresent(updated, forKey: .updated)
+    }
+
+    private static func legacyName(_ entry: RoutePlanEntry) -> String {
+        let value = entry.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? entry.attr : value
+    }
+
+    func rule(with id: UUID) -> RoutePlanRule? {
+        rules.first { $0.id == id }
+    }
+
+    /// Подпись профиля в списке: «по умолчанию: proxy · 6 папок».
     var summary: String {
-        let rules = entries.count
-        let lists = [directList, proxyList, blockList, warpList]
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+        let folders = rules.count
+        let word: String
+        switch folders % 100 {
+        case 11...14: word = "папок"
+        default:
+            switch folders % 10 {
+            case 1: word = "папка"
+            case 2...4: word = "папки"
+            default: word = "папок"
+            }
+        }
         var parts = ["по умолчанию: " + finalTarget]
-        parts.append("\(rules) записей")
-        if lists > 0 { parts.append("\(lists) списка") }
+        parts.append(String(folders) + " " + word)
         return parts.joined(separator: " · ")
     }
 }
@@ -536,13 +745,44 @@ final class RuleStore: ObservableObject {
         savePlans()
     }
 
-    /// Добавить запись в конкретный профиль — из «Соединений» или из редактора.
-    func addEntry(_ entry: RoutePlanEntry, to planID: UUID) {
-        guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
-        plans[index].entries.append(entry)
+    /// Добавить значение в атрибут конкретной папки конкретного профиля — из «Соединений»
+    /// или из редактора. Если такого атрибута в папке ещё нет, он создаётся.
+    @discardableResult
+    func addValue(_ value: String, attr: String, to planID: UUID, ruleID: UUID) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let planIndex = plans.firstIndex(where: { $0.id == planID }),
+              let ruleIndex = plans[planIndex].rules.firstIndex(where: { $0.id == ruleID })
+        else { return false }
+
+        // `outbound` — не атрибут папки, а её цель: пишем в поле, а не в JSON-ключ.
+        if attr == "outbound" {
+            plans[planIndex].rules[ruleIndex].outbound = trimmed
+            plans[planIndex].rules[ruleIndex].action = trimmed == "reject" ? "reject" : "route"
+        } else if let attrIndex = plans[planIndex].rules[ruleIndex].attrs.firstIndex(where: { $0.attr == attr }) {
+            if !plans[planIndex].rules[ruleIndex].attrs[attrIndex].values.contains(trimmed) {
+                plans[planIndex].rules[ruleIndex].attrs[attrIndex].values.append(trimmed)
+            }
+        } else {
+            plans[planIndex].rules[ruleIndex].attrs.append(RoutePlanAttr(attr: attr, values: [trimmed]))
+        }
+        plans[planIndex].updated = Date()
+        savePlans()
+        let folder = plans[planIndex].rules[ruleIndex].name
+        status = "«\(trimmed)» добавлено в «\(folder)» профиля «\(plans[planIndex].name)»"
+        return true
+    }
+
+    /// Новая папка с атрибутами в конце списка (значит, сработает последней).
+    @discardableResult
+    func addRule(named name: String, to planID: UUID) -> RoutePlanRule? {
+        guard let index = plans.firstIndex(where: { $0.id == planID }) else { return nil }
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rule = RoutePlanRule(name: title.isEmpty ? "Правило" : title)
+        plans[index].rules.append(rule)
         plans[index].updated = Date()
         savePlans()
-        status = "запись добавлена в «\(plans[index].name)»: \(entry.title)"
+        return rule
     }
 
     // MARK: - Импорт и экспорт
@@ -791,18 +1031,52 @@ final class RuleStore: ObservableObject {
 /// Кодирование профиля маршрутизации: JSON и ссылка `throne://route`.
 /// Импорт сам понимает, что лежит в буфере — JSON, ссылка с `?plan=` или base64 от JSON.
 enum RouteCodec {
-    static func encode(_ plan: RoutePlan) -> String {
+    /// Документ профиля без наших служебных полей: ровно то, что пишет настольный клиент.
+    private static func exportObject(_ plan: RoutePlan) -> [String: Any]? {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(plan),
-              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        encoder.outputFormatting = [.sortedKeys]
+        guard let raw = try? encoder.encode(plan),
+              var object = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any]
+        else { return nil }
+        // `id` нужен только нашему хранилищу: в документе Throne его нет. Дату обновления
+        // тоже не выносим — это наша служебная пометка.
+        object.removeValue(forKey: "id")
+        object.removeValue(forKey: "updated")
+        if var rules = object["rules"] as? [[String: Any]] {
+            for index in rules.indices {
+                rules[index].removeValue(forKey: "id")
+                // Пустые атрибуты не пишем: они означают «ещё не заполнено».
+                let emptyKeys = rules[index].keys.filter {
+                    (rules[index][$0] as? [String])?.isEmpty == true
+                }
+                for key in emptyKeys {
+                    rules[index].removeValue(forKey: key)
+                }
+            }
+            object["rules"] = rules
+        }
+        return object
+    }
+
+    static func encode(_ plan: RoutePlan) -> String {
+        guard let object = exportObject(plan),
+              let data = try? JSONSerialization.data(withJSONObject: object,
+                                                     options: [.sortedKeys, .prettyPrinted]),
+              let text = String(data: data, encoding: .utf8)
+        else { return "{}" }
         return text
     }
 
+    /// Ссылка в формате настольного Throne: `throne://route/<base64url>` без переводов строк.
     static func link(_ plan: RoutePlan) -> String {
-        let compact = encode(plan).replacingOccurrences(of: "\n", with: "")
-        let encoded = compact.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? compact
-        return "throne://route?plan=" + encoded
+        guard let object = exportObject(plan),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        else { return "throne://route/" }
+        let base64 = data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "throne://route/" + base64
     }
 
     static func decode(_ raw: String) -> RoutePlan? {

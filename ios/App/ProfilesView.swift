@@ -75,6 +75,26 @@ struct ProfilesView: View {
         return count
     }
 
+    /// Один размер шрифта на все названия сразу.
+    ///
+    /// Если самое длинное название не помещается в строку, уменьшаем шрифт у всего списка —
+    /// иначе названия в соседних строках выглядят по-разному. Считаем по реальной ширине
+    /// текста, а не по числу символов: кириллица и эмодзи флагов меряются по-разному.
+    private var nameFontSize: CGFloat {
+        let base: CGFloat = 15
+        // Экран минус отступы строки (16+16), кружок выбора (18), отступы HStack и колонка пинга.
+        let available = UIScreen.main.bounds.width - 32 - 18 - 10 - 6 - ServerRow.pillWidth
+        guard available > 60 else { return base }
+        let font = UIFont.systemFont(ofSize: base, weight: .medium)
+        var needed = base
+        for profile in visible {
+            let width = (profile.name as NSString).size(withAttributes: [.font: font]).width
+            guard width > available else { continue }
+            needed = min(needed, base * available / width)
+        }
+        return max(11, (needed * 10).rounded(.down) / 10)
+    }
+
     private var fastest: Profile? {
         var best: Profile?
         var bestMillis = Int.max
@@ -340,6 +360,7 @@ struct ProfilesView: View {
                   bulk: rowsByID[profile.id],
                   speed: engine.speed[profile.id],
                   busy: engine.bulkRunning || engine.speedRunning != nil,
+                  nameSize: nameFontSize,
                   onPing: { engine.runCheck(profile: profile) })
             // Строка во всю ширину телефона: без отступов карточки, как в настройках iOS.
             .listRowInsets(EdgeInsets())
@@ -475,6 +496,9 @@ struct ProfilesView: View {
                     .pickerStyle(.segmented)
                     if createFolder {
                         TextField("Имя папки", text: $addTitle)
+                        Text("По умолчанию: " + ProfileStore.folderName(for: addText))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     } else {
                         Picker("Папка", selection: $targetFolderID) {
                             ForEach(store.folders) { item in
@@ -484,7 +508,7 @@ struct ProfilesView: View {
                     }
                 } footer: {
                     Text(createFolder
-                         ? "Серверы лягут в новую папку. Одну и ту же подписку можно добавить сколько угодно раз — папки не сольются, даже если назвать их одинаково."
+                         ? "Серверы лягут в свою новую папку — имя можно изменить. Одну и ту же подписку можно добавить сколько угодно раз: папки не сольются, даже если назвать их одинаково."
                          : "Серверы добавятся в выбранную папку рядом с теми, что там уже есть.")
                 }
                 Section {
@@ -539,7 +563,12 @@ struct ProfilesView: View {
         NavigationView {
             QRScannerView { code in
                 showScanner = false
-                Task { await store.importAny(code) }
+                // Тот же лист с выбором папки, что и для ссылки: скрытого создания нет.
+                addText = code
+                addTitle = ""
+                targetFolderID = store.lastFolderID
+                createFolder = true
+                showAdd = true
             }
             .ignoresSafeArea()
             .navigationTitle("Наведите камеру на QR")
@@ -602,34 +631,41 @@ struct ProfilesView: View {
     private func addSubscription() {
         let input = addText.trimmingCharacters(in: .whitespacesAndNewlines)
         let typed = addTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return }
         let target: UUID
         if createFolder {
             // Пустое имя — имя хоста панели; занятое имя не правим: одинаковые папки разрешены.
             let base = typed.isEmpty ? ProfileStore.folderName(for: input) : typed
             target = store.addFolder(name: base).id
-        } else if let existing = targetFolderID {
+        } else if let existing = targetFolderID ?? store.lastFolderID {
             target = existing
         } else {
-            target = store.manualFolderID ?? store.addFolder(name: ProfileStore.manualFolder).id
+            // Папок нет вовсе — первый импорт создаёт одну по имени подписки.
+            target = store.addFolder(name: ProfileStore.folderName(for: input)).id
         }
+        store.rememberFolder(target)
         showAdd = false
         folderID = target
         Task {
             if input.lowercased().hasPrefix("http") {
                 await store.importFromURL(input, folderID: target)
             } else {
-                store.importFromText(input)
+                store.importFromText(input, folderID: target)
             }
         }
     }
 
+    /// Всё добавление идёт через лист с выбором папки: буфер и QR только заполняют его.
     private func importClipboard() {
         guard let text = UIPasteboard.general.string, !text.isEmpty else {
             probeLine = "буфер обмена пуст"
             return
         }
-        showAdd = false
-        Task { await store.importAny(text) }
+        addText = text
+        addTitle = ""
+        targetFolderID = store.lastFolderID
+        createFolder = true
+        showAdd = true
     }
 
     private func refreshCurrent() async {
@@ -711,7 +747,13 @@ struct ServerRow: View {
     let bulk: DevEngine.BulkRow?
     let speed: DevEngine.SpeedResult?
     let busy: Bool
+    /// Размер шрифта названия — общий для всего списка (считается в ProfilesView).
+    let nameSize: CGFloat
     let onPing: () -> Void
+
+    /// Плашка «Пинг» и результат замера — один и тот же размер: иначе строка «дёргается».
+    static let pillWidth: CGFloat = 68
+    static let pillHeight: CGFloat = 24
 
     private var result: ProbeResult? { bulk?.result }
     /// Идёт замер именно этого сервера: строка показывает кружок вместо «Пинг».
@@ -727,9 +769,9 @@ struct ServerRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(profile.name)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .font(.system(size: nameSize, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     if profile.favorite {
                         Image(systemName: "star.fill").font(.caption2).foregroundColor(.yellow)
                     }
@@ -758,9 +800,11 @@ struct ServerRow: View {
                 pingControl
                 if let speed {
                     Text(String(format: "↓ %.1f · ↑ %.1f", speed.downMbps, speed.upMbps))
-                        .font(.caption2.weight(.medium))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.green)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(width: Self.pillWidth, alignment: .trailing)
                 }
             }
         }
@@ -773,14 +817,16 @@ struct ServerRow: View {
         if checking {
             ProgressView()
                 .scaleEffect(0.7)
-                .frame(width: 44, height: 22)
+                .frame(width: Self.pillWidth, height: Self.pillHeight)
         } else if let millis {
             Button(action: onPing) {
                 Text("\(millis) мс")
-                    .font(.caption2.weight(.semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Theme.pingColor(millis))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    // Размер плашки один и тот же у «Пинг» и у результата.
+                    .frame(width: Self.pillWidth, height: Self.pillHeight)
                     .background(
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
                             .fill(Theme.pingColor(millis).opacity(0.12))
@@ -789,8 +835,19 @@ struct ServerRow: View {
             .buttonStyle(.borderless)
             .disabled(busy)
         } else {
-            PlaqueButton(title: "Пинг", icon: "waveform.path.ecg", action: onPing)
-                .disabled(busy)
+            Button(action: onPing) {
+                Text("Пинг")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Theme.accent)
+                    .lineLimit(1)
+                    .frame(width: Self.pillWidth, height: Self.pillHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Theme.accent.opacity(0.12))
+                    )
+            }
+            .buttonStyle(.borderless)
+            .disabled(busy)
         }
     }
 }

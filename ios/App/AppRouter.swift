@@ -21,7 +21,10 @@ final class AppRouter: ObservableObject {
     }
 }
 
-/// Добавление адреса или домена в конкретное правило конкретного профиля.
+/// Добавление значения в выбранную папку выбранного профиля маршрутизации.
+///
+/// Порядок как у настольного клиента: профиль → папка с атрибутами → значение.
+/// Если папок в профиле ещё нет, её можно создать прямо здесь.
 struct RouteInsertView: View {
     @EnvironmentObject private var rules: RuleStore
     @Environment(\.presentationMode) private var presentation
@@ -29,10 +32,12 @@ struct RouteInsertView: View {
     let prefill: RouteInsertPrefill
 
     @State private var planID: UUID?
+    @State private var ruleID: UUID?
     @State private var attr: String
     @State private var value: String
-    @State private var target = "proxy"
+    @State private var newFolderName = ""
     @State private var showAttributePicker = false
+    @State private var loadedPlan = false
 
     init(prefill: RouteInsertPrefill) {
         self.prefill = prefill
@@ -40,31 +45,76 @@ struct RouteInsertView: View {
         _value = State(initialValue: prefill.value)
     }
 
-    private var targets: [String] { ["proxy", "direct", "reject"] }
+    private var currentPlan: RoutePlan {
+        rules.plan(with: planID) ?? rules.plan
+    }
+
+    private var folders: [RoutePlanRule] {
+        currentPlan.rules
+    }
+
+    private var selectedFolder: RoutePlanRule? {
+        guard let ruleID else { return nil }
+        return folders.first { $0.id == ruleID }
+    }
+
+    private var canSave: Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedFolder != nil
+    }
 
     var body: some View {
         NavigationView {
             Form {
                 Section {
-                    HStack {
-                        Text(prefill.title.isEmpty ? prefill.value : prefill.title)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
+                    Text(prefill.title.isEmpty ? prefill.value : prefill.title)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                    Text(prefill.value)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
                 } header: {
                     Text("Из соединения")
                 }
 
                 Section {
                     Picker("Профиль", selection: Binding(
-                        get: { planID ?? rules.plan.id },
-                        set: { planID = $0 }
+                        get: { currentPlan.id },
+                        set: { newValue in
+                            planID = newValue
+                            ruleID = rules.plan(with: newValue)?.rules.first?.id
+                        }
                     )) {
                         ForEach(rules.plans) { plan in
                             Text(plan.name).tag(plan.id)
                         }
                     }
+
+                    if folders.isEmpty {
+                        TextField("Название новой папки", text: $newFolderName)
+                        Button {
+                            createFolder()
+                        } label: {
+                            Label("Создать папку с атрибутами", systemImage: "folder.badge.plus")
+                        }
+                        .disabled(newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } else {
+                        Picker("Папка с атрибутами", selection: Binding(
+                            get: { ruleID ?? folders.first?.id },
+                            set: { ruleID = $0 }
+                        )) {
+                            ForEach(folders) { folder in
+                                Text(folder.name + " · " + folder.subtitle).tag(Optional(folder.id))
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Куда")
+                } footer: {
+                    Text(selectedFolder.map { "Значение ляжет в «\($0.name)», порядок остальных папок не меняется." }
+                         ?? "Сначала выберите папку: в ней и будут условия правила.")
+                }
+
+                Section {
                     Button {
                         showAttributePicker = true
                     } label: {
@@ -78,15 +128,10 @@ struct RouteInsertView: View {
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .font(.system(.footnote, design: .monospaced))
-                    Picker("Куда", selection: $target) {
-                        ForEach(targets, id: \.self) { item in
-                            Text(item).tag(item)
-                        }
-                    }
                 } header: {
-                    Text("Правило")
+                    Text("Условие")
                 } footer: {
-                    Text("Запись добавится в конец списка профиля и сработает после правил, которые уже есть выше.")
+                    Text("Если такого атрибута в папке ещё нет, он добавится сам.")
                 }
             }
             .navigationTitle("В маршрутизацию")
@@ -97,26 +142,38 @@ struct RouteInsertView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Добавить") { save() }
-                        .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(!canSave)
                 }
             }
             .sheet(isPresented: $showAttributePicker) {
                 RouteAttributePicker { picked in
-                    if picked != "outbound" { attr = picked }
+                    attr = picked
                 }
             }
         }
         .navigationViewStyle(.stack)
         .onAppear {
-            if planID == nil { planID = rules.plan.id }
+            guard !loadedPlan else { return }
+            loadedPlan = true
+            let start = planID ?? rules.plan.id
+            planID = start
+            ruleID = rules.plan(with: start)?.rules.first?.id
+        }
+    }
+
+    private func createFolder() {
+        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let plan = planID else { return }
+        if let created = rules.addRule(named: name, to: plan) {
+            ruleID = created.id
+            newFolderName = ""
         }
     }
 
     private func save() {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let entry = RoutePlanEntry(kind: "rule", attr: attr, value: trimmed, target: target)
-        rules.addEntry(entry, to: planID ?? rules.plan.id)
+        guard let plan = planID, let folderID = ruleID ?? folders.first?.id else { return }
+        guard rules.addValue(trimmed, attr: attr, to: plan, ruleID: folderID) else { return }
         presentation.wrappedValue.dismiss()
     }
 }
