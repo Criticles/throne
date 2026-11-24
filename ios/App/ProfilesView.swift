@@ -18,6 +18,7 @@ struct ProfilesView: View {
     @State private var noteProfile: Profile?
     @State private var noteText = ""
     @State private var detailsProfile: Profile?
+    @State private var showSubscriptions = false
 
     @StateObject private var stats = TrafficStatsStore.shared
 
@@ -114,6 +115,9 @@ struct ProfilesView: View {
             .sheet(item: $detailsProfile) { profile in
                 ServerDetailsView(profile: profile)
             }
+            .sheet(isPresented: $showSubscriptions) {
+                SubscriptionEditorView()
+            }
         }
         .navigationViewStyle(.stack)
     }
@@ -134,9 +138,6 @@ struct ProfilesView: View {
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .lineLimit(3)
-                    Text("трафик за всё время: ↑ " + Self.size(selectedTraffic.up) + " · ↓ " + Self.size(selectedTraffic.down))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
                 }
                 Spacer(minLength: 0)
                 PowerButton(on: engine.running, busy: engine.bulkRunning) {
@@ -146,25 +147,38 @@ struct ProfilesView: View {
             }
             .padding(.vertical, 6)
 
-            if let fastest, let row = fastestRow, let result = row.result {
-                Button {
-                    Task { await connect(fastest) }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "bolt.horizontal.circle.fill")
-                            .foregroundColor(Theme.accent)
-                        Text("Подключиться к быстрому: " + Self.country(result) + " · " + String(result.millis ?? 0) + " мс")
-                            .font(.footnote.weight(.medium))
-                            .foregroundColor(.primary)
-                        Spacer()
-                        Text(fastest.name)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+            if let fastest, let result = fastestRow?.result {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        Task { await connect(fastest) }
+                    } label: {
+                        HStack {
+                            Image(systemName: "bolt.horizontal.circle.fill")
+                            Text("Подключиться к быстрому")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Theme.accent))
                     }
-                    .padding(.vertical, 4)
+                    .buttonStyle(.plain)
+
+                    HStack(spacing: 6) {
+                        Text(fastest.name)
+                            .font(.caption)
+                            .lineLimit(1)
+                        ProtocolBadge(text: fastest.badge ?? fastest.kind.title)
+                        Spacer()
+                        Text(Self.country(result) + " · " + String(result.millis ?? 0) + " мс")
+                            .font(.caption2.weight(.medium))
+                            .foregroundColor(Theme.pingColor(result.millis))
+                    }
                 }
-                .buttonStyle(.borderless)
+                .padding(.vertical, 2)
             }
 
             if engine.transportOnly {
@@ -226,6 +240,15 @@ struct ProfilesView: View {
     }
 
     private var headerRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            headerButtons
+            Text("трафик за всё время: ↑ " + Self.size(selectedTraffic.up) + " · ↓ " + Self.size(selectedTraffic.down))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var headerButtons: some View {
         HStack(spacing: 8) {
             Text(folder ?? "Все серверы")
             Text(String(visible.count) + "/" + String(aliveCount))
@@ -260,12 +283,9 @@ struct ProfilesView: View {
     private func row(_ profile: Profile) -> some View {
         ServerRow(profile: profile,
                   selected: store.selectedID == profile.id,
-                  active: engine.running && engine.activeProfileID == profile.id,
                   bulk: rowsByID[profile.id],
-                  speed: engine.speed[profile.id],
                   busy: engine.bulkRunning || engine.speedRunning != nil,
-                  onPing: { Task { await engine.check(profile: profile) } },
-                  onSpeed: { Task { await engine.measureSpeed(profile: profile) } })
+                  onPing: { Task { await engine.check(profile: profile) } })
             .contentShape(Rectangle())
             .onTapGesture { store.select(profile.id) }
             .onLongPressGesture { detailsProfile = profile }
@@ -342,6 +362,10 @@ struct ProfilesView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarLeading) {
+            Button("Изм") { showSubscriptions = true }
+                .disabled(store.subscriptions.isEmpty)
+        }
         ToolbarItem(placement: .navigationBarTrailing) {
             Menu {
                 Button {
@@ -558,44 +582,34 @@ struct ProfilesView: View {
     }
 }
 
-/// Строка списка: бейдж протокола, название и плашки «Пинг» и «Скорость».
+/// Строка списка: название, бейдж протокола и плашка «Пинг».
+/// Кружок выбора — по центру слева, чтобы не прыгал на двухстрочных названиях.
 struct ServerRow: View {
     let profile: Profile
     let selected: Bool
-    let active: Bool
     let bulk: DevEngine.BulkRow?
-    let speed: DevEngine.SpeedResult?
     let busy: Bool
     let onPing: () -> Void
-    let onSpeed: () -> Void
 
     private var result: ProbeResult? { bulk?.result }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 17))
+                .font(.system(size: 18))
                 .foregroundColor(selected ? Theme.accent : Color(uiColor: .tertiaryLabel))
-                .padding(.top, 3)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    ProtocolBadge(text: profile.badge ?? profile.kind.title)
-                    if active {
-                        Text("активен")
-                            .font(.caption2)
-                            .foregroundColor(Theme.accent)
-                    }
+                    Text(profile.name)
+                        .font(.subheadline.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
                     if profile.favorite {
                         Image(systemName: "star.fill")
                             .font(.caption2)
                             .foregroundColor(.yellow)
                     }
                 }
-
-                Text(profile.name)
-                    .font(.subheadline.weight(.medium))
-                    .fixedSize(horizontal: false, vertical: true)
 
                 if let note = profile.userNote {
                     Text(note)
@@ -604,24 +618,20 @@ struct ServerRow: View {
                         .lineLimit(1)
                 }
 
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     PlaqueButton(title: "Пинг", icon: "waveform.path.ecg", action: onPing)
-                    PlaqueButton(title: "Скорость", icon: "speedometer", action: onSpeed)
+                    ProtocolBadge(text: profile.badge ?? profile.kind.title)
                     if let result {
                         Text(result.shortSummary)
                             .font(.caption2.weight(.medium))
                             .foregroundColor(result.ok ? Theme.pingColor(result.millis) : .red)
                             .lineLimit(1)
-                    } else if let speed {
-                        Text(String(format: "%.1f Мбит/с", speed.mbps))
-                            .font(.caption2.weight(.medium))
-                            .foregroundColor(.green)
                     }
                     Spacer(minLength: 0)
                 }
                 .disabled(busy)
             }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
     }
 }

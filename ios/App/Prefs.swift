@@ -131,6 +131,19 @@ final class Prefs: ObservableObject {
     @Published var notifyExpiry: Bool {
         didSet { defaults.set(notifyExpiry, forKey: "prefs.notifyExpiry") }
     }
+    /// Что именно дёргаем при пинге: лёгкий адрес без TLS отвечает быстрее.
+    @Published var pingTarget: String {
+        didSet { defaults.set(pingTarget, forKey: "prefs.pingTarget") }
+    }
+    @Published var speedURL: String {
+        didSet { defaults.set(speedURL, forKey: "prefs.speedURL") }
+    }
+    @Published var speedUploadURL: String {
+        didSet { defaults.set(speedUploadURL, forKey: "prefs.speedUploadURL") }
+    }
+    @Published var speedMegabytes: Int {
+        didSet { defaults.set(speedMegabytes, forKey: "prefs.speedMB") }
+    }
 
     init() {
         routingMode = RoutingMode(rawValue: defaults.string(forKey: "prefs.routing") ?? "") ?? .rules
@@ -148,5 +161,10 @@ final class Prefs: ObservableObject {
         tunMTU = storedMTU == 0 ? 9000 : storedMTU
         ipv6 = defaults.object(forKey: "prefs.ipv6") as? Bool ?? true
         notifyExpiry = defaults.object(forKey: "prefs.notifyExpiry") as? Bool ?? true
+        pingTarget = defaults.string(forKey: "prefs.pingTarget") ?? "http://cp.cloudflare.com/generate_204"
+        speedURL = defaults.string(forKey: "prefs.speedURL") ?? "https://speed.cloudflare.com/__down"
+        speedUploadURL = defaults.string(forKey: "prefs.speedUploadURL") ?? "https://speed.cloudflare.com/__up"
+        let storedMB = defaults.integer(forKey: "prefs.speedMB")
+        speedMegabytes = storedMB == 0 ? 10 : storedMB
     }
 }

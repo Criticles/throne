@@ -30,7 +30,9 @@ struct ServerDetailsView: View {
 
     private var speedText: String {
         guard let speed else { return "не измерялась" }
-        return String(format: "%.1f Мбит/с", speed.mbps)
+        let down = String(format: "↓ %.1f", speed.downMbps)
+        let up = speed.upMbps > 0 ? String(format: " · ↑ %.1f", speed.upMbps) : ""
+        return down + up + " Мбит/с"
     }
 
     private var trafficText: String {

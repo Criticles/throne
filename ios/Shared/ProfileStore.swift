@@ -90,6 +90,20 @@ final class ProfileStore: ObservableObject {
         save()
     }
 
+    /// Переименовать подписку — заодно переезжают её серверы (папка = имя подписки).
+    func rename(_ subscription: Subscription, to newName: String) {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != subscription.name else { return }
+        for index in profiles.indices where profiles[index].group == subscription.name {
+            profiles[index].group = name
+        }
+        if let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) {
+            subscriptions[index].name = name
+        }
+        save()
+        status = "подписка переименована: " + name
+    }
+
     func delete(_ profile: Profile) {
         profiles.removeAll { $0.id == profile.id }
         if selectedID == profile.id { selectedID = profiles.first?.id }
@@ -406,7 +420,8 @@ final class ProfileStore: ObservableObject {
         case "vless": return "vless"
         case "hysteria2", "hy2": return "hysteria2"
         case "mieru", "mierus": return "mieru"
-        case "wg", "wireguard", "amneziawg": return "wireguard"
+        case "wg", "wireguard": return "wireguard"
+        case "amneziawg": return "amneziawg"
         case "trojan": return "trojan"
         case "shadowsocks", "ss": return "shadowsocks"
         default: return raw.lowercased()

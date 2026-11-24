@@ -1,15 +1,21 @@
 import SwiftUI
 
-/// Расширенная маршрутизация: записи «правило → outbound» как в Throne на ПК,
-/// плюс тот же план в JSON — можно вставить готовый и выгрузить свой.
+/// Маршрутизация: два вида — упрощённый (четыре списка, как в Throne на ПК) и расширенный
+/// (записи «правило → outbound»). Экспорт и импорт — JSON или ссылка `throne://route`.
 struct AdvancedRouteView: View {
     @EnvironmentObject private var rules: RuleStore
     @EnvironmentObject private var store: ProfileStore
     @Environment(\.presentationMode) private var presentation
 
+    @State private var name = "Маршрут"
     @State private var finalTarget = "proxy"
+    @State private var directList = ""
+    @State private var proxyList = ""
+    @State private var blockList = ""
+    @State private var warpList = ""
     @State private var entries: [RoutePlanEntry] = []
-    @State private var showJSON = false
+    @State private var tab = 0
+    @State private var showTransfer = false
     @State private var message = ""
     @State private var loaded = false
 
@@ -21,78 +27,26 @@ struct AdvancedRouteView: View {
         return list
     }
 
+    private var plan: RoutePlan {
+        RoutePlan(name: name,
+                  finalTarget: finalTarget,
+                  entries: entries,
+                  directList: directList,
+                  proxyList: proxyList,
+                  blockList: blockList,
+                  warpList: warpList)
+    }
+
     var body: some View {
         Form {
-            Section {
-                Picker("Общий outbound", selection: $finalTarget) {
-                    ForEach(targets, id: \.self) { target in
-                        Text(target).tag(target)
-                    }
-                }
-            } header: {
-                Text("Куда всё остальное")
-            } footer: {
-                Text("Сюда идёт трафик, который не поймала ни одна запись. proxy — выбранный сервер, direct — напрямую, reject — блокировать.")
+            commonSection
+            typeSection
+            if tab == 0 {
+                simplifiedSection
+            } else {
+                extendedSection
             }
-
-            Section {
-                ForEach($entries) { $entry in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Picker("Тип", selection: $entry.kind) {
-                            Text("Правило").tag("rule")
-                            Text("Outbound").tag("outbound")
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-
-                        if entry.kind == "rule" {
-                            TextField("geosite:ads, domain:example.com, ip_cidr:10.0.0.0/8", text: $entry.value)
-                                .autocapitalization(.none)
-                                .disableAutocorrection(true)
-                                .font(.system(.footnote, design: .monospaced))
-                        } else {
-                            Picker("Цель", selection: $entry.value) {
-                                ForEach(targets, id: \.self) { target in
-                                    Text(target).tag(target)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                .onDelete { offsets in
-                    entries.remove(atOffsets: offsets)
-                }
-
-                Menu {
-                    Button {
-                        entries.append(RoutePlanEntry(kind: "rule", value: "geosite:"))
-                    } label: {
-                        Label("Правило", systemImage: "line.3.horizontal.decrease")
-                    }
-                    Button {
-                        entries.append(RoutePlanEntry(kind: "outbound", value: "direct"))
-                    } label: {
-                        Label("Outbound", systemImage: "arrow.turn.down.right")
-                    }
-                } label: {
-                    Label("Добавить запись", systemImage: "plus.circle")
-                }
-            } header: {
-                Text("Записи по порядку")
-            } footer: {
-                Text("Срабатывает первая подходящая запись. Формат правила: geosite:ads, geoip:ru, domain:example.com, suffix:example.com, keyword:ads, ip_cidr:10.0.0.0/8.")
-            }
-
-            Section {
-                Button {
-                    showJSON = true
-                } label: {
-                    Label("Открыть JSON", systemImage: "curlybraces")
-                }
-            } footer: {
-                Text(message.isEmpty ? "JSON — тот же план в текстовом виде: можно вставить свой или забрать текущий." : message)
-            }
+            transferSection
         }
         .navigationTitle("Маршрутизация")
         .navigationBarTitleDisplayMode(.inline)
@@ -101,59 +55,193 @@ struct AdvancedRouteView: View {
                 Button("Сохранить") { save() }
             }
         }
-        .sheet(isPresented: $showJSON) {
-            RouteJSONView(plan: RoutePlan(finalTarget: finalTarget, entries: entries)) { plan in
-                finalTarget = plan.finalTarget
-                entries = plan.entries
-                message = "план применён из JSON"
+        .sheet(isPresented: $showTransfer) {
+            RouteTransferView(plan: plan) { imported in
+                apply(imported)
             }
         }
-        .onAppear {
-            guard !loaded else { return }
-            loaded = true
-            finalTarget = rules.plan.finalTarget
-            entries = rules.plan.entries
+        .onAppear(perform: load)
+    }
+
+    private var commonSection: some View {
+        Section {
+            TextField("Название правила", text: $name)
+            Picker("Общий outbound", selection: $finalTarget) {
+                ForEach(targets, id: \.self) { target in
+                    Text(target).tag(target)
+                }
+            }
+        } header: {
+            Text("Основное")
+        } footer: {
+            Text("Сюда идёт всё, что не поймала ни одна запись: proxy — выбранный сервер, direct — напрямую, reject — блокировать.")
         }
+    }
+
+    private var typeSection: some View {
+        Section {
+            Picker("Вид", selection: $tab) {
+                Text("Упрощённая").tag(0)
+                Text("Расширенная").tag(1)
+            }
+            .pickerStyle(.segmented)
+        }
+        .listRowSeparator(.hidden)
+    }
+
+    private var simplifiedSection: some View {
+        Section {
+            domainEditor(title: "Напрямую", text: $directList, hint: "по строке: geosite:ru, domain:example.com")
+            domainEditor(title: "Прокси", text: $proxyList, hint: "что всегда через VPN")
+            domainEditor(title: "Блокировать", text: $blockList, hint: "реклама и трекеры")
+            domainEditor(title: "WARP-bypass", text: $warpList, hint: "сервисы, которым нужен WARP")
+        } header: {
+            Text("Списки")
+        } footer: {
+            Text("По одному правилу в строке. Поддерживается geosite:, geoip:, domain:, suffix:, keyword:, ip_cidr:.")
+        }
+    }
+
+    private var extendedSection: some View {
+        Section {
+            ForEach($entries) { $entry in
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Тип", selection: $entry.kind) {
+                        Text("Правило").tag("rule")
+                        Text("Outbound").tag("outbound")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+
+                    if entry.kind == "rule" {
+                        TextField("geosite:ads, domain:example.com", text: $entry.value)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .font(.system(.footnote, design: .monospaced))
+                    } else {
+                        Picker("Цель", selection: $entry.value) {
+                            ForEach(targets, id: \.self) { target in
+                                Text(target).tag(target)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .onDelete { offsets in
+                entries.remove(atOffsets: offsets)
+            }
+
+            Menu {
+                Button {
+                    entries.append(RoutePlanEntry(kind: "rule", value: "geosite:"))
+                } label: {
+                    Label("Правило", systemImage: "line.3.horizontal.decrease")
+                }
+                Button {
+                    entries.append(RoutePlanEntry(kind: "outbound", value: "direct"))
+                } label: {
+                    Label("Outbound", systemImage: "arrow.turn.down.right")
+                }
+            } label: {
+                Label("Добавить запись", systemImage: "plus.circle")
+            }
+        } header: {
+            Text("Записи по порядку")
+        } footer: {
+            Text("Срабатывает первая подходящая запись — порядок можно менять перетаскиванием в режиме правки.")
+        }
+    }
+
+    private var transferSection: some View {
+        Section {
+            Button {
+                showTransfer = true
+            } label: {
+                Label("Экспорт и импорт", systemImage: "square.and.arrow.up.on.square")
+            }
+        } footer: {
+            Text(message.isEmpty ? "JSON или ссылка throne://route — можно перенести правило между устройствами." : message)
+        }
+    }
+
+    private func domainEditor(title: String, text: Binding<String>, hint: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption.weight(.semibold)).foregroundColor(.secondary)
+            TextEditor(text: text)
+                .frame(height: 76)
+                .font(.system(.caption2, design: .monospaced))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color(uiColor: .separator), lineWidth: 0.5)
+                )
+            Text(hint).font(.caption2).foregroundColor(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func load() {
+        guard !loaded else { return }
+        loaded = true
+        name = rules.plan.name
+        finalTarget = rules.plan.finalTarget
+        directList = rules.plan.directList
+        proxyList = rules.plan.proxyList
+        blockList = rules.plan.blockList
+        warpList = rules.plan.warpList
+        entries = rules.plan.entries
+    }
+
+    private func apply(_ imported: RoutePlan) {
+        name = imported.name
+        finalTarget = imported.finalTarget
+        directList = imported.directList
+        proxyList = imported.proxyList
+        blockList = imported.blockList
+        warpList = imported.warpList
+        entries = imported.entries
+        message = "план импортирован: " + imported.name
     }
 
     private func save() {
-        rules.savePlan(RoutePlan(finalTarget: finalTarget, entries: entries))
-        message = "сохранено: " + String(entries.count) + " записей"
+        rules.savePlan(plan)
+        message = "сохранено: " + name
     }
 }
 
-/// Текстовый редактор плана: вставить готовый JSON или скопировать текущий.
-struct RouteJSONView: View {
+/// Экспорт/импорт плана: JSON и ссылка `throne://route?plan=…`.
+struct RouteTransferView: View {
     @Environment(\.presentationMode) private var presentation
     @State private var text = ""
     @State private var error = ""
 
     let plan: RoutePlan
-    let onApply: (RoutePlan) -> Void
+    let onImport: (RoutePlan) -> Void
 
     var body: some View {
         NavigationView {
             VStack(spacing: 10) {
                 TextEditor(text: $text)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.caption2, design: .monospaced))
                     .padding(8)
                     .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color(uiColor: .secondarySystemBackground)))
                 if !error.isEmpty {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundColor(.red)
+                    Text(error).font(.caption).foregroundColor(.red)
                 }
-                HStack(spacing: 10) {
-                    Button("Сформировать из текущего") { text = Self.encode(plan) }
+                HStack(spacing: 8) {
+                    Button("JSON") { text = Self.encode(plan) }
+                        .buttonStyle(.bordered)
+                    Button("Ссылка") { text = Self.link(plan) }
                         .buttonStyle(.bordered)
                     Spacer()
-                    Button("Применить") { apply() }
+                    Button("Импорт") { importText() }
                         .buttonStyle(.borderedProminent)
                 }
+                .font(.caption)
             }
             .padding()
-            .navigationTitle("JSON плана")
+            .navigationTitle("Экспорт и импорт")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -167,22 +255,18 @@ struct RouteJSONView: View {
                     }
                 }
             }
-            .onAppear {
-                if text.isEmpty { text = Self.encode(plan) }
-            }
+            .onAppear { if text.isEmpty { text = Self.encode(plan) } }
         }
         .navigationViewStyle(.stack)
     }
 
-    private func apply() {
-        guard let data = text.data(using: .utf8),
-              let parsed = try? JSONDecoder().decode(RoutePlan.self, from: data)
-        else {
-            error = "не разобрать JSON: нужны поля finalTarget и entries"
+    private func importText() {
+        guard let parsed = Self.decode(text) else {
+            error = "не разобрать: нужен JSON плана или ссылка throne://route"
             return
         }
         error = ""
-        onApply(parsed)
+        onImport(parsed)
         presentation.wrappedValue.dismiss()
     }
 
@@ -192,5 +276,22 @@ struct RouteJSONView: View {
         guard let data = try? encoder.encode(plan),
               let text = String(data: data, encoding: .utf8) else { return "{}" }
         return text
+    }
+
+    private static func link(_ plan: RoutePlan) -> String {
+        let compact = encode(plan).replacingOccurrences(of: "\n", with: "")
+        let encoded = compact.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? compact
+        return "throne://route?plan=" + encoded
+    }
+
+    private static func decode(_ raw: String) -> RoutePlan? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("throne://"), let components = URLComponents(string: text),
+           let value = components.queryItems?.first(where: { $0.name == "plan" })?.value,
+           let data = value.data(using: .utf8) {
+            return try? JSONDecoder().decode(RoutePlan.self, from: data)
+        }
+        guard let data = text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(RoutePlan.self, from: data)
     }
 }

@@ -7,6 +7,7 @@ struct SettingsView: View {
     @EnvironmentObject private var engine: DevEngine
     @EnvironmentObject private var prefs: Prefs
     @EnvironmentObject private var updater: UpdateChecker
+    @State private var showProtocols = false
 
     var body: some View {
         NavigationView {
@@ -15,6 +16,7 @@ struct SettingsView: View {
                 protocolsSection
                 subscriptionsSection
                 networkSection
+                measurementSection
                 alertsSection
                 journalSection
                 vpnSection
@@ -40,21 +42,13 @@ struct SettingsView: View {
                         .multilineTextAlignment(.trailing)
                 }
             }
-            Stepper(value: $engine.wireturnMTU, in: 1000...1420, step: 20) {
-                HStack {
-                    Text("MTU WireTurn")
-                    Spacer()
-                    Text("\(engine.wireturnMTU)")
-                        .font(.system(.subheadline, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-            }
             HStack {
                 Text("Состояние")
                 Spacer()
-                Text(engine.running ? "подключено" : "выключено")
+                Text(engine.running ? "подключено · " + engine.activeCoreName : "выключено")
                     .font(.caption)
                     .foregroundColor(engine.running ? .green : .secondary)
+                    .multilineTextAlignment(.trailing)
             }
             if engine.running {
                 Button(role: .destructive) {
@@ -74,23 +68,59 @@ struct SettingsView: View {
 
     private var protocolsSection: some View {
         Section {
-            ForEach(ProfileKind.allCases, id: \.self) { kind in
-                Toggle(kind.title, isOn: Binding(
-                    get: { store.allowedKinds.contains(kind) },
-                    set: { isOn in
-                        if isOn {
-                            store.allowedKinds.insert(kind)
-                        } else {
-                            store.allowedKinds.remove(kind)
-                        }
-                    }
-                ))
+            Button {
+                showProtocols = true
+            } label: {
+                HStack {
+                    Text("Протоколы при импорте")
+                    Spacer()
+                    Text(protocolsSummary)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
             }
-        } header: {
-            Text("Протоколы при импорте")
         } footer: {
-            Text("Выключенные протоколы не попадают в список при импорте и обновлении подписки. Уже добавленные серверы остаются — их можно удалить вручную.")
+            Text("Открывается список всех протоколов, которые умеет приложение. Выключенные не попадают в список при импорте и обновлении подписки.")
         }
+        .sheet(isPresented: $showProtocols) { protocolsSheet }
+    }
+
+    private var protocolsSummary: String {
+        let total = ProfileKind.allCases.count
+        let allowed = store.allowedKinds.count
+        return allowed == total ? "все" : String(allowed) + " из " + String(total)
+    }
+
+    private var protocolsSheet: some View {
+        NavigationView {
+            List {
+                Section {
+                    ForEach(ProfileKind.allCases, id: \.self) { kind in
+                        Toggle(kind.title, isOn: Binding(
+                            get: { store.allowedKinds.contains(kind) },
+                            set: { isOn in
+                                if isOn {
+                                    store.allowedKinds.insert(kind)
+                                } else {
+                                    store.allowedKinds.remove(kind)
+                                }
+                            }
+                        ))
+                    }
+                } footer: {
+                    Text("sing-box держит VLESS, Hysteria2, Mieru, WireGuard и AmneziaWG. Xray — VLESS + XHTTP. WireTurn — TURN/SRTP с ключами WireGuard.")
+                }
+            }
+            .navigationTitle("Протоколы")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") { showProtocols = false }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
     }
 
     // MARK: - Подписки
@@ -201,6 +231,43 @@ struct SettingsView: View {
             Text("DNS и туннель")
         } footer: {
             Text("DNS применяется сразу. Стек, MTU и IPv6 включаются в конфиг сборки через Network Extension — в dev-режиме TUN не поднимается.")
+        }
+    }
+
+    // MARK: - Пинг и скорость
+
+    private var measurementSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Адрес для пинга").font(.caption).foregroundColor(.secondary)
+                TextField("http://cp.cloudflare.com/generate_204", text: $prefs.pingTarget)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .font(.system(.footnote, design: .monospaced))
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Скачивание").font(.caption).foregroundColor(.secondary)
+                TextField("https://speed.cloudflare.com/__down", text: $prefs.speedURL)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .font(.system(.footnote, design: .monospaced))
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Отдача").font(.caption).foregroundColor(.secondary)
+                TextField("https://speed.cloudflare.com/__up", text: $prefs.speedUploadURL)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .font(.system(.footnote, design: .monospaced))
+            }
+            Picker("Объём теста", selection: $prefs.speedMegabytes) {
+                Text("5 МБ").tag(5)
+                Text("10 МБ").tag(10)
+                Text("25 МБ").tag(25)
+            }
+        } header: {
+            Text("Пинг и скорость")
+        } footer: {
+            Text("Пинг меряется по этому адресу через Clash API. Скорость — скачивание и отдача файла указанного объёма через выбранный сервер.")
         }
     }
 

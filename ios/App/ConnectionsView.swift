@@ -3,7 +3,9 @@ import SwiftUI
 /// Живые соединения: что куда идёт, через какой сервер и по какому правилу.
 struct ConnectionsView: View {
     @EnvironmentObject private var engine: DevEngine
+    @EnvironmentObject private var rules: RuleStore
     @State private var connections: [ClashApi.Connection] = []
+    @State private var domain = ""
     @State private var refreshed = Date()
 
     private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
@@ -44,6 +46,17 @@ struct ConnectionsView: View {
                     }
                 } header: {
                     Text("Сейчас")
+                }
+
+                Section {
+                    TextField("домен или IP: cdn.example.com, 10.1.2.3", text: $domain)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                    Text(rules.evaluate(domain))
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                } header: {
+                    Text("Какое правило поймает адрес")
                 }
 
                 Section {

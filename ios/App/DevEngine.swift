@@ -27,12 +27,35 @@ final class DevEngine: ObservableObject {
     /// Транспорт Turnable для WireTurn-профилей: sing-box ждёт его на 127.0.0.1:9000.
     static let turnablePort = 9000
 
-    /// Результат замера скорости и профиль, на котором он идёт.
+    /// Результат замера скорости: скачивание и отдача.
     struct SpeedResult {
-        var mbps: Double
+        var downMbps: Double
+        var upMbps: Double
         var bytes: Int64
         var seconds: Double
     }
+
+    /// Цель пинга и параметры теста скорости берём из настроек.
+    static var pingTarget: String {
+        UserDefaults.standard.string(forKey: "prefs.pingTarget") ?? "http://cp.cloudflare.com/generate_204"
+    }
+
+    static var speedDownloadURL: String {
+        UserDefaults.standard.string(forKey: "prefs.speedURL") ?? "https://speed.cloudflare.com/__down"
+    }
+
+    static var speedUploadURL: String {
+        UserDefaults.standard.string(forKey: "prefs.speedUploadURL") ?? "https://speed.cloudflare.com/__up"
+    }
+
+    static var speedMegabytes: Int {
+        let stored = UserDefaults.standard.integer(forKey: "prefs.speedMB")
+        return stored == 0 ? 10 : stored
+    }
+
+    /// Какое ядро сейчас работает — показываем в состоянии.
+    @Published private(set) var activeCoreName = "—"
+
     @Published private(set) var speed: [UUID: SpeedResult] = [:]
     @Published private(set) var speedRunning: UUID?
 
@@ -54,7 +77,7 @@ final class DevEngine: ObservableObject {
     }
 
     /// Профили, которые sing-box умеет держать в одном конфиге.
-    static let singboxKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .wireguard]
+    static let singboxKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .wireguard, .amneziawg]
 
     /// Запуск профиля. `pool` — остальные серверы: они добавляются в тот же конфиг,
     /// чтобы пинги не требовали перезапуска ядра.
@@ -111,6 +134,7 @@ final class DevEngine: ObservableObject {
             lastError = nil
             activeName = profile.name
             activeProfileID = profile.id
+            activeCoreName = "sing-box"
             append("старт: \(profile.name) [\(profile.kind.title)] → локально \(socksAddress)")
             if let note = profile.note {
                 append("внимание: \(note)")
@@ -150,6 +174,8 @@ final class DevEngine: ObservableObject {
             lastError = nil
             activeName = profile.name
             activeProfileID = profile.id
+            activeCoreName = "Xray"
+            append("ядро: Xray (VLESS + XHTTP)")
             append("xray: запущен, socks 127.0.0.1:\(XrayConfig.socksPort)")
             append("старт: \(profile.name) [\(profile.kind.title)] → локально 127.0.0.1:\(XrayConfig.socksPort)")
         } catch {
@@ -167,6 +193,7 @@ final class DevEngine: ObservableObject {
                                listen: "127.0.0.1:\(Self.turnablePort)")
             transportOnly = true
             activeName = profile.name
+            activeCoreName = "WireTurn (транспорт)"
             running = false
             lastError = nil
             append("turnable: транспорт поднят на 127.0.0.1:\(Self.turnablePort)")
@@ -183,6 +210,7 @@ final class DevEngine: ObservableObject {
         transportOnly = false
         activeProfileID = nil
         liveTags = [:]
+        activeCoreName = "—"
         turnable.stop()
         if LibboxXrayIsRunning() {
             var error: NSError?
@@ -307,24 +335,21 @@ final class DevEngine: ObservableObject {
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
 
-        let target = "https://www.cloudflare.com/cdn-cgi/trace"
+        let target = Self.pingTarget
         let available = targets.filter { liveTags[$0.id] != nil }
-        var index = 0
-        while index < available.count {
-            let chunk = Array(available[index..<min(index + 8, available.count)])
-            await withTaskGroup(of: (UUID, Int?).self) { group in
-                for profile in chunk {
-                    let tag = liveTags[profile.id] ?? ""
-                    group.addTask { (profile.id, await ClashApi.delay(tag: tag, url: target)) }
-                }
-                for await (id, millis) in group {
-                    guard let row = bulk.firstIndex(where: { $0.id == id }) else { continue }
-                    bulk[row].result = ProbeResult(ok: millis != nil, millis: millis,
-                                                   error: millis == nil ? "нет ответа через туннель" : nil)
-                    bulk[row].done = true
-                }
+        // Запускаем ВСЕ замеры разом: Clash API сам решает, кого ждать, а результат
+        // появляется у всех серверов почти одновременно — как в настольном Throne.
+        await withTaskGroup(of: (UUID, Int?).self) { group in
+            for profile in available {
+                let tag = liveTags[profile.id] ?? ""
+                group.addTask { (profile.id, await ClashApi.delay(tag: tag, url: target)) }
             }
-            index += 8
+            for await (id, millis) in group {
+                guard let row = bulk.firstIndex(where: { $0.id == id }) else { continue }
+                bulk[row].result = ProbeResult(ok: millis != nil, millis: millis,
+                                               error: millis == nil ? "нет ответа через туннель" : nil)
+                bulk[row].done = true
+            }
         }
         append("параллельный пинг: \(available.count) серверов")
         return rest
@@ -369,9 +394,10 @@ final class DevEngine: ObservableObject {
         }
     }
 
-    /// Замер скорости: честный тест — качаем файл через этот сервер.
-    /// Он поднимает именно выбранный профиль, поэтому активное соединение на время теста рвётся.
-    func measureSpeed(profile: Profile, megabytes: Int = 10) async {
+    /// Замер скорости: скачиваем и отправляем файл через этот сервер.
+    /// Это честный тест трафика, поэтому он поднимает именно выбранный профиль,
+    /// и активное соединение на время замера прерывается.
+    func measureSpeed(profile: Profile) async {
         guard speedRunning == nil else { return }
         speedRunning = profile.id
         defer { speedRunning = nil }
@@ -382,30 +408,67 @@ final class DevEngine: ObservableObject {
             return
         }
         let port = proxyPort
-        if let result = await Self.download(bytes: megabytes * 1_000_000, port: port) {
-            speed[profile.id] = result
-            append("скорость: \(profile.name) → \(String(format: "%.1f", result.mbps)) Мбит/с")
-        } else {
-            append("скорость: \(profile.name) → не удалось скачать тестовый файл")
+        let megabytes = Self.speedMegabytes
+
+        guard let download = await Self.download(megabytes: megabytes, port: port) else {
+            append("скорость: \(profile.name) → скачивание не удалось")
+            if !wasActive { stop() }
+            return
         }
+        let upload = await Self.upload(megabytes: max(megabytes / 2, 1), port: port)
+        speed[profile.id] = SpeedResult(downMbps: download.mbps,
+                                        upMbps: upload?.mbps ?? 0,
+                                        bytes: download.bytes + (upload?.bytes ?? 0),
+                                        seconds: download.seconds + (upload?.seconds ?? 0))
+        let down = String(format: "%.1f", download.mbps)
+        let up = upload.map { String(format: "%.1f", $0.mbps) } ?? "—"
+        append("скорость: \(profile.name) → ↓ \(down) Мбит/с · ↑ \(up) Мбит/с")
         if !wasActive { stop() }
     }
 
-    /// Скачивание тестового файла через локальный прокси: считаем по фактическим байтам.
-    private static func download(bytes: Int, port: Int) async -> SpeedResult? {
-        guard let url = URL(string: "https://speed.cloudflare.com/__down?bytes=\(bytes)") else { return nil }
+    private struct Leg {
+        let mbps: Double
+        let bytes: Int64
+        let seconds: Double
+    }
+
+    private static func proxySession(port: Int) -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 90
+        configuration.timeoutIntervalForRequest = 120
         configuration.connectionProxyDictionary = [
             "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": port,
             "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": port,
         ]
-        let session = URLSession(configuration: configuration)
+        return URLSession(configuration: configuration)
+    }
+
+    static func download(megabytes: Int, port: Int) async -> Leg? {
+        let bytes = megabytes * 1_000_000
+        guard let url = URL(string: speedDownloadURL + "?bytes=" + String(bytes)) else { return nil }
+        let session = proxySession(port: port)
         let clock = Date()
         guard let (data, _) = try? await session.data(from: url), !data.isEmpty else { return nil }
         let seconds = max(Date().timeIntervalSince(clock), 0.001)
-        let mbps = Double(data.count) * 8 / seconds / 1_000_000
-        return SpeedResult(mbps: mbps, bytes: Int64(data.count), seconds: seconds)
+        return Leg(mbps: Double(data.count) * 8 / seconds / 1_000_000,
+                   bytes: Int64(data.count),
+                   seconds: seconds)
+    }
+
+    static func upload(megabytes: Int, port: Int) async -> Leg? {
+        guard let url = URL(string: speedUploadURL) else { return nil }
+        let session = proxySession(port: port)
+        let payload = Data(count: megabytes * 1_000_000)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let clock = Date()
+        guard let (_, response) = try? await session.upload(for: request, from: payload) else { return nil }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status < 400 else { return nil }
+        let seconds = max(Date().timeIntervalSince(clock), 0.001)
+        return Leg(mbps: Double(payload.count) * 8 / seconds / 1_000_000,
+                   bytes: Int64(payload.count),
+                   seconds: seconds)
     }
 
     /// Проверка одного профиля из списка: старт → IP/страна/пинг → стоп.

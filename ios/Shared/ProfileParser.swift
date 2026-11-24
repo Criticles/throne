@@ -98,7 +98,10 @@ enum ProfileParser {
         }
         if lower.hasPrefix("amneziawg://") || lower.hasPrefix("wg://") {
             guard let parsed = WireGuardConfig.parse(link) else { return nil }
-            return Profile(name: parsed.name, kind: .wireguard, payload: link, note: parsed.note)
+            // AmneziaWG и обычный WireGuard — разные протоколы, пользователь их различает.
+            let kind: ProfileKind = parsed.amnezia == nil ? .wireguard : .amneziawg
+            return Profile(name: parsed.name, kind: kind, payload: link, note: parsed.note,
+                           badge: kind == .amneziawg ? "AmneziaWG" : "WireGuard")
         }
         return nil
     }

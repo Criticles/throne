@@ -44,7 +44,7 @@ enum ConfigBuilder {
                 throw BuildError.badPayload("mierus://")
             }
             config = try directConfig(outbound: mieruOutbound(link))
-        case .wireguard:
+        case .wireguard, .amneziawg:
             // Форк Трона умеет AmneziaWG нативно: endpoint wireguard + вложенный amnezia_wg.
             guard let wg = WireGuardConfig.parse(profile.payload) else {
                 throw BuildError.badPayload(profile.payload.lowercased().hasPrefix("amneziawg://")
@@ -112,7 +112,7 @@ enum ConfigBuilder {
                 var outbound = mieruOutbound(link)
                 outbound["tag"] = tag
                 outbounds.append(outbound)
-            case .wireguard:
+            case .wireguard, .amneziawg:
                 guard let wg = WireGuardConfig.parse(profile.payload) else { continue }
                 endpoints.append(wireguardEndpoint(
                     tag: tag,

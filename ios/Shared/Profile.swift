@@ -6,6 +6,7 @@ enum ProfileKind: String, Codable, CaseIterable {
     case hysteria2
     case mieru
     case wireguard
+    case amneziawg
     case wireturn
     case turnable
     case custom
@@ -16,7 +17,8 @@ enum ProfileKind: String, Codable, CaseIterable {
         case .xray: return "VLESS XHTTP (Xray)"
         case .hysteria2: return "Hysteria2"
         case .mieru: return "Mieru"
-        case .wireguard: return "WireGuard / AWG"
+        case .wireguard: return "WireGuard"
+        case .amneziawg: return "AmneziaWG"
         case .wireturn: return "WireTurn"
         case .turnable: return "Turnable"
         case .custom: return "JSON подписки"

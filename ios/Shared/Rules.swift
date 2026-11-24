@@ -113,8 +113,14 @@ struct RoutePlanEntry: Codable, Identifiable, Hashable {
 /// План маршрутизации: что делать по умолчанию и список записей по порядку.
 /// Формат совпадает с тем, что понимает сборка через Network Extension.
 struct RoutePlan: Codable {
+    var name = "Маршрут"
     var finalTarget = "proxy"
     var entries: [RoutePlanEntry] = []
+    /// Упрощённый вид: четыре списка доменов, как в Throne на ПК.
+    var directList = ""
+    var proxyList = ""
+    var blockList = ""
+    var warpList = ""
 }
 
 /// Скачанный список: geoip.dat / geosite.dat.
