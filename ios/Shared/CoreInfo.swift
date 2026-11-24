@@ -14,14 +14,14 @@ enum CoreInfo {
     static let singboxBranch = "wip/1.15.0-alpha.13-resync"
     static let xrayRepo = "throneproj/xray-core"
     static let wireturn = "Turnable v0.8.7 + WireGuard"
+    static let turnableVersion = "v0.8.7"
 
     /// Версия sing-box берётся из самого фреймворка, остальное — пины из CI.
     static var lines: [CoreLine] {
         [
-            CoreLine(id: "singbox", title: "sing-box", value: LibboxVersion()),
-            CoreLine(id: "fork", title: "форк", value: singboxRepo + " · " + singboxBranch),
-            CoreLine(id: "xray", title: "Xray", value: "VLESS + XHTTP · " + xrayRepo),
-            CoreLine(id: "wireturn", title: "WireTurn", value: wireturn),
+            CoreLine(id: "singbox", title: "sing-box", value: "throneproj/sing-box"),
+            CoreLine(id: "xray", title: "Xray", value: "throneproj/xray"),
+            CoreLine(id: "turnable", title: "WireTurn", value: "Turnable"),
         ]
     }
 }

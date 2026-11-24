@@ -83,6 +83,13 @@ final class ProfileStore: ObservableObject {
         }
     }
 
+    func moveSubscription(from source: IndexSet, to destination: Int) {
+        subscriptions.move(fromOffsets: source, toOffset: destination)
+        if let data = try? JSONEncoder().encode(subscriptions) {
+            defaults.set(data, forKey: subscriptionsKey)
+        }
+    }
+
     func setAutoUpdate(_ enabled: Bool, intervalHours: Int, for subscription: Subscription) {
         guard let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) else { return }
         subscriptions[index].autoUpdate = enabled

@@ -40,8 +40,15 @@ final class DevEngine: ObservableObject {
         UserDefaults.standard.string(forKey: "prefs.pingTarget") ?? "http://cp.cloudflare.com/generate_204"
     }
 
-    static var speedDownloadURL: String {
-        UserDefaults.standard.string(forKey: "prefs.speedURL") ?? "https://speed.cloudflare.com/__down"
+    /// Зеркала для теста скорости: берём первое, которое ответило.
+    /// Cloudflare в России часто недоступен, поэтому TELE2 идёт первым.
+    static var speedMirrors: [String] {
+        let custom = UserDefaults.standard.string(forKey: "prefs.speedURL") ?? ""
+        var list: [String] = []
+        if !custom.isEmpty { list.append(custom) }
+        list.append("http://speedtest.tele2.net/10MB.zip")
+        list.append("https://speed.cloudflare.com/__down")
+        return list
     }
 
     static var speedUploadURL: String {
@@ -55,6 +62,15 @@ final class DevEngine: ObservableObject {
 
     /// Какое ядро сейчас работает — показываем в состоянии.
     @Published private(set) var activeCoreName = "—"
+    /// Идёт серия проверок: интерфейс не должен показывать каждый проверяемый сервер как активный.
+    @Published private(set) var probing = false
+    /// Когда поднялось текущее соединение — для «сколько сервер активен».
+    @Published private(set) var connectedSince: Date?
+    /// Сколько активный сервер держится (секунды), для карточки подключения.
+    var uptime: Int {
+        guard let connectedSince else { return 0 }
+        return Int(Date().timeIntervalSince(connectedSince))
+    }
 
     @Published private(set) var speed: [UUID: SpeedResult] = [:]
     @Published private(set) var speedRunning: UUID?
@@ -132,7 +148,10 @@ final class DevEngine: ObservableObject {
             try server.startOrReloadService(config, options: LibboxOverrideOptions())
             running = true
             lastError = nil
-            activeName = profile.name
+            if !probing {
+                activeName = profile.name
+                connectedSince = Date()
+            }
             activeProfileID = profile.id
             activeCoreName = "sing-box"
             append("старт: \(profile.name) [\(profile.kind.title)] → локально \(socksAddress)")
@@ -211,6 +230,7 @@ final class DevEngine: ObservableObject {
         activeProfileID = nil
         liveTags = [:]
         activeCoreName = "—"
+        connectedSince = nil
         turnable.stop()
         if LibboxXrayIsRunning() {
             var error: NSError?
@@ -292,7 +312,8 @@ final class DevEngine: ObservableObject {
     func checkAll(profiles: [Profile]) async {
         guard !bulkRunning, !profiles.isEmpty else { return }
         bulkRunning = true
-        defer { bulkRunning = false }
+        probing = true
+        defer { bulkRunning = false; probing = false }
         bulk = profiles.map { BulkRow(id: $0.id, name: $0.name, badge: $0.badge ?? $0.kind.title) }
 
         let rest = await measure(profiles)
@@ -442,16 +463,22 @@ final class DevEngine: ObservableObject {
         return URLSession(configuration: configuration)
     }
 
+    /// Скачивание: пробуем зеркала по очереди, пока одно не ответит.
     private static func download(megabytes: Int, port: Int) async -> Leg? {
         let bytes = megabytes * 1_000_000
-        guard let url = URL(string: speedDownloadURL + "?bytes=" + String(bytes)) else { return nil }
         let session = proxySession(port: port)
-        let clock = Date()
-        guard let (data, _) = try? await session.data(from: url), !data.isEmpty else { return nil }
-        let seconds = max(Date().timeIntervalSince(clock), 0.001)
-        return Leg(mbps: Double(data.count) * 8 / seconds / 1_000_000,
-                   bytes: Int64(data.count),
-                   seconds: seconds)
+        for mirror in speedMirrors {
+            let candidate = mirror.contains("%d") ? mirror.replacingOccurrences(of: "%d", with: String(bytes))
+                : mirror + (mirror.contains("?") ? "&" : "?") + "bytes=" + String(bytes)
+            guard let url = URL(string: candidate) else { continue }
+            let clock = Date()
+            guard let (data, _) = try? await session.data(from: url), data.count > 100_000 else { continue }
+            let seconds = max(Date().timeIntervalSince(clock), 0.001)
+            return Leg(mbps: Double(data.count) * 8 / seconds / 1_000_000,
+                       bytes: Int64(data.count),
+                       seconds: seconds)
+        }
+        return nil
     }
 
     private static func upload(megabytes: Int, port: Int) async -> Leg? {

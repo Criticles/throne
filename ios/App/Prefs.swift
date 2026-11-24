@@ -5,23 +5,23 @@ import SwiftUI
 @MainActor
 final class Prefs: ObservableObject {
     enum RoutingMode: String, CaseIterable, Identifiable {
-        case rules, global, direct
+        case rules, bypassRU, global
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .rules: return "По правилам"
+            case .bypassRU: return "Кроме России"
             case .global: return "Всё в VPN"
-            case .direct: return "Напрямую"
             }
         }
 
         var hint: String {
             switch self {
-            case .rules: return "Локальная сеть и российские адреса идут мимо туннеля, остальное — через сервер."
+            case .rules: return "Как настроено в «Маршрутизации»."
+            case .bypassRU: return "Российские адреса идут напрямую, остальное — через сервер."
             case .global: return "Весь трафик идёт через выбранный сервер."
-            case .direct: return "Туннель поднят, но трафик идёт как обычно — чтобы сравнить."
             }
         }
     }

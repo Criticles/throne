@@ -59,8 +59,6 @@ struct SettingsView: View {
             }
         } header: {
             Text("Ядра")
-        } footer: {
-            Text("sing-box и Xray взяты из Throne (throneproj). Xray отвечает за VLESS + XHTTP — sing-box этот транспорт не умеет.")
         }
     }
 
@@ -170,12 +168,6 @@ struct SettingsView: View {
                             .font(.caption2)
                             .foregroundColor(Self.expiryColor(subscription))
                     }
-                    Toggle("Автообновление каждые \(subscription.intervalHours) ч",
-                           isOn: Binding(
-                            get: { subscription.autoUpdate },
-                            set: { on in store.setAutoUpdate(on, intervalHours: subscription.intervalHours, for: subscription) }
-                           ))
-                        .font(.caption)
                 }
                 .padding(.vertical, 2)
                 .contextMenu {
@@ -314,11 +306,6 @@ struct SettingsView: View {
             } label: {
                 Label("Журнал", systemImage: "text.alignleft")
             }
-            NavigationLink {
-                StatsView()
-            } label: {
-                Label("Статистика и правила", systemImage: "chart.bar")
-            }
         } footer: {
             Text("В журнале — импорт и логи ядра, там же экспорт в txt. В статистике — сколько серверов отвечает, кто быстрее и по какому правилу пойдёт домен.")
         }
@@ -367,6 +354,11 @@ struct SettingsView: View {
                 Link(destination: release.url) {
                     Label("Скачать " + release.version, systemImage: "square.and.arrow.down")
                 }
+            }
+            NavigationLink {
+                CoreUpdatesView()
+            } label: {
+                Label("Проверка обновлений ядер", systemImage: "arrow.triangle.2.circlepath")
             }
             Link(destination: URL(string: "https://github.com/Criticles/throne")!) {
                 Label("Исходники на GitHub", systemImage: "chevron.left.forwardslash.chevron.right")

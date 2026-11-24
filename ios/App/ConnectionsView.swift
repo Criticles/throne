@@ -84,8 +84,6 @@ struct ConnectionsView: View {
                     }
                 } header: {
                     Text("Соединения")
-                } footer: {
-                    Text("Данные из Clash API ядра: хост, цепочка outbound, сработавшее правило и объём.")
                 }
             }
             .listStyle(.insetGrouped)
