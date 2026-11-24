@@ -19,7 +19,28 @@ struct StatsView: View {
     private var alive: [DevEngine.BulkRow] { engine.bulk.filter { $0.result?.ok == true } }
 
     private var fastest: DevEngine.BulkRow? {
-        alive.filter { $0.result?.millis != nil }.min { ($0.result?.millis ?? Int.max) < ($1.result?.millis ?? Int.max) }
+        var best: DevEngine.BulkRow?
+        var bestMillis = Int.max
+        for item in alive {
+            guard let millis = item.result?.millis else { continue }
+            if millis < bestMillis {
+                bestMillis = millis
+                best = item
+            }
+        }
+        return best
+    }
+
+    /// Отсортированные по задержке строки: считаем один раз, а не внутри ForEach.
+    private var sortedAlive: [DevEngine.BulkRow] {
+        var items: [DevEngine.BulkRow] = []
+        for item in alive { items.append(item) }
+        items.sort { left, right in
+            let a = left.result?.millis ?? Int.max
+            let b = right.result?.millis ?? Int.max
+            return a < b
+        }
+        return items
     }
 
     var body: some View {
@@ -41,7 +62,7 @@ struct StatsView: View {
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
-                ForEach(alive.sorted { ($0.result?.millis ?? Int.max) < ($1.result?.millis ?? Int.max) }) { item in
+                ForEach(sortedAlive) { item in
                     HStack {
                         Text(item.name).font(.subheadline).lineLimit(1)
                         Spacer()
