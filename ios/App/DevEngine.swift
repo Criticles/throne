@@ -96,6 +96,8 @@ final class DevEngine: ObservableObject {
     /// Пинг одного сервера из строки списка. Идёт тем же путём, что и серия проверок:
     /// у endpoint-профилей свои таймауты, повторы и цель без DNS — а не «12 секунд на всё».
     func runCheck(profile: Profile) {
+        // Серия уже идёт — не рвём её одиночным пингом: строка и так будет измерена ею.
+        guard !bulkRunning else { return }
         measurementTask?.cancel()
         if !bulk.contains(where: { $0.id == profile.id }) {
             bulk.append(BulkRow(id: profile.id, name: profile.name,
