@@ -20,9 +20,9 @@ struct RoutingView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Маршрут")
-            .sheet(isPresented: $showGeoSheet) { geoSheet }
         }
         .navigationViewStyle(.stack)
+        .sheet(isPresented: $showGeoSheet) { geoSheet }
     }
 
     private var advancedSection: some View {

@@ -26,6 +26,9 @@ struct SettingsView: View {
             .navigationTitle("Настройки")
         }
         .navigationViewStyle(.stack)
+        // Лист висит на корне: у `.sheet`, приклеенного к Section внутри List, первый показ
+        // закрывается сам — Section пересоздаётся вместе с модификатором.
+        .sheet(isPresented: $showProtocols) { protocolsSheet }
     }
 
     // MARK: - Ядро
@@ -81,7 +84,6 @@ struct SettingsView: View {
         } footer: {
             Text("Открывается список всех протоколов, которые умеет приложение. Выключенные не попадают в список при импорте и обновлении подписки.")
         }
-        .sheet(isPresented: $showProtocols) { protocolsSheet }
     }
 
     /// Подписка с самым близким сроком окончания.
