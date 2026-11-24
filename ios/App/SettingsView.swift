@@ -336,6 +336,13 @@ struct SettingsView: View {
                 Spacer()
                 Text(Self.appVersion).foregroundColor(.secondary)
             }
+            // Метка сборки: без неё по присланному логу нельзя понять, какая версия на телефоне,
+            // и одинаковые симптомы в старой и новой сборке выглядят как «не исправили».
+            HStack {
+                Text("Сборка")
+                Spacer()
+                Text(Self.buildStamp).foregroundColor(.secondary)
+            }
             HStack {
                 Text("Обновление")
                 Spacer()
@@ -402,5 +409,10 @@ struct SettingsView: View {
         let short = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return short + " (" + build + ")"
+    }
+
+    /// Коммит, из которого собрано приложение (CI пишет его в Info.plist).
+    private static var buildStamp: String {
+        (Bundle.main.infoDictionary?["ThroneBuild"] as? String) ?? "локальная"
     }
 }

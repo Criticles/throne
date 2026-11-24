@@ -106,6 +106,8 @@ final class DevEngine: ObservableObject {
         cancelRequested = true
         measurementTask?.cancel()
         measurementTask = nil
+        // Обрыв самой загрузки: без этого файл на 10 МБ доезжает до конца.
+        Self.abortSpeedSession()
         bulkRunning = false
         speedRunning = nil
         probing = false
@@ -477,12 +479,18 @@ final class DevEngine: ObservableObject {
             // не повторяет — первая попытка честно падает по таймауту. Вторая идёт уже по
             // поднятому туннелю, поэтому дедлайн здесь шире, чем у остальных.
             let endpointKind = ConfigBuilder.isEndpointProfile(profile)
+            // Endpoint-профилям (WireGuard, WARP, AWG) шлём IP-литерал: домен резолвил бы их
+            // собственный резолвер, а он на сетях с фильтрацией отдаёт чужой адрес.
             let deadline = Date().addingTimeInterval(transport ? 40 : (endpointKind ? 26 : 12))
-            var result = await Probe.timed(port: proxyPort, timeout: transport ? 20 : (endpointKind ? 8 : 12))
+            var result = await Probe.timed(port: proxyPort, timeout: transport ? 20 : (endpointKind ? 8 : 12),
+                                           addressOnly: endpointKind)
                 ?? ProbeResult(ok: false, error: "таймаут проверки")
             while !result.ok, Date() < deadline {
+                // Отмену проверяем на каждом круге: снятая задача не должна доедать дедлайн.
+                if cancelRequested || Task.isCancelled { break }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                result = await Probe.timed(port: proxyPort, timeout: 8) ?? result
+                if cancelRequested || Task.isCancelled { break }
+                result = await Probe.timed(port: proxyPort, timeout: 8, addressOnly: endpointKind) ?? result
             }
             bulk[index].result = result
             bulk[index].done = true
@@ -497,7 +505,9 @@ final class DevEngine: ObservableObject {
     func probeActive(profile: Profile) async {
         guard running, !transportOnly else { return }
         let port = proxyPort
-        let result = await Probe.timed(port: port, timeout: 12)
+        // Для endpoint-профилей — по IP-литералу, без DNS (см. Probe.addressOnly).
+        let result = await Probe.timed(port: port, timeout: 12,
+                                       addressOnly: ConfigBuilder.isEndpointProfile(profile))
             ?? ProbeResult(ok: false, error: "нет ответа")
         if let index = bulk.firstIndex(where: { $0.id == profile.id }) {
             bulk[index].result = result
@@ -556,7 +566,26 @@ final class DevEngine: ObservableObject {
             "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": port,
             "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": port,
         ]
-        return URLSession(configuration: configuration)
+        let session = URLSession(configuration: configuration)
+        // Держим текущую сессию, чтобы отмена могла её оборвать: снятие Task не прерывает
+        // уже начатую загрузку на 10 МБ — она доедет до конца (до 120 с), и кнопка
+        // «отмена» выглядит неработающей.
+        speedSessionLock.lock()
+        speedSession?.invalidateAndCancel()
+        speedSession = session
+        speedSessionLock.unlock()
+        return session
+    }
+
+    private static var speedSession: URLSession?
+    private static let speedSessionLock = NSLock()
+
+    /// Оборвать текущий замер скорости, если он идёт.
+    static func abortSpeedSession() {
+        speedSessionLock.lock()
+        speedSession?.invalidateAndCancel()
+        speedSession = nil
+        speedSessionLock.unlock()
     }
 
     /// Скачивание: пробуем зеркала по очереди, пока одно не ответит.

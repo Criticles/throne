@@ -179,6 +179,16 @@ jobs:
           rm -rf build/Payload build/Throne-unsigned.ipa
           mkdir -p build/Payload
           cp -R build/dd/Build/Products/Release-iphoneos/Throne.app build/Payload/
+          # Метка сборки: по ней в «Настройках» (и в присланном логе) видно, какой коммит
+          # стоит на телефоне. Без неё одинаковые симптомы в старой и новой сборке выглядят
+          # как «не исправили», и разбор начинается заново.
+          SHA="$(git rev-parse --short HEAD)"
+          for PLIST in build/Payload/Throne.app/Info.plist \
+                       build/Payload/Throne.app/PlugIns/PacketTunnel.appex/Info.plist; do
+            [ -f "$PLIST" ] || continue
+            /usr/libexec/PlistBuddy -c "Delete :ThroneBuild" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :ThroneBuild string $SHA" "$PLIST"
+          done
           (cd build && zip -qry Throne-unsigned.ipa Payload)
           ls -lh build/Throne-unsigned.ipa
 

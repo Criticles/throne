@@ -69,10 +69,16 @@ struct ProbeResult {
 enum Probe {
     /// Основной источник — Cloudflare trace: отдаёт `ip=` и `loc=`, живёт на CDN,
     /// не отвечает 502 и не требует ключей. ipinfo/ip-api — только резерв.
-    static func viaProxy(port: Int) async -> ProbeResult {
-        if var result = await trace(port: port) {
+    ///
+    /// `addressOnly` — ходить по IP-литералу `https://1.1.1.1/cdn-cgi/trace`, вообще без DNS.
+    /// Нужно для WireGuard: там домен обязан резолвить сам клиент, а системный резолвер на
+    /// сетях с фильтрацией отдаёт подменённые адреса (www.cloudflare.com → 198.20.0.6,
+    /// адрес чужой сети), и TCP уходит в никуда. С IP-литералом резолвер выключен из схемы,
+    /// а Cloudflare отдаёт на нём тот же `ip=`/`loc=`.
+    static func viaProxy(port: Int, addressOnly: Bool = false) async -> ProbeResult {
+        if var result = await trace(port: port, addressOnly: addressOnly) {
             // Замер задержки — отдельно: у trace время включает TLS и работу CDN.
-            result.millis = await ping(port: port) ?? result.millis
+            result.millis = await ping(port: port, addressOnly: addressOnly) ?? result.millis
             return result
         }
 
@@ -83,14 +89,19 @@ enum Probe {
             if reserve.ok { result = reserve }
         }
         // Время этих сервисов — их собственная обработка; задержку меряем отдельно.
-        result.millis = await ping(port: port) ?? result.millis
+        result.millis = await ping(port: port, addressOnly: addressOnly) ?? result.millis
         return result
+    }
+
+    /// Цель проверки: домен (через DNS) или адрес (без DNS вообще).
+    static func target(addressOnly: Bool) -> URL? {
+        URL(string: addressOnly ? "https://1.1.1.1/cdn-cgi/trace" : "https://www.cloudflare.com/cdn-cgi/trace")
     }
 
     // MARK: - Cloudflare trace
 
-    private static func trace(port: Int) async -> ProbeResult? {
-        guard let url = URL(string: "https://www.cloudflare.com/cdn-cgi/trace") else { return nil }
+    private static func trace(port: Int, addressOnly: Bool = false) async -> ProbeResult? {
+        guard let url = target(addressOnly: addressOnly) else { return nil }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 12
         configuration.connectionProxyDictionary = proxySettings(port: port)
@@ -127,9 +138,9 @@ enum Probe {
 
     /// Проба с потолком по времени: если профиль мёртв (хендшейк не отвечает),
     /// резервные сервисы внутри тянутся десятками секунд — очередь этого ждать не должна.
-    static func timed(port: Int, timeout: Double) async -> ProbeResult? {
+    static func timed(port: Int, timeout: Double, addressOnly: Bool = false) async -> ProbeResult? {
         await withTaskGroup(of: ProbeResult?.self) { group in
-            group.addTask { await viaProxy(port: port) }
+            group.addTask { await viaProxy(port: port, addressOnly: addressOnly) }
             group.addTask {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 return nil
@@ -147,8 +158,8 @@ enum Probe {
     /// при реальных ~200. Поэтому сначала прогрев (он и поднимает туннель), а потом
     /// несколько запросов по уже открытому keep-alive соединению: их время и есть
     /// один RTT. Показываем минимум из проб — без случайных всплесков.
-    static func ping(port: Int) async -> Int? {
-        guard let url = URL(string: "https://www.cloudflare.com/cdn-cgi/trace") else { return nil }
+    static func ping(port: Int, addressOnly: Bool = false) async -> Int? {
+        guard let url = target(addressOnly: addressOnly) else { return nil }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 10
         // Одно соединение на хост: иначе URLSession откроет второе и мы снова
