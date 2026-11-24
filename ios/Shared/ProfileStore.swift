@@ -43,9 +43,17 @@ final class ProfileStore: ObservableObject {
 
     /// Папки для переключателя сверху: реальные подписки + «Вручную».
     var folders: [String] {
-        var names = Set<String>()
-        for profile in profiles { names.insert(profile.group ?? Self.manualFolder) }
-        return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        // Сначала подписки (даже если серверов ещё нет — вкладка должна появиться),
+        // потом папки, которые есть только у профилей.
+        var names: [String] = []
+        for subscription in subscriptions where !names.contains(subscription.name) {
+            names.append(subscription.name)
+        }
+        for profile in profiles {
+            let name = profile.group ?? Self.manualFolder
+            if !names.contains(name) { names.append(name) }
+        }
+        return names
     }
 
     func count(in folder: String) -> Int {

@@ -64,6 +64,14 @@ final class DevEngine: ObservableObject {
     @Published private(set) var activeCoreName = "—"
     /// Идёт серия проверок: интерфейс не должен показывать каждый проверяемый сервер как активный.
     @Published private(set) var probing = false
+    /// Просьба остановить серию проверок или тестов скорости.
+    private var cancelRequested = false
+
+    /// Отмена с кнопки: серия прерывается на следующем сервере, ядро гасится.
+    func cancelMeasurements() {
+        cancelRequested = true
+        stop()
+    }
     /// Когда поднялось текущее соединение — для «сколько сервер активен».
     @Published private(set) var connectedSince: Date?
     /// Сколько активный сервер держится (секунды), для карточки подключения.
@@ -93,7 +101,7 @@ final class DevEngine: ObservableObject {
     }
 
     /// Профили, которые sing-box умеет держать в одном конфиге.
-    static let singboxKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .wireguard, .amneziawg]
+    static let singboxKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .wireguard, .amneziawg, .custom]
 
     /// Запуск профиля. `pool` — остальные серверы: они добавляются в тот же конфиг,
     /// чтобы пинги не требовали перезапуска ядра.
@@ -120,12 +128,15 @@ final class DevEngine: ObservableObject {
             // Всё, что ядро умеет держать вместе, кладём в один конфиг: final = выбранный сервер.
             let candidates = pool.filter { Self.singboxKinds.contains($0.kind) }
             let config: String
-            if !Self.needsTransport(profile), candidates.count > 1 {
-                let built = try ConfigBuilder.buildLive(profiles: candidates, selected: profile)
+            if !Self.needsTransport(profile), candidates.count > 1,
+               let built = try? ConfigBuilder.buildLive(profiles: candidates, selected: profile) {
                 config = built.json
                 liveTags = built.tags
                 append("ядро: \(candidates.count) серверов в одном конфиге, активен \(profile.name)")
             } else {
+                if !Self.needsTransport(profile), candidates.count > 1 {
+                    append("общий конфиг не собрался — поднимаю один сервер")
+                }
                 config = try ConfigBuilder.build(profile: profile)
                 liveTags = [:]
             }
@@ -305,7 +316,7 @@ final class DevEngine: ObservableObject {
 
     /// Профили, задержку которых можно спросить у Clash API прямо в живом конфиге.
     /// WireGuard — это `endpoints`, Clash API их не видит; Xray и WireTurn — другое ядро/транспорт.
-    static let parallelKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru]
+    static let parallelKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .custom]
 
     /// Проверка всех серверов: сначала параллельно в уже поднятом ядре, потом WireGuard и Xray
     /// по очереди, и в самом конце WireTurn — он долгий (VK-авторизация, капча, SRTP).
@@ -313,6 +324,7 @@ final class DevEngine: ObservableObject {
         guard !bulkRunning, !profiles.isEmpty else { return }
         bulkRunning = true
         probing = true
+        cancelRequested = false
         defer { bulkRunning = false; probing = false }
         bulk = profiles.map { BulkRow(id: $0.id, name: $0.name, badge: $0.badge ?? $0.kind.title) }
 
@@ -381,6 +393,7 @@ final class DevEngine: ObservableObject {
         guard !profiles.isEmpty else { return }
         var wireturnChecked = 0
         for profile in profiles {
+            if cancelRequested { return }
             guard let index = bulk.firstIndex(where: { $0.id == profile.id }) else { continue }
             append("проверка: \(profile.name) [\(profile.kind.title)]")
             if limitTransport, Self.needsTransport(profile) {
@@ -438,6 +451,7 @@ final class DevEngine: ObservableObject {
     /// и активное соединение на время замера прерывается.
     func measureSpeed(profile: Profile) async {
         guard speedRunning == nil else { return }
+        cancelRequested = false
         speedRunning = profile.id
         defer { speedRunning = nil }
         let wasActive = activeProfileID == profile.id

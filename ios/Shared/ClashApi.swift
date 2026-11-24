@@ -27,7 +27,7 @@ enum ClashApi {
 
     /// Задержка outbound по тегу: ядро само делает запрос по указанному url через этот сервер.
     /// `timeout` — в миллисекундах (так его ждёт API).
-    static func delay(tag: String, url target: String, timeout: Int = 4000) async -> Int? {
+    static func delay(tag: String, url target: String, timeout: Int = 3000) async -> Int? {
         var components = URLComponents()
         components.scheme = "http"
         components.host = "127.0.0.1"

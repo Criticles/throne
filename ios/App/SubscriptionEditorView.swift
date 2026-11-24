@@ -70,7 +70,14 @@ struct SubscriptionEditorView: View {
                 Text("Подписки").font(.headline)
             }
             ToolbarItem(placement: .cancellationAction) {
-                EditButton()
+                Button {
+                    presentation.wrappedValue.dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+            }
+            ToolbarItem(placement: .navigationBarLeading) {
+                EditButton().font(.caption)
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {

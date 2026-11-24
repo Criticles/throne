@@ -13,6 +13,7 @@ struct ProfilesView: View {
     @State private var showAdd = false
     @State private var addText = ""
     @State private var addTitle = ""
+    @State private var createFolder = true
     @State private var showScanner = false
     @State private var qrProfile: Profile?
     @State private var noteProfile: Profile?
@@ -174,8 +175,7 @@ struct ProfilesView: View {
             let ip = result.ip ?? ""
             return [country, ip, millis].filter { !$0.isEmpty }.joined(separator: " · ")
         }
-        if engine.running { return "нажмите «Пинг», чтобы узнать страну и задержку" }
-        return "не подключено"
+        return "нет соединения"
     }
 
     // MARK: - Быстрый сервер
@@ -239,7 +239,7 @@ struct ProfilesView: View {
                 .padding(.vertical, 2)
                 .padding(.horizontal, 2)
             }
-            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+            .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
         }
@@ -312,16 +312,22 @@ struct ProfilesView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer(minLength: 4)
-                    HeaderButton(icon: "xmark", tint: .secondary) {
-                        engine.stop()
-                        traffic.stop()
-                        probeLine = ""
+                    if engine.bulkRunning || engine.speedRunning != nil {
+                        HeaderButton(icon: "xmark", tint: .red) {
+                            engine.cancelMeasurements()
+                            traffic.stop()
+                            probeLine = ""
+                        }
+                    } else {
+                        HeaderButton(icon: "speedometer", tint: Theme.accent) {
+                            Task { await speedAll() }
+                        }
+                        .disabled(visible.isEmpty)
+                        HeaderButton(icon: "waveform.path.ecg", tint: Theme.accent) {
+                            Task { await checkAll() }
+                        }
+                        .disabled(visible.isEmpty)
                     }
-                    .disabled(!engine.running && !engine.bulkRunning && engine.speedRunning == nil)
-                    HeaderButton(icon: "waveform.path.ecg", tint: Theme.accent) {
-                        Task { await checkAll() }
-                    }
-                    .disabled(engine.bulkRunning || visible.isEmpty)
                     HeaderButton(icon: "arrow.clockwise", tint: Theme.accent) {
                         Task { await refreshCurrent() }
                     }
@@ -468,7 +474,10 @@ struct ProfilesView: View {
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .keyboardType(.URL)
-                    TextField("Имя папки", text: $addTitle)
+                    Toggle("Создать новую папку", isOn: $createFolder)
+                    if createFolder {
+                        TextField("Имя папки", text: $addTitle)
+                    }
                 }
                 Section {
                     Button("Взять из буфера обмена") { importClipboard() }
@@ -555,15 +564,21 @@ struct ProfilesView: View {
 
     private func addSubscription() {
         let input = addText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = addTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typed = addTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name: String?
+        if createFolder {
+            name = typed.isEmpty ? nil : typed
+        } else {
+            name = folder ?? ProfileStore.manualFolder
+        }
         showAdd = false
         Task {
             if input.lowercased().hasPrefix("http") {
-                await store.importFromURL(input, name: name.isEmpty ? nil : name)
+                await store.importFromURL(input, name: name)
             } else {
                 store.importFromText(input)
             }
-            if !name.isEmpty { folder = name }
+            if let name { folder = name }
         }
     }
 

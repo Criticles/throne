@@ -125,6 +125,13 @@ enum ConfigBuilder {
                     peerPort: wg.port,
                     amnezia: wg.amnezia
                 ))
+            case .custom:
+                // «JSON подписки» — это готовый кусок конфига панели: у WG там endpoint,
+                // у остальных outbound. Раньше такие профили выпадали из живого конфига,
+                // и `final` уходил в direct — трафик шёл мимо туннеля.
+                guard let entry = Self.customEntry(payload: profile.payload, tag: tag) else { continue }
+                endpoints.append(contentsOf: entry.endpoints)
+                outbounds.append(contentsOf: entry.outbounds)
             default:
                 continue
             }
@@ -134,6 +141,11 @@ enum ConfigBuilder {
 
         guard !outbounds.isEmpty || !endpoints.isEmpty else {
             throw BuildError.unsupported("нет серверов, которые sing-box может держать в одном конфиге")
+        }
+        if let selected, selectedTag == nil {
+            // Молча уйти в direct нельзя: трафик пойдёт мимо туннеля. Пусть вызывающий
+            // соберёт одиночный конфиг — там ошибка видна.
+            throw BuildError.unsupported("профиль «\(selected.name)» не попал в общий конфиг")
         }
 
         var config: [String: Any] = [
@@ -489,6 +501,46 @@ enum ConfigBuilder {
             peerPort: port
         ))
         return config
+    }
+
+    /// Достаёт из панельного JSON один endpoint или outbound и перевешивает ему тег.
+    private static func customEntry(payload: String, tag: String) -> (outbounds: [[String: Any]], endpoints: [[String: Any]])? {
+        guard let data = payload.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: data),
+              let root = parsed as? [String: Any]
+        else { return nil }
+
+        if let endpoints = root["endpoints"] as? [[String: Any]],
+           var endpoint = endpoints.first,
+           let peers = endpoint["peers"] as? [[String: Any]], !peers.isEmpty {
+            endpoint = sanitize(endpoint) as? [String: Any] ?? endpoint
+            endpoint["tag"] = tag
+            if var peerList = endpoint["peers"] as? [[String: Any]] {
+                for index in peerList.indices {
+                    if let host = peerList[index]["address"] as? String,
+                       let resolved = Self.resolveHost(host) {
+                        peerList[index]["address"] = resolved
+                    }
+                }
+                endpoint["peers"] = peerList
+            }
+            return ([], [endpoint])
+        }
+
+        if let outbounds = root["outbounds"] as? [[String: Any]] {
+            let usable = outbounds.filter {
+                ($0["type"] as? String) != "direct"
+                    && ($0["type"] as? String) != "block"
+                    && ($0["type"] as? String) != "dns"
+                    && $0["server"] != nil
+            }
+            if var outbound = usable.first {
+                outbound = sanitize(outbound) as? [String: Any] ?? outbound
+                outbound["tag"] = tag
+                return ([outbound], [])
+            }
+        }
+        return nil
     }
 
     /// Убирает ключи, которых нет в ядре: панель дописывает `amnezia_wg_*` в wireguard-endpoint,
