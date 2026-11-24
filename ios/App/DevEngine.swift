@@ -388,9 +388,10 @@ final class DevEngine: ObservableObject {
     @Published private(set) var bulk: [BulkRow] = []
     @Published private(set) var bulkRunning = false
 
-    /// Профили, задержку которых можно спросить у Clash API прямо в живом конфиге.
-    /// WireGuard — это `endpoints`, Clash API их не видит; Xray и WireTurn — другое ядро/транспорт.
-    static let parallelKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .custom]
+    /// Профили, задержку которых можно спросить прямо в живом конфиге: у каждого свой пробный
+    /// вход, а route.rules ссылается и на outbound, и на endpoint — то есть WireGuard тоже.
+    /// Своё ядро/транспорт только у Xray и WireTurn/Turnable.
+    static let parallelKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .wireguard, .amneziawg, .custom]
 
     /// Проверка всех серверов: сначала параллельно в уже поднятом ядре, потом WireGuard и Xray
     /// по очереди, и в самом конце WireTurn — он долгий (VK-авторизация, капча, SRTP).
@@ -449,7 +450,11 @@ final class DevEngine: ObservableObject {
                 guard let port = probePorts[profile.id] else { continue }
                 // 8 с: один мёртвый сервер не должен задерживать всю пачку — иначе
                 // «параллельный» замер ждёт его одного и выглядит как зависание.
-                group.addTask { (profile.id, await Probe.timed(port: port, timeout: 8)) }
+                // Endpoint-профилям — только IP-литерал, иначе DNS съедает 10 с таймаута.
+                let addressOnly = ConfigBuilder.isEndpointProfile(profile)
+                group.addTask {
+                    (profile.id, await Probe.timed(port: port, timeout: 8, addressOnly: addressOnly))
+                }
             }
             for await (id, result) in group {
                 measured.insert(id)

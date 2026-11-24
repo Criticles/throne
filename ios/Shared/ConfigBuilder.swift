@@ -109,8 +109,8 @@ enum ConfigBuilder {
         var selectedTag: String?
         /// Если выбран WireGuard-эндпоинт, DNS должен идти внутри его туннеля.
         var selectedEndpointTag: String?
-        /// Кого можно проверить своим инбаундом: route.rules умеет ссылаться только на
-        /// outbound'ы, WireGuard-эндпоинты в правиле не назвать — их проверяем по очереди.
+        /// Кого можно проверить своим инбаундом: в route.rules[].outbound называют и outbound,
+        /// и endpoint, поэтому у каждого сервера (включая WireGuard) свой пробный вход.
         var probeable: [(id: UUID, tag: String)] = []
 
         for profile in profiles {
@@ -149,6 +149,9 @@ enum ConfigBuilder {
                     amnezia: wg.amnezia
                 ))
                 producedEndpoint = true
+                // Endpoint можно назвать в route.rules[].outbound — значит, у него тоже может
+                // быть свой пробный вход, и все WireGuard-серверы меряются разом с остальными.
+                probeable.append((profile.id, tag))
             case .custom:
                 // «JSON подписки» — это готовый кусок конфига панели: у WG там endpoint,
                 // у остальных outbound. Раньше такие профили выпадали из живого конфига,
@@ -157,7 +160,7 @@ enum ConfigBuilder {
                 endpoints.append(contentsOf: entry.endpoints)
                 outbounds.append(contentsOf: entry.outbounds)
                 producedEndpoint = !entry.endpoints.isEmpty
-                if !entry.outbounds.isEmpty {
+                if !entry.outbounds.isEmpty || !entry.endpoints.isEmpty {
                     probeable.append((profile.id, tag))
                 }
             default:

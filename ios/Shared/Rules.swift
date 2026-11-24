@@ -413,9 +413,10 @@ struct RoutePlan: Codable, Identifiable {
         }
         name = (try container.decodeIfPresent(String.self, forKey: .name)) ?? "Маршрут"
         // Документ Throne зовёт это `default_outbound`, наш прежний вид — `finalTarget`.
-        finalTarget = (try container.decodeIfPresent(String.self, forKey: .finalTarget))
-            ?? (try container.decodeIfPresent(String.self, forKey: .defaultOutbound))
-            ?? "proxy"
+        // Отдельные строки: `try` внутри автозамыкания `??` компилятор не пропускает.
+        let storedTarget = try container.decodeIfPresent(String.self, forKey: .finalTarget)
+        let throneTarget = try container.decodeIfPresent(String.self, forKey: .defaultOutbound)
+        finalTarget = storedTarget ?? throneTarget ?? "proxy"
         if let stored = try container.decodeIfPresent([RoutePlanRule].self, forKey: .rules) {
             rules = stored
         } else if let legacy = try container.decodeIfPresent([RoutePlanEntry].self, forKey: .entries) {
