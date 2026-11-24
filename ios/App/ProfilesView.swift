@@ -264,12 +264,21 @@ struct ProfilesView: View {
         }
     }
 
+    /// Что показать вместо пустого списка: пустая папка, пустой поиск или вообще нет серверов.
+    private var emptyText: String {
+        if store.profiles.isEmpty { return "пока пусто — нажмите + сверху" }
+        if let folderID, store.count(in: folderID) == 0 {
+            return store.subscription(in: folderID) == nil
+                ? "в этой папке пока нет серверов — добавьте их при импорте подписки"
+                : "папка пустая — обновите подписку кнопкой ↻ в заголовке"
+        }
+        return "в этой папке ничего не нашлось"
+    }
+
     private var serverSection: some View {
         Section {
             if visible.isEmpty {
-                Text(store.profiles.isEmpty
-                     ? "пока пусто — нажмите + сверху"
-                     : "в этой папке ничего не нашлось")
+                Text(emptyText)
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }

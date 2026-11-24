@@ -703,5 +703,15 @@ final class ProfileStore: ObservableObject {
                 claimed.insert(folder.id)
             }
         }
+
+        // Пустая папка с подпиской — значит серверы этой подписки ушли в другую папку
+        // с тем же именем (старая схема их не различала). Сбрасываем дату обновления,
+        // чтобы импорт повторился при запуске и папка наполнилась.
+        for index in subscriptions.indices {
+            guard let folderID = subscriptions[index].folderID else { continue }
+            if !profiles.contains(where: { $0.folderID == folderID }) {
+                subscriptions[index].updated = nil
+            }
+        }
     }
 }
