@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// «Изм»: подписки — добавить, переставить (долгое нажатие), настроить (нажатие).
+/// «Изм»: папки серверов и подписки. Здесь же переименование уже созданных папок —
+/// даже если папка создана вручную и подписки в ней нет.
 struct SubscriptionEditorView: View {
     @EnvironmentObject private var store: ProfileStore
     @Environment(\.presentationMode) private var presentation
@@ -8,8 +9,7 @@ struct SubscriptionEditorView: View {
     @State private var addURL = ""
     @State private var addName = ""
     @State private var showAdd = false
-    @State private var editItem: Subscription?
-    @State private var qrItem: Subscription?
+    @State private var editFolder: Folder?
 
     var body: some View {
         NavigationView {
@@ -17,30 +17,29 @@ struct SubscriptionEditorView: View {
         }
         .navigationViewStyle(.stack)
         .sheet(isPresented: $showAdd) { addSheet }
-        .sheet(item: $editItem) { subscription in
-            SubscriptionSettingsView(subscription: subscription)
+        .sheet(item: $editFolder) { folder in
+            SubscriptionSettingsView(folderID: folder.id)
         }
     }
 
     private var content: some View {
         List {
             Section {
-                if store.subscriptions.isEmpty {
-                    Text("подписок нет — нажмите +")
+                if store.folders.isEmpty {
+                    Text("папок нет — нажмите + или добавьте подписку")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
-                ForEach(store.subscriptions) { subscription in
+                ForEach(store.folders) { folder in
                     Button {
-                        editItem = subscription
+                        editFolder = folder
                     } label: {
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(store.folderName(for: subscription))
+                                Text(folder.name)
                                     .font(.subheadline.weight(.medium))
                                     .foregroundColor(.primary)
-                                Text(String(subscription.count) + " серверов"
-                                     + (subscription.autoUpdate ? " · автообновление" : ""))
+                                Text(subtitle(for: folder))
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
@@ -51,23 +50,23 @@ struct SubscriptionEditorView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                }
-                .onMove { source, destination in
-                    store.moveSubscription(from: source, to: destination)
-                }
-                .onDelete { offsets in
-                    let victims = offsets.map { store.subscriptions[$0] }
-                    for subscription in victims { store.remove(subscription) }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            store.deleteFolder(folder.id)
+                        } label: {
+                            Label("Удалить", systemImage: "trash")
+                        }
+                    }
                 }
             } footer: {
-                Text("Нажатие — настройки подписки. Свайп влево — удалить.")
+                Text("Нажатие — имя папки и настройки подписки. Свайп влево — удалить папку вместе с серверами. Одинаковые названия разрешены.")
             }
         }
         .listStyle(.insetGrouped)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text("Подписки").font(.headline)
+                Text("Папки и подписки").font(.headline)
             }
             ToolbarItem(placement: .navigationBarLeading) {
                 Button {
@@ -95,6 +94,16 @@ struct SubscriptionEditorView: View {
         }
     }
 
+    private func subtitle(for folder: Folder) -> String {
+        let servers = String(store.count(in: folder.id)) + " серверов"
+        guard let subscription = store.subscription(in: folder.id) else {
+            return servers + " · папка без подписки"
+        }
+        var parts = [servers, subscription.autoUpdate ? "автообновление" : "подписка"]
+        if subscription.url.isEmpty { parts = [servers] }
+        return parts.joined(separator: " · ")
+    }
+
     private var addSheet: some View {
         NavigationView {
             Form {
@@ -104,6 +113,8 @@ struct SubscriptionEditorView: View {
                         .disableAutocorrection(true)
                         .keyboardType(.URL)
                     TextField("Имя папки", text: $addName)
+                } footer: {
+                    Text("Каждый импорт создаёт папку: имя можно оставить любым, даже совпадающим с другой папкой.")
                 }
             }
             .navigationTitle("Новая подписка")
@@ -131,12 +142,13 @@ struct SubscriptionEditorView: View {
         .navigationViewStyle(.stack)
     }
 }
-/// Настройки одной подписки: имя папки, автообновление, интервал, поделиться, удалить.
+
+/// Настройки папки: имя (правится здесь), подписка внутри — автообновление, ссылка, QR, удаление.
 struct SubscriptionSettingsView: View {
     @EnvironmentObject private var store: ProfileStore
     @Environment(\.presentationMode) private var presentation
 
-    let subscription: Subscription
+    let folderID: UUID
 
     @State private var name = ""
     @State private var autoUpdate = true
@@ -144,8 +156,12 @@ struct SubscriptionSettingsView: View {
     @State private var loaded = false
     @State private var showQR = false
 
-    private var current: Subscription {
-        store.subscriptions.first { $0.id == subscription.id } ?? subscription
+    private var folder: Folder? {
+        store.folder(folderID)
+    }
+
+    private var subscription: Subscription? {
+        store.subscription(in: folderID)
     }
 
     var body: some View {
@@ -154,49 +170,78 @@ struct SubscriptionSettingsView: View {
                 Section {
                     TextField("Имя папки", text: $name)
                         .autocapitalization(.none)
-                    Toggle("Автообновление", isOn: $autoUpdate)
-                    if autoUpdate {
-                        Stepper("Каждые " + String(hours) + " ч", value: $hours, in: 1...72)
+                    if let subscription {
+                        Toggle("Автообновление", isOn: $autoUpdate)
+                        if autoUpdate {
+                            Stepper("Каждые " + String(hours) + " ч", value: $hours, in: 1...72)
+                        }
+                        HStack {
+                            Text("Серверов")
+                            Spacer()
+                            Text(String(store.count(in: folderID)))
+                                .foregroundColor(.secondary)
+                        }
+                        if subscription.updated != nil {
+                            HStack {
+                                Text("Обновлено")
+                                Spacer()
+                                Text(Self.formatter.string(from: subscription.updated ?? Date()))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    } else {
+                        Text("Папка без подписки: серверы можно добавить в неё при импорте.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 } header: {
-                    Text("Подписка")
+                    Text("Папка")
                 } footer: {
-                    Text("Имя — подпись папки: серверы остаются на месте, меняется только название. Одинаковые имена разрешены.")
+                    Text("Переименование меняет только подпись: серверы остаются в этой папке. Одинаковые имена разрешены.")
                 }
 
-                Section {
-                    Button {
-                        UIPasteboard.general.string = current.url
-                    } label: {
-                        Label("Скопировать ссылку", systemImage: "doc.on.doc")
-                    }
-                    Button {
-                        UIPasteboard.general.string = Self.deepLink(current.url)
-                    } label: {
-                        Label("Скопировать для Throne", systemImage: "link.badge.plus")
-                    }
-                    Button {
-                        showQR = true
-                    } label: {
-                        Label("Показать QR", systemImage: "qrcode")
-                    }
-                    Button {
-                        Task { await store.refresh(current) }
-                    } label: {
-                        Label("Обновить сейчас", systemImage: "arrow.clockwise")
+                if let current = subscription {
+                    Section {
+                        Button {
+                            UIPasteboard.general.string = current.url
+                        } label: {
+                            Label("Скопировать ссылку", systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            UIPasteboard.general.string = Self.deepLink(current.url)
+                        } label: {
+                            Label("Скопировать для Throne", systemImage: "link.badge.plus")
+                        }
+                        Button {
+                            showQR = true
+                        } label: {
+                            Label("Показать QR", systemImage: "qrcode")
+                        }
+                        Button {
+                            Task { await store.refresh(current) }
+                        } label: {
+                            Label("Обновить сейчас", systemImage: "arrow.clockwise")
+                        }
+                    } header: {
+                        Text("Подписка")
                     }
                 }
 
                 Section {
                     Button(role: .destructive) {
-                        store.remove(current)
+                        if let current = subscription {
+                            store.remove(current)
+                        } else {
+                            store.deleteFolder(folderID)
+                        }
                         presentation.wrappedValue.dismiss()
                     } label: {
-                        Label("Удалить подписку", systemImage: "trash")
+                        Label(subscription == nil ? "Удалить папку" : "Удалить подписку и папку",
+                              systemImage: "trash")
                     }
                 }
             }
-            .navigationTitle(store.folderName(for: current))
+            .navigationTitle(folder?.name ?? "Папка")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -213,22 +258,26 @@ struct SubscriptionSettingsView: View {
                 }
             }
             .sheet(isPresented: $showQR) {
-                QRCodeSheet(title: "QR подписки", text: current.url)
+                if let current = subscription {
+                    QRCodeSheet(title: "QR подписки", text: current.url)
+                }
             }
             .onAppear {
                 guard !loaded else { return }
                 loaded = true
-                name = store.folderName(for: current)
-                autoUpdate = current.autoUpdate
-                hours = current.intervalHours
+                name = folder?.name ?? ""
+                autoUpdate = subscription?.autoUpdate ?? true
+                hours = subscription?.intervalHours ?? 12
             }
         }
         .navigationViewStyle(.stack)
     }
 
     private func save() {
-        store.rename(current, to: name)
-        store.setAutoUpdate(autoUpdate, intervalHours: hours, for: current)
+        store.renameFolder(folderID, to: name)
+        if let current = subscription {
+            store.setAutoUpdate(autoUpdate, intervalHours: hours, for: current)
+        }
         presentation.wrappedValue.dismiss()
     }
 
@@ -236,4 +285,10 @@ struct SubscriptionSettingsView: View {
         let encoded = link.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? link
         return "throne://import?url=" + encoded
     }
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd.MM.yyyy HH:mm"
+        return formatter
+    }()
 }
