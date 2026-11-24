@@ -8,12 +8,16 @@ struct RoutingView: View {
     @State private var draft: RouteRule?
     @State private var domain = ""
     @State private var showSetSheet = false
+    @State private var showGeoSheet = false
+    @State private var geoName = ""
+    @State private var geoURL = ""
     @State private var setURL = ""
     @State private var setName = ""
 
     var body: some View {
         NavigationView {
             List {
+                advancedSection
                 modeSection
                 rulesSection
                 geoSection
@@ -36,6 +40,7 @@ struct RoutingView: View {
                 }
             }
             .sheet(isPresented: $showSetSheet) { ruleSetSheet }
+            .sheet(isPresented: $showGeoSheet) { geoSheet }
             .sheet(item: $draft) { rule in
                 RuleEditorView(rule: rule) { saved in
                     if rules.rules.contains(where: { $0.id == saved.id }) {
@@ -47,6 +52,27 @@ struct RoutingView: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    /// Отдельная кнопка в расширенную маршрутизацию — как в Throne на ПК.
+    private var advancedSection: some View {
+        Section {
+            NavigationLink {
+                AdvancedRouteView()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .foregroundColor(Theme.accent)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Маршрутизация").font(.subheadline.weight(.medium))
+                        Text("записи «правило → outbound» и JSON")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
     }
 
     private var modeSection: some View {
@@ -149,11 +175,50 @@ struct RoutingView: View {
                     .font(.caption)
                 }
             }
+                Button {
+                    geoName = ""
+                    geoURL = ""
+                    showGeoSheet = true
+                } label: {
+                    Label("Добавить свой список", systemImage: "plus.circle")
+                }
         } header: {
             Text("Гео-списки")
         } footer: {
             Text("Списки Loyalsoldier: страны и категории доменов для правил geosite/geoip. " + rules.status)
         }
+    }
+
+    private var geoSheet: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("Имя списка", text: $geoName)
+                    TextField("https://…/geoip.dat", text: $geoURL)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .keyboardType(.URL)
+                        .font(.system(.footnote, design: .monospaced))
+                } footer: {
+                    Text("Любой .dat/.srs по ссылке: скачается в приложение и появится в этом списке.")
+                }
+            }
+            .navigationTitle("Свой список")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { showGeoSheet = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Добавить") {
+                        rules.addAsset(name: geoName, url: geoURL)
+                        showGeoSheet = false
+                    }
+                    .disabled(geoURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
     }
 
     private var ruleSetsSection: some View {

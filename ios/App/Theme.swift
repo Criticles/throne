@@ -95,3 +95,48 @@ struct FolderChip: View {
         .buttonStyle(.plain)
     }
 }
+
+/// Плашка-кнопка: используется для «Пинг», «Скорость» и подсказок в карточках.
+struct PlaqueButton: View {
+    let title: String
+    let icon: String
+    var filled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption2.weight(.semibold))
+                Text(title)
+                    .font(.caption2.weight(.medium))
+            }
+            .foregroundColor(filled ? .white : Theme.accent)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(filled ? Theme.accent : Theme.accent.opacity(0.12))
+            )
+        }
+        .buttonStyle(.borderless)
+    }
+}
+
+/// Маленькая кнопка в заголовке секции: только иконка, чтобы не отнимать место у названия.
+struct HeaderButton: View {
+    let icon: String
+    var tint: Color = .secondary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(tint)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Color(uiColor: .tertiarySystemFill)))
+        }
+        .buttonStyle(.borderless)
+    }
+}

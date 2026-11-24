@@ -16,12 +16,25 @@ final class DevEngine: ObservableObject {
 
     private var server: LibboxCommandServer?
     private var platform: DevPlatform?
+    /// Теги outbound'ов живого конфига: сервер → имя в ядре (для Clash API).
+    private var liveTags: [UUID: String] = [:]
+    /// Активный профиль: по нему восстанавливаем `final` после перезапуска конфига.
+    private(set) var activeProfileID: UUID?
     private lazy var turnable = TurnableEngine { [weak self] line in
         Task { @MainActor in self?.append(line) }
     }
 
     /// Транспорт Turnable для WireTurn-профилей: sing-box ждёт его на 127.0.0.1:9000.
     static let turnablePort = 9000
+
+    /// Результат замера скорости и профиль, на котором он идёт.
+    struct SpeedResult {
+        var mbps: Double
+        var bytes: Int64
+        var seconds: Double
+    }
+    @Published private(set) var speed: [UUID: SpeedResult] = [:]
+    @Published private(set) var speedRunning: UUID?
 
     /// Локальный прокси активного ядра: sing-box — 7891, Xray — 7892.
     @Published private(set) var proxyPort: Int = ConfigBuilder.listenPort
@@ -40,7 +53,12 @@ final class DevEngine: ObservableObject {
         }
     }
 
-    func start(profile: Profile) {
+    /// Профили, которые sing-box умеет держать в одном конфиге.
+    static let singboxKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .wireguard]
+
+    /// Запуск профиля. `pool` — остальные серверы: они добавляются в тот же конфиг,
+    /// чтобы пинги не требовали перезапуска ядра.
+    func start(profile: Profile, pool: [Profile] = []) {
         stop()
         // Профиль VLESS + XHTTP: sing-box такой транспорт не умеет, поднимаем Xray.
         if profile.kind == .xray {
@@ -60,7 +78,18 @@ final class DevEngine: ObservableObject {
             } else {
                 ConfigBuilder.wireturnMTU = nil
             }
-            let config = try ConfigBuilder.build(profile: profile)
+            // Всё, что ядро умеет держать вместе, кладём в один конфиг: final = выбранный сервер.
+            let candidates = pool.filter { Self.singboxKinds.contains($0.kind) }
+            let config: String
+            if !Self.needsTransport(profile), candidates.count > 1 {
+                let built = try ConfigBuilder.buildLive(profiles: candidates, selected: profile)
+                config = built.json
+                liveTags = built.tags
+                append("ядро: \(candidates.count) серверов в одном конфиге, активен \(profile.name)")
+            } else {
+                config = try ConfigBuilder.build(profile: profile)
+                liveTags = [:]
+            }
 
             // WireTurn и Turnable-с-ключами: сначала транспорт, иначе wireguard-эндпоинту некуда стучаться.
             if Self.needsTransport(profile) {
@@ -81,6 +110,7 @@ final class DevEngine: ObservableObject {
             running = true
             lastError = nil
             activeName = profile.name
+            activeProfileID = profile.id
             append("старт: \(profile.name) [\(profile.kind.title)] → локально \(socksAddress)")
             if let note = profile.note {
                 append("внимание: \(note)")
@@ -119,6 +149,7 @@ final class DevEngine: ObservableObject {
             running = true
             lastError = nil
             activeName = profile.name
+            activeProfileID = profile.id
             append("xray: запущен, socks 127.0.0.1:\(XrayConfig.socksPort)")
             append("старт: \(profile.name) [\(profile.kind.title)] → локально 127.0.0.1:\(XrayConfig.socksPort)")
         } catch {
@@ -150,6 +181,8 @@ final class DevEngine: ObservableObject {
 
     func stop() {
         transportOnly = false
+        activeProfileID = nil
+        liveTags = [:]
         turnable.stop()
         if LibboxXrayIsRunning() {
             var error: NSError?
@@ -222,31 +255,89 @@ final class DevEngine: ObservableObject {
     @Published private(set) var bulk: [BulkRow] = []
     @Published private(set) var bulkRunning = false
 
-    /// Виды профилей, которые sing-box умеет проверить одним конфигом (параллельно).
+    /// Профили, задержку которых можно спросить у Clash API прямо в живом конфиге.
     /// WireGuard — это `endpoints`, Clash API их не видит; Xray и WireTurn — другое ядро/транспорт.
     static let parallelKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru]
 
-    /// Проверка всех серверов: сначала параллельно тем, что умеет sing-box (одно ядро,
-    /// Clash API), потом по очереди остальными (WireGuard, Xray, WireTurn).
+    /// Проверка всех серверов: сначала параллельно в уже поднятом ядре, потом WireGuard и Xray
+    /// по очереди, и в самом конце WireTurn — он долгий (VK-авторизация, капча, SRTP).
     func checkAll(profiles: [Profile]) async {
         guard !bulkRunning, !profiles.isEmpty else { return }
         bulkRunning = true
         defer { bulkRunning = false }
         bulk = profiles.map { BulkRow(id: $0.id, name: $0.name, badge: $0.badge ?? $0.kind.title) }
 
-        let parallel = profiles.filter { Self.parallelKinds.contains($0.kind) }
-        let sequential = profiles.filter { !Self.parallelKinds.contains($0.kind) }
+        let rest = await measure(profiles)
+        let plain = rest.filter { !Self.needsTransport($0) && $0.kind != .xray }
+        let xray = rest.filter { $0.kind == .xray }
+        let turnable = rest.filter { Self.needsTransport($0) }
 
-        if !parallel.isEmpty {
-            await runParallel(parallel)
+        await checkSequential(plain)
+        await checkSequential(xray)
+        await checkSequential(turnable, limitTransport: true)
+        append("проверка всех серверов завершена")
+    }
+
+    /// Параллельный замер. Если ядро уже держит все серверы в живом конфиге — просто
+    /// спрашиваем Clash API, ничего не перезапуская и не разрывая соединение.
+    /// Возвращает профили, которые так проверить нельзя.
+    private func measure(_ profiles: [Profile]) async -> [Profile] {
+        let targets = profiles.filter { Self.parallelKinds.contains($0.kind) }
+        let rest = profiles.filter { !Self.parallelKinds.contains($0.kind) }
+        guard !targets.isEmpty else { return rest }
+
+        var needPool = !running
+        if !needPool {
+            for profile in targets where liveTags[profile.id] == nil {
+                needPool = true
+                break
+            }
+        }
+        if needPool {
+            let pool = profiles.filter { Self.singboxKinds.contains($0.kind) }
+            guard let anchor = pool.first(where: { $0.id == activeProfileID }) ?? pool.first else {
+                return profiles
+            }
+            start(profile: anchor, pool: pool)
+            guard running else { return profiles }
         }
 
+        for _ in 0..<10 {
+            if await ClashApi.version() != nil { break }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+
+        let target = "https://www.cloudflare.com/cdn-cgi/trace"
+        let available = targets.filter { liveTags[$0.id] != nil }
+        var index = 0
+        while index < available.count {
+            let chunk = Array(available[index..<min(index + 8, available.count)])
+            await withTaskGroup(of: (UUID, Int?).self) { group in
+                for profile in chunk {
+                    let tag = liveTags[profile.id] ?? ""
+                    group.addTask { (profile.id, await ClashApi.delay(tag: tag, url: target)) }
+                }
+                for await (id, millis) in group {
+                    guard let row = bulk.firstIndex(where: { $0.id == id }) else { continue }
+                    bulk[row].result = ProbeResult(ok: millis != nil, millis: millis,
+                                                   error: millis == nil ? "нет ответа через туннель" : nil)
+                    bulk[row].done = true
+                }
+            }
+            index += 8
+        }
+        append("параллельный пинг: \(available.count) серверов")
+        return rest
+    }
+
+    /// Поочерёдная проверка: старт профиля → проба → стоп.
+    private func checkSequential(_ profiles: [Profile], limitTransport: Bool = false) async {
+        guard !profiles.isEmpty else { return }
         var wireturnChecked = 0
-        for profile in sequential {
+        for profile in profiles {
             guard let index = bulk.firstIndex(where: { $0.id == profile.id }) else { continue }
             append("проверка: \(profile.name) [\(profile.kind.title)]")
-            // VK ограничивает частоту капч (ERROR_LIMIT), поэтому в серии проверяем не больше 8.
-            if Self.needsTransport(profile) {
+            if limitTransport, Self.needsTransport(profile) {
                 if wireturnChecked >= 8 {
                     bulk[index].note = "в серии пропущен: не больше 8 VK-авторизаций подряд"
                     bulk[index].done = true
@@ -255,22 +346,8 @@ final class DevEngine: ObservableObject {
                 }
                 wireturnChecked += 1
             }
-
-            if profile.kind == .turnable && !ConfigBuilder.hasWireGuard(profile.payload) {
-                start(profile: profile)
-                try? await Task.sleep(nanoseconds: 8_000_000_000)
-                let transportUp = isTransportRunning
-                bulk[index].note = transportUp
-                    ? "транспорт поднят (VK авторизация, SRTP)"
-                    : (lastError ?? "транспорт не поднялся")
-                bulk[index].done = true
-                stop()
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                continue
-            }
             start(profile: profile)
-            let listening = await waitListening()
-            if !listening {
+            guard await waitListening() else {
                 bulk[index].note = lastError ?? "ядро не слушает \(socksAddress)"
                 bulk[index].result = ProbeResult(ok: false, error: lastError)
                 bulk[index].done = true
@@ -290,66 +367,46 @@ final class DevEngine: ObservableObject {
             stop()
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
-        append("проверка всех серверов завершена")
     }
 
-    /// Параллельная часть: одно ядро, все серверы внутри, задержка каждого — через Clash API.
-    /// Ядро не перезапускается на каждый сервер, поэтому серия из 29 профилей не превращается
-    /// в 29 стартов и остановок.
-    private func runParallel(_ profiles: [Profile]) async {
-        var tags: [UUID: String] = [:]
-        do {
-            let built = try ConfigBuilder.pingConfig(profiles: profiles)
-            tags = built.tags
-            stop()
-            try boot()
-            guard let server else {
-                throw NSError(domain: "throne.ping", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "command server не создан"])
-            }
-            try server.startOrReloadService(built.json, options: LibboxOverrideOptions())
-            running = true
-            append("параллельный пинг: \(tags.count) серверов одним ядром")
-        } catch {
-            append("параллельный пинг недоступен: \(Self.describe(error)) — проверяю по одному")
-            stop()
-            return
-        }
-
+    /// Замер скорости: честный тест — качаем файл через этот сервер.
+    /// Он поднимает именно выбранный профиль, поэтому активное соединение на время теста рвётся.
+    func measureSpeed(profile: Profile, megabytes: Int = 10) async {
+        guard speedRunning == nil else { return }
+        speedRunning = profile.id
+        defer { speedRunning = nil }
+        let wasActive = activeProfileID == profile.id
+        start(profile: profile)
         guard await waitListening() else {
-            append("параллельный пинг: ядро не слушает \(socksAddress)")
-            stop()
+            lastError = "скорость: ядро не слушает \(socksAddress)"
             return
         }
-        // Clash API поднимается вместе с сервисом, но не мгновенно.
-        for _ in 0..<10 {
-            if await ClashApi.version() != nil { break }
-            try? await Task.sleep(nanoseconds: 300_000_000)
+        let port = proxyPort
+        if let result = await Self.download(bytes: megabytes * 1_000_000, port: port) {
+            speed[profile.id] = result
+            append("скорость: \(profile.name) → \(String(format: "%.1f", result.mbps)) Мбит/с")
+        } else {
+            append("скорость: \(profile.name) → не удалось скачать тестовый файл")
         }
-
-        let target = "https://www.cloudflare.com/cdn-cgi/trace"
-        let list = profiles.filter { tags[$0.id] != nil }
-        var index = 0
-        while index < list.count {
-            let chunk = Array(list[index..<min(index + 8, list.count)])
-            await withTaskGroup(of: (UUID, Int?).self) { group in
-                for profile in chunk {
-                    let tag = tags[profile.id] ?? ""
-                    group.addTask { (profile.id, await ClashApi.delay(tag: tag, url: target)) }
-                }
-                for await (id, millis) in group {
-                    guard let row = bulk.firstIndex(where: { $0.id == id }) else { continue }
-                    bulk[row].result = ProbeResult(ok: millis != nil, millis: millis,
-                                                   error: millis == nil ? "нет ответа через туннель" : nil)
-                    bulk[row].done = true
-                }
-            }
-            index += 8
-        }
-        append("параллельный пинг завершён")
-        stop()
+        if !wasActive { stop() }
     }
 
+    /// Скачивание тестового файла через локальный прокси: считаем по фактическим байтам.
+    private static func download(bytes: Int, port: Int) async -> SpeedResult? {
+        guard let url = URL(string: "https://speed.cloudflare.com/__down?bytes=\(bytes)") else { return nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 90
+        configuration.connectionProxyDictionary = [
+            "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": port,
+            "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": port,
+        ]
+        let session = URLSession(configuration: configuration)
+        let clock = Date()
+        guard let (data, _) = try? await session.data(from: url), !data.isEmpty else { return nil }
+        let seconds = max(Date().timeIntervalSince(clock), 0.001)
+        let mbps = Double(data.count) * 8 / seconds / 1_000_000
+        return SpeedResult(mbps: mbps, bytes: Int64(data.count), seconds: seconds)
+    }
 
     /// Проверка одного профиля из списка: старт → IP/страна/пинг → стоп.
     /// Результат кладём в тот же массив, что и «Проверить все», чтобы строка списка

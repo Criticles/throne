@@ -98,6 +98,25 @@ struct RuleSet: Codable, Identifiable, Hashable {
     ]
 }
 
+/// Запись расширенной маршрутизации: правило либо принудительный outbound.
+struct RoutePlanEntry: Codable, Identifiable, Hashable {
+    var id = UUID()
+    /// `rule` — условие, `outbound` — принудительная цель.
+    var kind = "rule"
+    var value = ""
+
+    var title: String {
+        kind == "outbound" ? "Outbound: " + value : value
+    }
+}
+
+/// План маршрутизации: что делать по умолчанию и список записей по порядку.
+/// Формат совпадает с тем, что понимает сборка через Network Extension.
+struct RoutePlan: Codable {
+    var finalTarget = "proxy"
+    var entries: [RoutePlanEntry] = []
+}
+
 /// Скачанный список: geoip.dat / geosite.dat.
 struct GeoAsset: Identifiable, Hashable {
     let id: String
@@ -122,10 +141,12 @@ final class RuleStore: ObservableObject {
     @Published private(set) var rules: [RouteRule] = []
     @Published private(set) var assets: [GeoAsset] = GeoAsset.all
     @Published private(set) var ruleSets: [RuleSet] = []
+    @Published private(set) var plan = RoutePlan()
     @Published private(set) var status = ""
 
     private let rulesKey = "rules.items"
     private let setsKey = "rules.sets"
+    private let planKey = "rules.plan"
     private let defaults = UserDefaults.standard
 
     init() {
@@ -269,6 +290,47 @@ final class RuleStore: ObservableObject {
         return unique.filter { $0.lowercased().contains(text) }.prefix(12).map { $0 }
     }
 
+    // MARK: - Расширенная маршрутизация
+
+    func savePlan(_ plan: RoutePlan) {
+        self.plan = plan
+        if let data = try? JSONEncoder().encode(plan) {
+            defaults.set(data, forKey: planKey)
+        }
+        status = "план маршрутизации сохранён"
+    }
+
+    func planJSON(_ plan: RoutePlan) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(plan),
+              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+
+    func applyPlanJSON(_ text: String) -> Bool {
+        guard let data = text.data(using: .utf8),
+              let parsed = try? JSONDecoder().decode(RoutePlan.self, from: data)
+        else { return false }
+        savePlan(parsed)
+        return true
+    }
+
+    // MARK: - Свои гео-списки
+
+    func addAsset(name: String, url: String) {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let asset = GeoAsset(id: "custom-" + String(UUID().uuidString.prefix(6)),
+                             name: title.isEmpty ? "мой-список" : title,
+                             url: trimmed)
+        assets.append(asset)
+        saveAssets()
+        status = "список добавлен: " + asset.name
+        Task { await download(asset) }
+    }
+
     // MARK: - Наборы правил по URL
 
     func addRuleSet(_ set: RuleSet) {
@@ -377,7 +439,16 @@ final class RuleStore: ObservableObject {
     }
 
     private func saveAssets() {
-        let snapshot = assets.map { ["id": $0.id, "bytes": String($0.bytes), "updated": String($0.updated?.timeIntervalSince1970 ?? 0)] }
+        var snapshot: [[String: String]] = []
+        for asset in assets {
+            snapshot.append([
+                "id": asset.id,
+                "name": asset.name,
+                "url": asset.url,
+                "bytes": String(asset.bytes),
+                "updated": String(asset.updated?.timeIntervalSince1970 ?? 0),
+            ])
+        }
         defaults.set(snapshot, forKey: "rules.assets")
     }
 
@@ -400,13 +471,27 @@ final class RuleStore: ObservableObject {
            let stored = try? JSONDecoder().decode([RuleSet].self, from: data) {
             ruleSets = stored
         }
+        if let data = defaults.data(forKey: planKey),
+           let stored = try? JSONDecoder().decode(RoutePlan.self, from: data) {
+            plan = stored
+        }
         if let stored = defaults.array(forKey: "rules.assets") as? [[String: String]] {
             for item in stored {
-                guard let id = item["id"],
-                      let index = assets.firstIndex(where: { $0.id == id }) else { continue }
-                assets[index].bytes = Int(item["bytes"] ?? "") ?? 0
+                guard let id = item["id"] else { continue }
+                let bytes = Int(item["bytes"] ?? "") ?? 0
                 let stamp = Double(item["updated"] ?? "") ?? 0
-                assets[index].updated = stamp > 0 ? Date(timeIntervalSince1970: stamp) : nil
+                let updated = stamp > 0 ? Date(timeIntervalSince1970: stamp) : nil
+                if let index = assets.firstIndex(where: { $0.id == id }) {
+                    assets[index].bytes = bytes
+                    assets[index].updated = updated
+                } else if let url = item["url"], !url.isEmpty {
+                    // Свой список, добавленный пользователем: восстанавливаем из хранилища.
+                    assets.append(GeoAsset(id: id,
+                                           name: item["name"] ?? id,
+                                           url: url,
+                                           bytes: bytes,
+                                           updated: updated))
+                }
             }
         }
     }

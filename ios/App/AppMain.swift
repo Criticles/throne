@@ -26,6 +26,8 @@ struct RootView: View {
                 .tabItem { Label("Серверы", systemImage: "square.stack.3d.up.fill") }
             RoutingView()
                 .tabItem { Label("Маршрут", systemImage: "arrow.triangle.branch") }
+            ConnectionsView()
+                .tabItem { Label("Соединения", systemImage: "arrow.left.arrow.right") }
             SettingsView()
                 .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
         }

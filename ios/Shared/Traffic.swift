@@ -54,6 +54,17 @@ final class TrafficStatsStore: ObservableObject {
         return grouped.values.sorted { ($0.up + $0.down) > ($1.up + $1.down) }
     }
 
+    /// Расход за всё время по одному профилю.
+    func total(profile: String) -> (up: Int64, down: Int64) {
+        var up: Int64 = 0
+        var down: Int64 = 0
+        for row in rows where row.profile == profile {
+            up += row.up
+            down += row.down
+        }
+        return (up, down)
+    }
+
     func clear() {
         rows = []
         save()

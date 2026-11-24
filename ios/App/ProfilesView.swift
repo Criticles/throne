@@ -1,7 +1,6 @@
 import SwiftUI
 
 /// Главный экран: состояние туннеля, папки подписок и список серверов.
-/// Пинг не висит в каждой строке: у сервера есть кнопка, результат появляется по нажатию.
 struct ProfilesView: View {
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var engine: DevEngine
@@ -18,6 +17,11 @@ struct ProfilesView: View {
     @State private var qrProfile: Profile?
     @State private var noteProfile: Profile?
     @State private var noteText = ""
+    @State private var detailsProfile: Profile?
+
+    @StateObject private var stats = TrafficStatsStore.shared
+
+    // MARK: - Данные
 
     private var rowsByID: [UUID: DevEngine.BulkRow] {
         var map: [UUID: DevEngine.BulkRow] = [:]
@@ -26,36 +30,66 @@ struct ProfilesView: View {
     }
 
     private var visible: [Profile] {
-        let filtered = store.profiles.filter { profile in
+        var filtered: [Profile] = []
+        for profile in store.profiles {
             let inFolder = folder == nil || (profile.group ?? ProfileStore.manualFolder) == folder
-            guard inFolder else { return false }
-            guard !query.isEmpty else { return true }
-            return profile.name.localizedCaseInsensitiveContains(query)
-                || (profile.badge ?? profile.kind.title).localizedCaseInsensitiveContains(query)
+            guard inFolder else { continue }
+            if query.isEmpty {
+                filtered.append(profile)
+            } else if profile.name.localizedCaseInsensitiveContains(query)
+                        || (profile.badge ?? profile.kind.title).localizedCaseInsensitiveContains(query) {
+                filtered.append(profile)
+            }
         }
         let map = rowsByID
-        let ordered: [Profile]
+        var ordered = filtered
         switch prefs.sortOrder {
         case .name:
-            ordered = filtered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            ordered.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         case .kind:
-            ordered = filtered.sorted {
+            ordered.sort {
                 ($0.badge ?? $0.kind.title).localizedCaseInsensitiveCompare($1.badge ?? $1.kind.title) == .orderedAscending
             }
         case .ping:
-            ordered = filtered.sorted { ping($0, map) < ping($1, map) }
+            ordered.sort { ping($0, map) < ping($1, map) }
         case .country:
-            ordered = filtered.sorted { country($0, map) < country($1, map) }
+            ordered.sort { country($0, map) < country($1, map) }
         }
-        guard prefs.favoriteFirst else { return ordered }
-        return ordered.sorted { $0.favorite && !$1.favorite }
+        if prefs.favoriteFirst {
+            ordered.sort { $0.favorite && !$1.favorite }
+        }
+        return ordered
     }
 
-    /// Серверов в папке / сколько из них отвечает.
-    private var counters: (all: Int, alive: Int) {
+    private var aliveCount: Int {
         let map = rowsByID
-        let alive = visible.filter { map[$0.id]?.result?.ok == true }.count
-        return (visible.count, alive)
+        var count = 0
+        for profile in visible where map[profile.id]?.result?.ok == true { count += 1 }
+        return count
+    }
+
+    private var fastest: Profile? {
+        var best: Profile?
+        var bestMillis = Int.max
+        let map = rowsByID
+        for profile in visible {
+            guard let millis = map[profile.id]?.result?.millis else { continue }
+            if millis < bestMillis {
+                bestMillis = millis
+                best = profile
+            }
+        }
+        return best
+    }
+
+    private var fastestRow: DevEngine.BulkRow? {
+        guard let fastest else { return nil }
+        return rowsByID[fastest.id]
+    }
+
+    private var selectedTraffic: (up: Int64, down: Int64) {
+        guard let selected = store.selected else { return (0, 0) }
+        return stats.total(profile: selected.name)
     }
 
     var body: some View {
@@ -77,11 +111,14 @@ struct ProfilesView: View {
             .sheet(item: $noteProfile) { profile in
                 noteSheet(for: profile)
             }
+            .sheet(item: $detailsProfile) { profile in
+                ServerDetailsView(profile: profile)
+            }
         }
         .navigationViewStyle(.stack)
     }
 
-    // MARK: - Состояние
+    // MARK: - Верх
 
     private var connectionSection: some View {
         Section {
@@ -97,6 +134,9 @@ struct ProfilesView: View {
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .lineLimit(3)
+                    Text("трафик за всё время: ↑ " + Self.size(selectedTraffic.up) + " · ↓ " + Self.size(selectedTraffic.down))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
                 Spacer(minLength: 0)
                 PowerButton(on: engine.running, busy: engine.bulkRunning) {
@@ -105,6 +145,27 @@ struct ProfilesView: View {
                 .disabled(engine.bulkRunning)
             }
             .padding(.vertical, 6)
+
+            if let fastest, let row = fastestRow, let result = row.result {
+                Button {
+                    Task { await connect(fastest) }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "bolt.horizontal.circle.fill")
+                            .foregroundColor(Theme.accent)
+                        Text("Подключиться к быстрому: " + Self.country(result) + " · " + String(result.millis ?? 0) + " мс")
+                            .font(.footnote.weight(.medium))
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Text(fastest.name)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.borderless)
+            }
 
             if engine.transportOnly {
                 Label("только транспорт: VK и SRTP подняты, туннеля нет",
@@ -120,7 +181,7 @@ struct ProfilesView: View {
 
     private var statusLine: String {
         if !probeLine.isEmpty { return probeLine }
-        if engine.running { return "нажмите «пинг» у сервера, чтобы увидеть страну и задержку" }
+        if engine.running { return "трафик идёт через выбранный сервер" }
         if store.selected == nil { return "добавьте подписку кнопкой +" }
         return "нажмите кнопку питания, чтобы поднять туннель"
     }
@@ -151,127 +212,133 @@ struct ProfilesView: View {
         Section {
             if visible.isEmpty {
                 Text(store.profiles.isEmpty
-                     ? "пока пусто. Кнопка + сверху: ссылка подписки, буфер обмена или отдельная vless://"
+                     ? "пока пусто. Кнопка + сверху: подписка, буфер, QR или отдельная vless://"
                      : "в этой папке ничего не нашлось")
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
             ForEach(visible) { profile in
-                ServerRow(profile: profile,
-                          selected: store.selectedID == profile.id,
-                          active: engine.running && engine.activeName == profile.name,
-                          bulk: rowsByID[profile.id],
-                          busy: engine.bulkRunning) {
-                    Task { await check(profile) }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { store.select(profile.id) }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button(role: .destructive) {
-                        store.delete(profile)
-                    } label: {
-                        Label("Удалить", systemImage: "trash")
-                    }
-                    Button {
-                        store.select(profile.id)
-                        Task { await toggle() }
-                    } label: {
-                        Label("Подключить", systemImage: "power")
-                    }
-                    .tint(.green)
-                }
-                .swipeActions(edge: .leading) {
-                    Button {
-                        store.toggleFavorite(profile)
-                    } label: {
-                        Label(profile.favorite ? "Убрать" : "В избранное", systemImage: "star")
-                    }
-                    .tint(.yellow)
-                }
-                .contextMenu {
-                    Button {
-                        store.select(profile.id)
-                        Task { await toggle() }
-                    } label: {
-                        Label("Подключиться", systemImage: "power")
-                    }
-                    Button {
-                        Task { await check(profile) }
-                    } label: {
-                        Label("Пинг", systemImage: "waveform.path.ecg")
-                    }
-                    Button {
-                        store.toggleFavorite(profile)
-                    } label: {
-                        Label(profile.favorite ? "Убрать из избранного" : "В избранное",
-                              systemImage: profile.favorite ? "star.slash" : "star")
-                    }
-                    Button {
-                        noteText = profile.userNote ?? ""
-                        noteProfile = profile
-                    } label: {
-                        Label(profile.userNote == nil ? "Добавить заметку" : "Изменить заметку",
-                              systemImage: "text.bubble")
-                    }
-                    if let link = shareLink(profile) {
-                        Button {
-                            UIPasteboard.general.string = link
-                        } label: {
-                            Label("Скопировать ссылку", systemImage: "doc.on.doc")
-                        }
-                        Button {
-                            UIPasteboard.general.string = deepLink(for: profile)
-                        } label: {
-                            Label("Скопировать ссылку для Throne", systemImage: "link.badge.plus")
-                        }
-                        Button {
-                            qrProfile = profile
-                        } label: {
-                            Label("Показать QR", systemImage: "qrcode")
-                        }
-                    }
-                    Divider()
-                    Button(role: .destructive) {
-                        store.delete(profile)
-                    } label: {
-                        Label("Удалить", systemImage: "trash")
-                    }
-                }
+                row(profile)
             }
         } header: {
-            HStack(spacing: 8) {
-                Text(folder ?? "Все серверы")
-                Text("\(counters.all)/\(counters.alive)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-                if engine.bulkRunning {
-                    ProgressView().scaleEffect(0.7)
-                }
-                HeaderButton(icon: "waveform.path.ecg", tint: Theme.accent) {
-                    Task { await checkAll() }
-                }
-                .disabled(engine.bulkRunning || visible.isEmpty)
-                HeaderButton(icon: "arrow.clockwise", tint: Theme.accent) {
-                    Task { await refreshCurrent() }
-                }
-                .disabled(store.subscriptions.isEmpty || store.loading)
-                Menu {
-                    Picker("Сортировка", selection: $prefs.sortOrder) {
-                        ForEach(Prefs.SortOrder.allCases) { order in
-                            Text(order.title).tag(order)
-                        }
+            headerRow
+        }
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 8) {
+            Text(folder ?? "Все серверы")
+            Text(String(visible.count) + "/" + String(aliveCount))
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+            if engine.bulkRunning {
+                ProgressView().scaleEffect(0.7)
+            }
+            HeaderButton(icon: "waveform.path.ecg", tint: Theme.accent) {
+                Task { await checkAll() }
+            }
+            .disabled(engine.bulkRunning || visible.isEmpty)
+            HeaderButton(icon: "arrow.clockwise", tint: Theme.accent) {
+                Task { await refreshCurrent() }
+            }
+            .disabled(store.subscriptions.isEmpty || store.loading)
+            Menu {
+                Picker("Сортировка", selection: $prefs.sortOrder) {
+                    ForEach(Prefs.SortOrder.allCases) { order in
+                        Text(order.title).tag(order)
                     }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 26, height: 26)
                 }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 26, height: 26)
             }
         }
     }
 
-    // MARK: - Кнопки сверху
+    private func row(_ profile: Profile) -> some View {
+        ServerRow(profile: profile,
+                  selected: store.selectedID == profile.id,
+                  active: engine.running && engine.activeProfileID == profile.id,
+                  bulk: rowsByID[profile.id],
+                  speed: engine.speed[profile.id],
+                  busy: engine.bulkRunning || engine.speedRunning != nil,
+                  onPing: { Task { await engine.check(profile: profile) } },
+                  onSpeed: { Task { await engine.measureSpeed(profile: profile) } })
+            .contentShape(Rectangle())
+            .onTapGesture { store.select(profile.id) }
+            .onLongPressGesture { detailsProfile = profile }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    store.delete(profile)
+                } label: {
+                    Label("Удалить", systemImage: "trash")
+                }
+                Button {
+                    Task { await connect(profile) }
+                } label: {
+                    Label("Подключить", systemImage: "power")
+                }
+                .tint(.green)
+            }
+            .swipeActions(edge: .leading) {
+                Button {
+                    store.toggleFavorite(profile)
+                } label: {
+                    Label(profile.favorite ? "Убрать" : "В избранное", systemImage: "star")
+                }
+                .tint(.yellow)
+            }
+            .contextMenu {
+                Button { detailsProfile = profile } label: {
+                    Label("Сведения", systemImage: "info.circle")
+                }
+                Button { Task { await connect(profile) } } label: {
+                    Label("Подключиться", systemImage: "power")
+                }
+                Button { Task { await engine.check(profile: profile) } } label: {
+                    Label("Пинг", systemImage: "waveform.path.ecg")
+                }
+                Button { Task { await engine.measureSpeed(profile: profile) } } label: {
+                    Label("Скорость", systemImage: "speedometer")
+                }
+                Button { store.toggleFavorite(profile) } label: {
+                    Label(profile.favorite ? "Убрать из избранного" : "В избранное",
+                          systemImage: profile.favorite ? "star.slash" : "star")
+                }
+                Button {
+                    noteText = profile.userNote ?? ""
+                    noteProfile = profile
+                } label: {
+                    Label(profile.userNote == nil ? "Добавить заметку" : "Изменить заметку",
+                          systemImage: "text.bubble")
+                }
+                if shareLink(profile) != nil {
+                    Button {
+                        UIPasteboard.general.string = shareLink(profile)
+                    } label: {
+                        Label("Скопировать ссылку", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        UIPasteboard.general.string = deepLink(for: profile)
+                    } label: {
+                        Label("Скопировать для Throne", systemImage: "link.badge.plus")
+                    }
+                    Button { qrProfile = profile } label: {
+                        Label("Показать QR", systemImage: "qrcode")
+                    }
+                }
+                Divider()
+                Button(role: .destructive) {
+                    store.delete(profile)
+                } label: {
+                    Label("Удалить", systemImage: "trash")
+                }
+            }
+    }
+
+    // MARK: - Тулбар и шторки
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
@@ -284,21 +351,15 @@ struct ProfilesView: View {
                 } label: {
                     Label("Подписка по ссылке", systemImage: "link")
                 }
-                Button {
-                    importClipboard()
-                } label: {
+                Button { importClipboard() } label: {
                     Label("Импорт из буфера", systemImage: "doc.on.clipboard")
                 }
-                Button {
-                    showScanner = true
-                } label: {
+                Button { showScanner = true } label: {
                     Label("Сканировать QR", systemImage: "qrcode.viewfinder")
                 }
                 if !store.subscriptions.isEmpty {
                     Divider()
-                    Button {
-                        Task { await refreshAll() }
-                    } label: {
+                    Button { Task { await refreshAll() } } label: {
                         Label("Обновить все подписки", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
@@ -349,111 +410,6 @@ struct ProfilesView: View {
         .navigationViewStyle(.stack)
     }
 
-    // MARK: - Действия
-
-    private func ping(_ profile: Profile, _ map: [UUID: DevEngine.BulkRow]) -> Int {
-        map[profile.id]?.result?.millis ?? Int.max
-    }
-
-    private func country(_ profile: Profile, _ map: [UUID: DevEngine.BulkRow]) -> String {
-        map[profile.id]?.result?.countryCode ?? "ZZ"
-    }
-
-    private func addSubscription() {
-        let input = addText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = addTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        showAdd = false
-        Task {
-            if input.lowercased().hasPrefix("http") {
-                await store.importFromURL(input, name: name.isEmpty ? nil : name)
-            } else {
-                store.importFromText(input)
-            }
-            if !name.isEmpty { folder = name }
-        }
-    }
-
-    private func importClipboard() {
-        guard let text = UIPasteboard.general.string, !text.isEmpty else {
-            probeLine = "буфер обмена пуст"
-            return
-        }
-        showAdd = false
-        Task { await store.importAny(text) }
-    }
-
-    /// Обновляем подписку выбранной папки, а если выбрано «Все» — все подписки.
-    private func refreshCurrent() async {
-        if let name = folder, let subscription = store.subscriptions.first(where: { $0.name == name }) {
-            await store.refresh(subscription)
-        } else {
-            await refreshAll()
-        }
-    }
-
-    private func refreshAll() async {
-        for subscription in store.subscriptions {
-            await store.refresh(subscription)
-        }
-    }
-
-    private func toggle() async {
-        if engine.running {
-            engine.stop()
-            traffic.stop()
-            probeLine = ""
-            return
-        }
-        guard let profile = store.selected else {
-            probeLine = "сначала выберите сервер"
-            return
-        }
-        engine.start(profile: profile)
-        if engine.running, !engine.transportOnly {
-            traffic.start(profile: profile.name)
-        }
-        guard engine.running, !engine.transportOnly else { return }
-        if !engine.isListening() {
-            probeLine = "ядро не слушает \(engine.socksAddress)"
-            return
-        }
-        probeLine = "проверяю выход…"
-        let result = await Probe.timed(port: engine.proxyPort, timeout: 15)
-        probeLine = result?.summary ?? "нет связи — смотрите журнал"
-    }
-
-    private func checkAll() async {
-        let wasRunning = engine.running
-        await engine.checkAll(profiles: visible)
-        // Автогруппа «быстрейший»: после серии выбираем сервер с минимальной задержкой.
-        guard prefs.autoFastest else { return }
-        let best = engine.bulk
-            .filter { $0.result?.ok == true }
-            .min { ($0.result?.millis ?? Int.max) < ($1.result?.millis ?? Int.max) }
-        guard let best, let profile = store.profiles.first(where: { $0.id == best.id }) else { return }
-        store.select(profile.id)
-        probeLine = "автовыбор: " + profile.name + " · " + (best.result?.shortSummary ?? "")
-        if wasRunning {
-            // Серия пингов гасит ядро — возвращаемся на быстрейший сервер, а не оставляем выключенным.
-            engine.start(profile: profile)
-            if engine.running, !engine.transportOnly { traffic.start(profile: profile.name) }
-        }
-    }
-
-    private func check(_ profile: Profile) async {
-        await engine.check(profile: profile)
-        if let result = rowsByID[profile.id]?.result {
-            probeLine = result.summary
-        }
-    }
-
-    /// Ссылка в формате приложения: по ней Throne импортирует профиль сам.
-    private func deepLink(for profile: Profile) -> String {
-        let link = shareLink(profile) ?? profile.payload
-        let encoded = link.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? link
-        return "throne://import?url=" + encoded
-    }
-
     private var scannerSheet: some View {
         NavigationView {
             QRScannerView { code in
@@ -499,39 +455,119 @@ struct ProfilesView: View {
         .navigationViewStyle(.stack)
     }
 
-    /// Поделиться можно только тем профилем, у которого есть share-ссылка.
+    // MARK: - Действия
+
+    private func ping(_ profile: Profile, _ map: [UUID: DevEngine.BulkRow]) -> Int {
+        map[profile.id]?.result?.millis ?? Int.max
+    }
+
+    private func country(_ profile: Profile, _ map: [UUID: DevEngine.BulkRow]) -> String {
+        map[profile.id]?.result?.countryCode ?? "ZZ"
+    }
+
+    private static func country(_ result: ProbeResult) -> String {
+        Probe.countryName(code: result.countryCode, fallback: result.country) ?? result.ip ?? "—"
+    }
+
+    private static func size(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func addSubscription() {
+        let input = addText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = addTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        showAdd = false
+        Task {
+            if input.lowercased().hasPrefix("http") {
+                await store.importFromURL(input, name: name.isEmpty ? nil : name)
+            } else {
+                store.importFromText(input)
+            }
+            if !name.isEmpty { folder = name }
+        }
+    }
+
+    private func importClipboard() {
+        guard let text = UIPasteboard.general.string, !text.isEmpty else {
+            probeLine = "буфер обмена пуст"
+            return
+        }
+        showAdd = false
+        Task { await store.importAny(text) }
+    }
+
+    private func refreshCurrent() async {
+        if let name = folder, let subscription = store.subscriptions.first(where: { $0.name == name }) {
+            await store.refresh(subscription)
+        } else {
+            await refreshAll()
+        }
+    }
+
+    private func refreshAll() async {
+        for subscription in store.subscriptions {
+            await store.refresh(subscription)
+        }
+    }
+
+    private func connect(_ profile: Profile) async {
+        store.select(profile.id)
+        engine.start(profile: profile, pool: store.profiles)
+        if engine.running, !engine.transportOnly {
+            traffic.start(profile: profile.name)
+        }
+        probeLine = engine.running ? "подключено: " + profile.name : (engine.lastError ?? "не удалось поднять ядро")
+    }
+
+    private func toggle() async {
+        if engine.running {
+            engine.stop()
+            traffic.stop()
+            probeLine = ""
+            return
+        }
+        guard let profile = store.selected else {
+            probeLine = "сначала выберите сервер"
+            return
+        }
+        await connect(profile)
+    }
+
+    private func checkAll() async {
+        let wasRunning = engine.running
+        let activeID = engine.activeProfileID
+        await engine.checkAll(profiles: visible)
+        guard prefs.autoFastest else { return }
+        guard let fastest else { return }
+        store.select(fastest.id)
+        probeLine = "автовыбор: " + fastest.name
+        if wasRunning || activeID != nil {
+            await connect(fastest)
+        }
+    }
+
     private func shareLink(_ profile: Profile) -> String? {
         let text = profile.payload.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.contains("://") ? text : nil
     }
-}
 
-/// Маленькая кнопка в заголовке секции: только иконка, чтобы не отнимать место у названия.
-struct HeaderButton: View {
-    let icon: String
-    var tint: Color = .secondary
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.caption.weight(.semibold))
-                .foregroundColor(tint)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(Color(uiColor: .tertiarySystemFill)))
-        }
-        .buttonStyle(.borderless)
+    private func deepLink(for profile: Profile) -> String {
+        let link = shareLink(profile) ?? profile.payload
+        let encoded = link.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? link
+        return "throne://import?url=" + encoded
     }
 }
 
-/// Строка списка: имя сервера, протокол и кнопка пинга. Результат — только после нажатия.
+/// Строка списка: бейдж протокола, название и плашки «Пинг» и «Скорость».
 struct ServerRow: View {
     let profile: Profile
     let selected: Bool
     let active: Bool
     let bulk: DevEngine.BulkRow?
+    let speed: DevEngine.SpeedResult?
     let busy: Bool
-    let ping: () -> Void
+    let onPing: () -> Void
+    let onSpeed: () -> Void
 
     private var result: ProbeResult? { bulk?.result }
 
@@ -544,62 +580,47 @@ struct ServerRow: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Text(profile.name)
-                        .font(.subheadline.weight(.medium))
-                        .fixedSize(horizontal: false, vertical: true)
+                    ProtocolBadge(text: profile.badge ?? profile.kind.title)
+                    if active {
+                        Text("активен")
+                            .font(.caption2)
+                            .foregroundColor(Theme.accent)
+                    }
                     if profile.favorite {
                         Image(systemName: "star.fill")
                             .font(.caption2)
                             .foregroundColor(.yellow)
                     }
-                    if active {
-                        Image(systemName: "bolt.fill")
-                            .font(.caption2)
-                            .foregroundColor(Theme.accent)
-                    }
+                }
+
+                Text(profile.name)
+                    .font(.subheadline.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let note = profile.userNote {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
 
                 HStack(spacing: 6) {
-                    ProtocolBadge(text: profile.badge ?? profile.kind.title)
-                    if let note = profile.userNote {
-                        Text(note)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
+                    PlaqueButton(title: "Пинг", icon: "waveform.path.ecg", action: onPing)
+                    PlaqueButton(title: "Скорость", icon: "speedometer", action: onSpeed)
                     if let result {
                         Text(result.shortSummary)
                             .font(.caption2.weight(.medium))
                             .foregroundColor(result.ok ? Theme.pingColor(result.millis) : .red)
                             .lineLimit(1)
-                    } else if let note = bulk?.note {
-                        Text(note)
-                            .font(.caption2)
-                            .foregroundColor(.orange)
-                            .lineLimit(2)
+                    } else if let speed {
+                        Text(String(format: "%.1f Мбит/с", speed.mbps))
+                            .font(.caption2.weight(.medium))
+                            .foregroundColor(.green)
                     }
+                    Spacer(minLength: 0)
                 }
+                .disabled(busy)
             }
-
-            Spacer(minLength: 4)
-
-            Button(action: ping) {
-                VStack(spacing: 2) {
-                    if let bulk, !bulk.done {
-                        ProgressView().scaleEffect(0.6).frame(width: 30, height: 26)
-                    } else {
-                        Image(systemName: result == nil ? "waveform.path.ecg" : "arrow.clockwise")
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(Theme.accent)
-                            .frame(width: 30, height: 26)
-                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color(uiColor: .tertiarySystemFill)))
-                    }
-                }
-            }
-            .buttonStyle(.borderless)
-            .disabled(busy)
-            .accessibilityLabel("Пинг")
         }
         .padding(.vertical, 5)
     }

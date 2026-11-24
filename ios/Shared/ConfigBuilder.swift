@@ -83,6 +83,75 @@ enum ConfigBuilder {
         return json
     }
 
+    /// Живой конфиг: все серверы внутри одного ядра, `final` — выбранный.
+    ///
+    /// Зачем: тогда пинг любого сервера не требует перезапуска ядра и не рвёт текущее
+    /// соединение — Clash API спрашивает задержку у конкретного outbound, а трафик идёт
+    /// через `final`.
+    static func buildLive(profiles: [Profile], selected: Profile?) throws -> (json: String, tags: [UUID: String]) {
+        var outbounds: [[String: Any]] = []
+        var endpoints: [[String: Any]] = []
+        var tags: [UUID: String] = [:]
+        var selectedTag: String?
+
+        for profile in profiles {
+            let tag = "s\(tags.count)"
+            switch profile.kind {
+            case .vless:
+                guard let link = try? VLESSLink.parse(profile.payload) else { continue }
+                var outbound = vlessOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .hysteria2:
+                guard let link = Hysteria2Link.parse(profile.payload) else { continue }
+                var outbound = hysteria2Outbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .mieru:
+                guard let link = MieruLink.parse(profile.payload) else { continue }
+                var outbound = mieruOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .wireguard:
+                guard let wg = WireGuardConfig.parse(profile.payload) else { continue }
+                endpoints.append(wireguardEndpoint(
+                    tag: tag,
+                    privateKey: wg.privateKey,
+                    publicKey: wg.publicKey,
+                    addresses: wg.addresses,
+                    mtu: wg.mtu,
+                    keepAlive: wg.keepAlive,
+                    peerHost: wg.host,
+                    peerPort: wg.port,
+                    amnezia: wg.amnezia
+                ))
+            default:
+                continue
+            }
+            tags[profile.id] = tag
+            if profile.id == selected?.id { selectedTag = tag }
+        }
+
+        guard !outbounds.isEmpty || !endpoints.isEmpty else {
+            throw BuildError.unsupported("нет серверов, которые sing-box может держать в одном конфиге")
+        }
+
+        var config: [String: Any] = [
+            "log": ["level": "info", "timestamp": true],
+            "dns": dnsConfig(detour: selected?.kind == .wireguard ? selectedTag : nil),
+            "inbounds": [inbound()],
+            "outbounds": outbounds + [["type": "direct", "tag": "direct"]],
+            "route": ["final": selectedTag ?? "direct", "auto_detect_interface": false],
+            "experimental": clashAPI(),
+        ]
+        if !endpoints.isEmpty { config["endpoints"] = endpoints }
+
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8)
+        else { throw BuildError.encodingFailed }
+        return (json, tags)
+    }
+
     /// Один конфиг со всеми серверами сразу — для параллельного пинга через Clash API.
     ///
     /// Clash API (`experimental.clash_api`) умеет отдавать задержку конкретного outbound:
