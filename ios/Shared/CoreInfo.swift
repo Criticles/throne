@@ -19,9 +19,10 @@ enum CoreInfo {
     /// Версия sing-box берётся из самого фреймворка, остальное — пины из CI.
     static var lines: [CoreLine] {
         [
-            CoreLine(id: "singbox", title: "sing-box", value: "throneproj/sing-box"),
-            CoreLine(id: "xray", title: "Xray", value: "throneproj/xray"),
-            CoreLine(id: "turnable", title: "WireTurn", value: "Turnable"),
+            CoreLine(id: "singbox", title: "sing-box", value: LibboxVersion()),
+            CoreLine(id: "singbox-repo", title: "форк", value: singboxRepo),
+            CoreLine(id: "xray", title: "Xray", value: xrayRepo),
+            CoreLine(id: "turnable", title: "WireTurn", value: "Turnable " + turnableVersion),
         ]
     }
 }

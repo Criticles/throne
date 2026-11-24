@@ -72,20 +72,20 @@ struct SubscriptionEditorView: View {
             ToolbarItem(placement: .cancellationAction) {
                 EditButton()
             }
-            ToolbarItem(placement: .confirmationAction) {
-                HStack(spacing: 12) {
-                    Button {
-                        showAdd = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    Button {
-                        presentation.wrappedValue.dismiss()
-                    } label: {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(Theme.accent)
-                    }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showAdd = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    presentation.wrappedValue.dismiss()
+                } label: {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Theme.accent)
                 }
             }
         }

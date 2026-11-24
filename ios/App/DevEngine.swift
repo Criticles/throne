@@ -415,6 +415,24 @@ final class DevEngine: ObservableObject {
         }
     }
 
+    /// Проверка уже поднятого соединения: IP, страна и пинг без перезапуска ядра.
+    /// Вызывается автоматически после подключения, чтобы карточка сразу показывала выход.
+    func probeActive(profile: Profile) async {
+        guard running, !transportOnly else { return }
+        let port = proxyPort
+        let result = await Probe.timed(port: port, timeout: 12)
+            ?? ProbeResult(ok: false, error: "нет ответа")
+        if let index = bulk.firstIndex(where: { $0.id == profile.id }) {
+            bulk[index].result = result
+            bulk[index].done = true
+        } else {
+            bulk.append(BulkRow(id: profile.id, name: profile.name,
+                                badge: profile.badge ?? profile.kind.title,
+                                result: result, note: nil, done: true))
+        }
+        append("выход: \(profile.name) → \(result.summary)")
+    }
+
     /// Замер скорости: скачиваем и отправляем файл через этот сервер.
     /// Это честный тест трафика, поэтому он поднимает именно выбранный профиль,
     /// и активное соединение на время замера прерывается.

@@ -46,8 +46,11 @@ struct CoreUpdatesView: View {
                         }
                         if let tag = latest[core.id],
                            let url = URL(string: "https://github.com/" + core.repo + "/releases/tag/" + tag) {
-                            Link("Открыть " + tag, destination: url)
-                                .font(.caption)
+                            Link(destination: url) {
+                                Label("Обновить до " + tag, systemImage: "arrow.down.circle")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(Theme.accent)
                         }
                     }
                     .padding(.vertical, 2)

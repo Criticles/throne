@@ -100,7 +100,6 @@ struct ProfilesView: View {
                 connectionSection
                 fastestSection
                 folderSection
-                controlsSection
                 serverSection
             }
             .listStyle(.insetGrouped)
@@ -304,7 +303,45 @@ struct ProfilesView: View {
                 row(profile)
             }
         } header: {
-            Text(folder ?? "Все серверы")
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(folder ?? "Все серверы")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(String(visible.count) + "/" + String(aliveCount))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 4)
+                    HeaderButton(icon: "xmark", tint: .secondary) {
+                        engine.stop()
+                        traffic.stop()
+                        probeLine = ""
+                    }
+                    .disabled(!engine.running && !engine.bulkRunning && engine.speedRunning == nil)
+                    HeaderButton(icon: "waveform.path.ecg", tint: Theme.accent) {
+                        Task { await checkAll() }
+                    }
+                    .disabled(engine.bulkRunning || visible.isEmpty)
+                    HeaderButton(icon: "arrow.clockwise", tint: Theme.accent) {
+                        Task { await refreshCurrent() }
+                    }
+                    .disabled(store.subscriptions.isEmpty || store.loading)
+                    Menu {
+                        Picker("Сортировка", selection: $prefs.sortOrder) {
+                            ForEach(Prefs.SortOrder.allCases) { order in
+                                Text(order.title).tag(order)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 26, height: 26)
+                    }
+                }
+                Text("Трафик за всё время: ↑ " + Self.size(selectedTraffic.up) + " · ↓ " + Self.size(selectedTraffic.down))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 
@@ -312,6 +349,7 @@ struct ProfilesView: View {
         ServerRow(profile: profile,
                   selected: store.selectedID == profile.id,
                   bulk: rowsByID[profile.id],
+                  speed: engine.speed[profile.id],
                   busy: engine.bulkRunning || engine.speedRunning != nil,
                   onPing: { Task { await engine.check(profile: profile) } })
             .contentShape(Rectangle())
@@ -557,8 +595,12 @@ struct ProfilesView: View {
         engine.start(profile: profile, pool: store.profiles)
         if engine.running, !engine.transportOnly {
             traffic.start(profile: profile.name)
+            probeLine = "определяю выход…"
+            await engine.probeActive(profile: profile)
+            probeLine = ""
+        } else {
+            probeLine = engine.lastError ?? ""
         }
-        probeLine = engine.running ? "" : (engine.lastError ?? "")
     }
 
     private func toggle() async {
@@ -605,6 +647,7 @@ struct ServerRow: View {
     let profile: Profile
     let selected: Bool
     let bulk: DevEngine.BulkRow?
+    let speed: DevEngine.SpeedResult?
     let busy: Bool
     let onPing: () -> Void
 
@@ -640,10 +683,18 @@ struct ServerRow: View {
                             .font(.caption2.weight(.medium))
                             .foregroundColor(result.ok ? Theme.pingColor(result.millis) : .red)
                             .lineLimit(1)
+                    } else if let ip = bulk?.result?.ip {
+                        Text(ip).font(.caption2).foregroundColor(.secondary)
                     }
                     Spacer(minLength: 0)
                 }
                 .disabled(busy)
+
+                if let speed {
+                    Text(String(format: "↓ %.1f · ↑ %.1f Мбит/с", speed.downMbps, speed.upMbps))
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
             }
         }
         .padding(.vertical, 6)

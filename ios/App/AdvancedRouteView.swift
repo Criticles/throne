@@ -114,10 +114,19 @@ struct AdvancedRouteView: View {
                     .labelsHidden()
 
                     if entry.kind == "rule" {
-                        TextField("geosite:ads, domain:example.com", text: $entry.value)
+                        Picker("Атрибут", selection: $entry.attr) {
+                            ForEach(RouteAttribute.all, id: \.self) { attr in
+                                Text(attr).tag(attr)
+                            }
+                        }
+                        .font(.caption)
+                        TextField(RouteAttribute.hint(entry.attr), text: $entry.value)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
                             .font(.system(.footnote, design: .monospaced))
+                        Text(RouteAttribute.hint(entry.attr))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     } else {
                         Picker("Цель", selection: $entry.value) {
                             ForEach(targets, id: \.self) { target in
@@ -133,13 +142,15 @@ struct AdvancedRouteView: View {
             }
 
             Menu {
-                Button {
-                    entries.append(RoutePlanEntry(kind: "rule", value: "geosite:"))
-                } label: {
-                    Label("Правило", systemImage: "line.3.horizontal.decrease")
+                Menu("Правило") {
+                    ForEach(RouteAttribute.all.prefix(10), id: \.self) { attr in
+                        Button(attr) {
+                            entries.append(RoutePlanEntry(kind: "rule", attr: attr, value: ""))
+                        }
+                    }
                 }
                 Button {
-                    entries.append(RoutePlanEntry(kind: "outbound", value: "direct"))
+                    entries.append(RoutePlanEntry(kind: "outbound", attr: "outbound", value: "direct"))
                 } label: {
                     Label("Outbound", systemImage: "arrow.turn.down.right")
                 }

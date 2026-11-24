@@ -101,7 +101,7 @@ struct SettingsView: View {
     private var protocolsSummary: String {
         let total = ProfileKind.allCases.count
         let allowed = store.allowedKinds.count
-        return allowed == total ? "все" : String(allowed) + " из " + String(total)
+        return allowed == total ? "Все" : String(allowed) + " из " + String(total)
     }
 
     private var protocolsSheet: some View {
@@ -359,6 +359,7 @@ struct SettingsView: View {
                 CoreUpdatesView()
             } label: {
                 Label("Проверка обновлений ядер", systemImage: "arrow.triangle.2.circlepath")
+                    .foregroundColor(Theme.accent)
             }
             Link(destination: URL(string: "https://github.com/Criticles/throne")!) {
                 Label("Исходники на GitHub", systemImage: "chevron.left.forwardslash.chevron.right")

@@ -1,325 +1,161 @@
 # Throne for iOS
 
-iOS-клиент прокси/VPN на том же ядре, что у Throne для ПК: форк `sing-box` (`throneproj/sing-box`)
-плюс транспорт **Turnable** (VK TURN/SFU). Ядро **Xray** подключается для протоколов, которых в
-sing-box нет — в первую очередь VLESS + XHTTP.
+Клиент для iPhone на ядре **sing-box** (форк `throneproj`) с **Xray** для VLESS + XHTTP и
+транспортом **Turnable** (WireTurn). Подписки панели, проверка серверов, маршрутизация
+правилами и живая статистика — без Xcode на Mac: сборка идёт в GitHub Actions, подпись
+делается на устройстве.
 
-Сборка идёт только через GitHub Actions (macOS-раннер), подпись — на стороне пользователя
-(Sideloadly / LiveContainer). Готовый артефакт — неподписанный `.ipa`.
+> Статус: dev-сборка. Работает через локальный SOCKS/HTTP внутри процесса приложения
+> (`Dev`-режим), потому что Network Extension требует entitlement платной команды Apple.
+> Неподписанный `.ipa` ставится через LiveContainer/Sideloadly.
 
----
+## Что уже есть
 
-## 1. Как это устроено: одно ядро, два транспорта
+| Блок | Возможности |
+|---|---|
+| Серверы | список с папками-подписками, поиск, избранное, заметки, три вида сортировки, выбор и подключение одним нажатием, «Подключиться к быстрому» |
+| Проверка | пинг всех серверов разом (Clash API, одно ядро), пинг одного сервера, тест скорости (скачивание и отдача), «Сведения» по долгому нажатию |
+| Подписки | импорт по ссылке/буферу/QR/`throne://`, автообновление по таймеру, срок и остаток трафика, переименование (папка), удаление, перестановка |
+| Маршрут | режимы (по правилам / кроме России / всё в VPN), гео-списки, финальный outbound, профили маршрутизации с атрибутами, экспорт/импорт JSON и `throne://route` |
+| Соединения | живые соединения из Clash API (хост → outbound → правило → объём), проверка «какое правило поймает адрес», трафик по профилям за 7/30 дней |
+| Настройки | ядра и версии, протоколы при импорте, DNS (системный/DoH/DoT), TUN (стек/MTU/IPv6), адреса для пинга и скорости, уведомления о конце подписки, проверка обновлений |
+| Ядра | sing-box `throneproj/sing-box`, Xray `throneproj/xray-core`, Turnable v0.8.7 |
 
-Ключевое ограничение iOS: **в одном процессе может жить только одна Go-среда**. Два
-gomobile-фреймворка в одном приложении дают два рантайма и падение на старте — это уже
-проверено на первом заходе с Turnable.
-
-Поэтому всё, что написано на Go, линкуется в **один** фреймворк — `Libbox.xcframework`,
-собранный из пакета `experimental/libbox` форка sing-box. Всё остальное добавляется туда же
-**оверлеями**: файл кладётся в тот же Go-пакет и экспортирует функции с префиксом `Libbox*`,
-которые gomobile поднимает в Swift.
+## 1. Архитектура
 
 ```
-                ┌──────────────────────────── Libbox.xcframework ──────────────────────────┐
-Go:             │  experimental/libbox (sing-box)                                          │
-                │    ├── zz_turnable.go  → LibboxTurnableStart/Stop/ListenAddress           │
-                │    └── zz_xray.go      → LibboxXrayStart/Stop   (в работе)                │
-                └──────────────────────────────────────────────────────────────────────────┘
-iOS (Swift):    App/ (SwiftUI) ──► DevEngine ──► LibboxCommandServer (sing-box)
-                                     │
-                                     └────────► TurnableEngine → LibboxTurnableStart
+iOS-приложение (SwiftUI)
+ ├─ DevEngine ────── libbox (одно Go-ядро в процессе)
+ │    ├─ sing-box: VLESS, Hysteria2, Mieru, WireGuard, AmneziaWG
+ │    ├─ Xray-оверлей: VLESS + XHTTP/Reality (zz_xray.go → LibboxXrayStart)
+ │    └─ Turnable-оверлей: транспорт WireTurn (zz_turnable.go), слушает 127.0.0.1:9000
+ ├─ Clash API ядра (127.0.0.1:19090): задержки outbound'ов, соединения, живой трафик
+ └─ PacketTunnel (NEPacketTunnelProvider) — для подписанной сборки
 ```
 
-Throne для ПК держит sing-box и Xray в одном Go-модуле (`core/go.mod`,
-`replace github.com/xtls/xray-core => github.com/throneproj/xray-core`). Мы повторяем ту же
-схему, но на уровне пакета: у gomobile один фреймворк на пакет, а два Go-рантайма в процессе
-не уживаются.
+Ключевая идея: **одно ядро держит все серверы сразу**. При подключении собирается конфиг со
+всеми outbound'ами, `route.final` указывает на выбранный сервер, а пинг спрашивает Clash API
+про конкретный outbound (`/proxies/<tag>/delay`). Поэтому проверка серверов не рвёт текущее
+соединение и не перезапускает ядро.
 
----
+WireTurn — не протокол sing-box: Turnable поднимает транспорт, а sing-box несёт WG-туннель
+поверх него через `wireguard`-эндпоинт, направленный в `127.0.0.1:9000`.
 
 ## 2. Карта репозитория
 
 ```
-core/
-  singbox-ref.txt           закреплённый коммит и теги сборки ядра
-  turnable_overlay/
-    zz_turnable.go          оверлей: Turnable внутри пакета libbox (единый рантайм)
-  turnablecore/             отдельный Go-пакет-обёртка для локальных тестов (turnprobe)
-    turnable.go             Setup/Start/ListenAddress/SetLogSink
-    cmd/turnprobe/main.go   CLI: поднять Turnable и смотреть лог без iOS
-
-ios/
-  project.yml               единственный источник истины для Xcode-проекта (XcodeGen)
-  App/
-    AppMain.swift           точка входа, три вкладки: Серверы / Маршрут / Настройки
-    ProfilesView.swift      «Серверы»: статус, папки, кнопки пинга/обновления/сортировки, строки
-    RoutingView.swift       «Маршрут»: режим, правила с подсказками, гео-списки, проверка домена
-    StatsView.swift         статистика: счётчики, последние пинги, живые соединения Clash API
-    LogsView.swift          журнал (открывается из настроек): флаги, копирование, экспорт в txt
-    SettingsView.swift      настройки: ядра, протоколы при импорте, подписки, журнал, VPN
-    Theme.swift             акцент, бейдж протокола, кнопка питания, чипы папок
-    Prefs.swift             режим маршрутизации, сортировка, обход LAN, реклама, Xray
-    ShareSheet.swift        UIActivityViewController для экспорта журнала
-    DevEngine.swift         запуск/остановка ядра в процессе приложения, проверка одного и всех
-    TurnableEngine.swift    обёртка над LibboxTurnable* (биндинг из оверлея)
-    DevPlatform.swift       заглушка LibboxPlatformInterface для dev-режима (без NE)
-    TunnelController.swift  управление VPN-профилем (Network Extension)
-  PacketTunnel/
-    PacketTunnelProvider.swift  NEPacketTunnelProvider: поднимает libbox с utun
-    PlatformInterface.swift     реализация платформенного интерфейса libbox
-  Shared/
-    Profile.swift           модель профиля (kind + payload + badge + note)
-    ProfileParser.swift     разбор подписки: share-ссылки, sing-box JSON, wireturn/turnable
-    ProfileStore.swift      импорт по трём User-Agent, дедупликация, хранение в UserDefaults
-    ConfigBuilder.swift     сборка JSON-конфига sing-box под каждый вид профиля
-    WireGuardConfig.swift   разбор wg:// и amneziawg:// (включая AmneziaWG 3.1)
-    VLESSLink.swift         разбор vless:// (включая type=xhttp для будущего Xray)
-    Probe.swift             проверка выхода: IP, страна, город, пинг
-    ClashApi.swift          локальный Clash API: задержки outbound'ов, живые соединения
-    CoreInfo.swift          что за ядра используются (версии и пины)
-    Rules.swift             правила маршрутизации, гео-списки, проверка домена
-    Subscription.swift      подписка-«папка» (имя, ссылка, дата обновления)
-    LogStore.swift          единый журнал (импорт + ядро + Turnable + проба)
-    LibboxBoot.swift        старт libbox с TCP control-портом (в LiveContainer unix-сокет не влезает)
-    TunnelLog.swift         лог для Network Extension (общий файл)
-    P0Config.swift, Shared.swift
-
-.github/workflows/ios.yml   сборка ядра, XcodeGen, xcodebuild, упаковка .ipa
-scripts/                    локальные помощники (проверка скобок Swift и т.п.)
-docs/                       заметки по подписи, секретам, фазе P0
+core/singbox-ref.txt        пин ядра: репозиторий, коммит, ветка, теги сборки
+core/turnable_overlay/      zz_turnable.go — биндинг Turnable в пакет libbox
+core/xray_overlay/          zz_xray.go — XrayStart/Stop/IsRunning в пакете libbox
+ios/project.yml             XcodeGen-спека (единственный источник проекта Xcode)
+ios/App/                    интерфейс и движок dev-режима
+  ProfilesView.swift        «Серверы»: карточка подключения, быстрый сервер, список
+  ServerDetailsView.swift   сведения о сервере: пинг, скорость, трафик, параметры
+  RoutingView.swift         «Маршрут»: режимы, гео-списки, вход в маршрутизацию
+  AdvancedRouteView.swift   профили маршрутизации: упрощённый и расширенный вид, JSON
+  ConnectionsView.swift     «Соединения»: живые соединения и проверка адреса
+  SettingsView.swift        настройки, ядра, протоколы, DNS, уведомления
+  CoreUpdatesView.swift     проверка обновлений ядер по релизам GitHub
+  SubscriptionEditorView.swift  подписки: добавление, порядок, настройки
+  DevEngine.swift           запуск ядра, проверки, скорость, теги outbound'ов
+  LogsView.swift, StatsView.swift, QRCode.swift, Theme.swift, Prefs.swift
+ios/Shared/                 модели и логика без UI
+  ProfileParser/ProfileStore  импорт подписок по трём User-Agent, дедупликация, папки
+  ConfigBuilder             сборка конфигов sing-box (одиночный, живой, пинговый)
+  ClashApi                  локальный Clash API: delay, connections
+  Probe                     проверка выхода: IP, страна, пинг по прогретому соединению
+  Rules / RuleStore         правила, гео-списки, профили маршрутизации, атрибуты
+  Traffic                   живой трафик (WebSocket) и накопление по профилям
+  UpdateChecker             проверка версии приложения по релизам GitHub
+  SubscriptionAlerts        напоминание об окончании подписки
+.github/workflows/ios.yml   сборка ядра, XcodeGen, xcodebuild, .ipa
+docs/                       заметки: сборка/подпись, экраны, маршрутизация, ядра
 ```
 
----
+## 3. Подписки
 
-## 3. Поток данных: от подписки до пакета
+Панель отдаёт разное в зависимости от `User-Agent` и `?format=`. Импорт делает несколько
+запросов и склеивает результат:
 
-### 3.1 Импорт подписки
-
-Панель отдаёт разное в зависимости от `User-Agent` и `?format=`. `ProfileStore.importAny`
-делает несколько запросов и склеивает результаты:
-
-| Запрос | Что даёт | Как разбирается |
-|---|---|---|
-| UA `v2rayNG/1.8.5` | base64-список share-ссылок (vless, hysteria2) | `ProfileParser.parseStructural` + построчный разбор |
-| UA `Throne/1.1.0` | смешанный текст: ссылки + JSON-конфиг sing-box | построчно: `{`/`[` → JSON, иначе ссылка |
-| UA `YPtun/3.7.0` | base64-список с `amneziawg://` | `WireGuardConfig.parse` |
-| `?format=wireturn` | массив `{kernelConfig:{config}, wgConfig, vlessConfig}` | `parseWireturn` |
-| `?format=turnable` | массив объектов-транспортов без ключей | `parseTurnable` |
-
-Дедупликация:
-- обычные профили — по «личности сервера» (`протокол|хост|порт`), потому что панель присылает
-  один сервер и ссылкой, и куском JSON-конфига;
-- WireTurn и Turnable — по имени; между собой они **не** склеиваются (см. §4).
-
-### 3.2 Запуск профиля (dev-режим)
-
-`DevEngine.start(profile:)`:
-
-1. Для WireTurn поднимается транспорт: `LibboxTurnableStart(kernelConfig, 127.0.0.1:9000)`.
-2. Для WireTurn подмешивается MTU (по умолчанию 1200 вместо панельных 1280 — поверх TURN/SRTP
-   крупные пакеты фрагментируются).
-3. `ConfigBuilder.build(profile:)` собирает JSON sing-box:
-   - inbound — `mixed` на `127.0.0.1:7891` (HTTP CONNECT + SOCKS5);
-   - outbound/endpoints — по виду профиля;
-   - DNS — см. §5;
-   - `route.auto_detect_interface = false` (Network Extension в dev-режиме нет).
-4. `LibboxCommandServer.startOrReloadService(json)` — sing-box стартует внутри процесса.
-5. Проверка выхода через локальный прокси (§6).
-
-### 3.3 Схемы по протоколам
-
-```
-VLESS + Reality        приложение → 127.0.0.1:7891 → vless outbound → сервер:443
-Hysteria2              приложение → 127.0.0.1:7891 → hysteria2 outbound (QUIC/UDP)
-Mieru                  приложение → 127.0.0.1:7891 → mieru outbound (TCP/UDP, свой протокол)
-WireGuard / AmneziaWG  приложение → 127.0.0.1:7891 → endpoint wireguard → сервер:UDP
-                       (AmneziaWG 3.1: random_trailers, disable_cookies, s1/s2/h1..h4, i1)
-WireTurn               приложение → 127.0.0.1:7891 → endpoint wireguard → 127.0.0.1:9000
-                                                            └─ Turnable: VK TURN/SFU → шлюз → WARP
-Turnable (сырой)       только транспорт: VK-авторизация, капча, SRTP; туннеля нет (нет ключей WG)
-```
-
----
-
-## 4. Turnable: почему это транспорт, а не протокол
-
-Turnable поднимает локальный UDP-порт и гоняет через него произвольные пакеты. Сам по себе он
-не даёт адреса в сети и не шифрует полезную нагрузку — это «труба».
-
-Панель отдаёт два разных формата одного и того же сервера:
-
-- `?format=wireturn` → транспорт **плюс** `wgConfig` (`privateKey`, `publicKey`, `address`, `mtu`):
-  из этого собирается полноценный туннель «WireGuard поверх Turnable»;
-- `?format=turnable` → **только** описание транспорта (`gateway`, `call_id`, `pub_key`, `routes`).
-
-Проверено на реальной подписке: объект из `turnable` совпадает с `kernelConfig.config` из
-`wireturn` символ в символ, но без `wgConfig`. Поэтому профиль Turnable запускает транспорт
-(VK-авторизация → капча → SRTP-сессия → `peer online 8/8`) и на этом останавливается: туннель
-строить не из чего. В интерфейсе это штатный режим, а не «ограничение сборки».
-
-Версия Turnable закреплена в CI: **v0.8.7** (в 0.8.5 капча VK упиралась в `ERROR_LIMIT`).
-В 0.8.7 переписан отпечаток браузера: canvas/audio-хэши, WebGL-рендерер, шрифты, экран,
-таймзона, `hardwareConcurrency`, `jsHeapSizeLimit`, телеметрия — именно это снимает лимит.
-
----
-
-## 5. DNS: почему он идёт через туннель
-
-Провайдер подменяет ответы системного резолвера. Замеры на этой машине и на устройстве:
-
-```
-системный DNS:  api.ipify.org → 198.20.0.68 / 8.6.112.0   (подмена)
-Cloudflare DoH: api.ipify.org → 104.26.12.205             (настоящий)
-```
-
-Если резолвить до туннеля, sing-box отправляет пакет на подставленный адрес: WireGuard-handshake
-проходит, а данных нет (`connection upload finished` через 20 с, `CFNetwork 310`).
-
-Поэтому `ConfigBuilder.dnsConfig(detour:)` для всех WireGuard/WireTurn-профилей ставит DNS
-через сам туннель:
-
-```json
-{"servers":[{"type":"udp","server":"1.1.1.1","detour":"wg-out","tag":"dns-remote"}],
- "final":"dns-remote","strategy":"ipv4_only"}
-```
-
-Отдельный случай — пир WireGuard, заданный доменом (`engage.cloudflareclient.com` у WARP).
-Его нельзя резолвить через туннель, которого ещё нет: адрес разрешается заранее системным
-`getaddrinfo` (`ConfigBuilder.resolveHost`) и подставляется в конфиг. То же делается для
-эндпоинтов в JSON, который присылает панель.
-
----
-
-## 6. Проверка выхода: IP, страна, пинг
-
-`Probe.viaProxy(port:)`:
-
-1. **Cloudflare trace** (`https://www.cloudflare.com/cdn-cgi/trace`) — основной источник IP и
-   `loc`; живёт на CDN и не отдаёт 502. Резерв — `ipinfo.io`, затем `ip-api.com` (HTTP).
-2. **Страна** локализуется по-русски: `🇩🇪 Германия`, `🇫🇮 Финляндия`.
-3. **Пинг — один RTT через туннель, по прогретому соединению.** Мерять первым запросом
-   нельзя: в него входит подъём соединения — TCP, TLS, у VLESS ещё Reality/XHTTP, у WireGuard
-   хендшейк. Отсюда были 900–2300 мс при реальных ~200. Поэтому сначала прогрев (он и поднимает
-   туннель), затем три запроса по уже открытому keep-alive соединению
-   (`httpMaximumConnectionsPerHost = 1`) и в итог идёт минимум — это и есть один круг до выхода,
-   одинаково посчитанный для VLESS, hysteria2, mieru, WireGuard и WireTurn.
-
-У каждой пробы есть потолок по времени (`Probe.timed`): мёртвый профиль (WARP из панели, чей
-хендшейк не отвечает) больше не держит очередь десятками секунд — он падает по таймауту и
-проверка идёт дальше.
-
-Кнопка пинга в заголовке списка проверяет серверы параллельно: собирается **один** конфиг со
-всеми outbound'ами, ядро поднимается один раз, а задержка каждого спрашивается у Clash API
-(`GET /proxies/<tag>/delay`). WireGuard — это `endpoints`, Clash API их не видит, поэтому они
-проверяются по очереди, как Xray и WireTurn (у последних своя VK-авторизация).
-
-Кнопка пинга в строке сервера проверяет только его: старт профиля, замер по прогретому
-соединению, IP и страна — и сразу стоп. Результат показывается в строке компактно
-(`🇫🇮 FI · 186 мс`), страны — кодом, чтобы влезало в одну строку.
-
-Счётчик в заголовке списка — «всего/отвечает»: видно, сколько серверов уже пропинговано.
-
-У VK-капчи есть лимит на подряд идущие авторизации, поэтому в серии выполняется не больше
-8 WireTurn-профилей, остальные помечаются причиной пропуска.
-
----
-
-## 6.1 Маршрутизация
-
-Вкладка «Маршрут» — редактор правил в приложении, а не только в конфиге панели:
-
-- режимы «По правилам / Всё в VPN / Напрямую»;
-- правила: домен и поддомены, точный домен, слово в адресе, IP/подсеть, `geosite:<тег>`,
-  `geoip:<страна>`, приложение; действие — через VPN, напрямую, блокировать; порядок важен,
-  срабатывает первое совпадение;
-- при вводе правила подсказываются теги geosite, коды стран и уже добавленные значения;
-- гео-списки Loyalsoldier (`geoip.dat`, `geosite.dat`) качаются в Application Support,
-  размер и дата видны в интерфейсе;
-- поле «какое правило поймает адрес» проверяет домен по вашим правилам и показывает результат.
-
-В dev-режиме ядро поднимает один сервер, поэтому правила пока не влияют на трафик — они
-применяются в сборке через Network Extension (`route.rules` + `rule_set`).
-
----
-
-## 6.2 Что взято из Throne (Android/ПК)
-
-| Возможность | Как сделано у нас |
+| Запрос | Что даёт |
 |---|---|
-| Автообновление подписки | флаг и интервал у каждой подписки, проверка при запуске и раз в 30 минут, пока приложение открыто |
-| Срок действия и остаток трафика | разбирается заголовок `subscription-userinfo`, показывается на карточке подписки |
-| Избранное и заметки | звезда (свайп вправо или меню), заметка в меню; избранные идут первыми |
-| QR и deep link | сканер камерой, показ QR, копирование обычной ссылки **и** `throne://import?url=…` |
-| Автогруппа «быстрейший» | после параллельного пинга выбирается минимальная задержка; если были подключены — переподключаемся на неё |
-| Наборы правил по URL | `.srs`/списки по ссылке, автообновление при запуске, готовые пресеты |
-| Финальный outbound и порядок | «если ни одно правило не совпало» + перетаскивание правил |
-| Always-on VPN | `isOnDemandEnabled` + `NEOnDemandRuleConnect` — iOS сама поднимает туннель после падения |
-| Живые графики скорости | вебсокет Clash API `/traffic`, последние 60 срезов |
-| Трафик по профилям | накопление из `/traffic` по дням, сводка за 7/30 дней |
-| Дашборд соединений | `/connections`: хост, сервер, правило, объём |
-| DNS | системный / DoH / DoT, применяется сразу |
-| TUN: стек, MTU, IPv6 | хранится в настройках, применяется в NE-сборке |
+| UA `v2rayNG/1.8.5` | base64-список ссылок (vless, hysteria2) |
+| UA `Throne/1.1.0` | смешанный ответ: ссылки + JSON-конфиг sing-box (появляются Mieru и WG) |
+| UA `YPtun/3.7.0` | base64-список с `amneziawg://` |
+| `?format=wireturn` | массив `{kernelConfig, wgConfig} `— профили WireTurn |
 
-Правила по приложениям (per-app) на iOS штатно недоступны: `NEAppProxy`/per-app VPN есть только
-на macOS. Проверку обновлений клиента делаем вручную — отдельного апдейтера нет.
+Дедупликация идёт по «личности сервера» (протокол + хост + порт), поэтому один и тот же
+сервер из разных форматов не дублируется. Профили раскладываются по папкам: папка = подписка.
 
----
+Из заголовка `subscription-userinfo` читаются срок и остаток трафика — показываются на карточке
+подписки. Автообновление: свой интервал у каждой подписки, проверка при запуске и раз в 30 минут.
+
+## 4. Проверка серверов
+
+- **Параллельный пинг.** Одно ядро, все outbound'ы внутри, замеры стартуют одновременно
+  и спрашивают Clash API. Результат появляется у всех живых серверов почти сразу; мёртвые
+  падают по таймауту (4 с, настраивается).
+- **Пинг одного сервера** — старт профиля и замер по уже открытому keep-alive соединению
+  (минимум из трёх проб), поэтому цифра совпадает с реальной задержкой, а не с временем
+  подъёма TLS.
+- **Скорость** — скачивание и отдача файла через сервер. Cloudflare в России режется,
+  поэтому зеркала идут списком: сначала `speedtest.tele2.net`, затем Cloudflare;
+  адреса меняются в настройках.
+- **Страна и IP** берутся из Cloudflare trace; страна показывается по-русски с флагом,
+  в списках — кодом (`🇫🇮 FI · 186 мс`), чтобы влезало в строку.
+
+## 5. Маршрутизация
+
+Подробно — [docs/routing.md](docs/routing.md). Кратко: профили маршрутизации (несколько
+конфигов), каждый с общим outbound и списком правил; два вида редактирования — упрощённый
+(четыре списка доменов) и расширенный (правило → outbound, выбор сервера из списка).
+Экспорт и импорт — JSON или ссылка `throne://route/<base64url>` в формате Throne PC.
+
+## 6. Ядра
+
+Подробно — [docs/cores.md](docs/cores.md). Пины лежат в `core/singbox-ref.txt`; сборка
+фреймворка кэшируется по хешу этого файла и оверлеев.
 
 ## 7. Сборка
 
-### CI (GitHub Actions, macOS)
-
-1. `core/singbox-ref.txt` → клон форка, checkout на закреплённый коммит.
-2. Оверлеи `zz_turnable.go` (и `zz_xray.go` после подключения Xray) копируются в пакет libbox.
-3. `go mod edit -require` для Turnable, `go mod tidy`.
-4. `gomobile bind` → `ios/Frameworks/Libbox.xcframework` (кэш по хешу `singbox-ref.txt`,
-   оверлеев и самого workflow).
-5. `xcodegen generate`, затем `xcodebuild -sdk iphoneos CODE_SIGNING_ALLOWED=NO`.
-6. Упаковка в `Throne-unsigned.ipa`; артефакты — `.ipa`, заголовки фреймворка, лог сборки.
-
-Холодная сборка ядра — 15–20 минут, тёплая — около минуты. Ключ кэша включает хеш workflow,
-поэтому изменение шагов сборки сбрасывает кэш.
-
-### Локально (macOS)
-
 ```bash
-cd ios
-xcodegen generate
-xcodebuild -project Throne.xcodeproj -scheme Throne -sdk iphoneos build
+# локально нужен только XcodeGen + macOS (или CI):
+cd ios && xcodegen generate && xcodebuild -scheme Throne -destination 'generic/platform=iOS'
 ```
 
-### Установка на устройство
+В CI (`.github/workflows/ios.yml`):
 
-Подпись своя (Sideloadly / Xcode / LiveContainer), `.ipa` неподписанный.
+1. читает пин ядра из `core/singbox-ref.txt`;
+2. клонирует форк, копирует оверлеи `zz_turnable.go`, `zz_xray.go` в пакет libbox;
+3. `gomobile bind -target ios` → `Libbox.xcframework` (кэшируется);
+4. XcodeGen → `xcodebuild` (неподписанная сборка для устройства);
+5. пакует `Throne-unsigned.ipa` в артефакт; при наличии секретов Apple — подписывает и грузит
+   в TestFlight.
 
----
+Подпись и установка — [docs/apple-setup.md](docs/apple-setup.md).
 
-## 8. Режимы запуска и ограничения
+## 8. Ограничения
 
-| Режим | Что работает | Что нет |
-|---|---|---|
-| **Dev** (вкладка Dev) | ядро в процессе приложения, локальный прокси 7891, все протоколы | системного VPN нет, приложение должно быть активно |
-| **VPN** (Network Extension) | системный TUN, весь трафик устройства | нужна подпись с entitlement; в LiveContainer падает `permission denied` |
-
-Технические ограничения:
-
-- в LiveContainer unix-сокет libbox не помещается в `sun_path`, поэтому control-порт TCP (9101+);
-- Turnable, запущенный в процессе приложения, iOS усыпляет при сворачивании — для постоянной
-  работы его нужно поднимать внутри PacketTunnel;
-- Xray (VLESS + XHTTP) пока не подключён: два профиля из подписки с `type=xhttp` не поднимаются
-  и ждут ядра Xray.
-
----
+- **LiveContainer**: Network Extension не запускается, поэтому рабочий путь — dev-режим
+  (ядро в процессе, локальный порт `127.0.0.1:7891`). Always-on и on-demand правила работают
+  только в подписанной сборке.
+- **Правила по приложениям** (per-app) на iOS штатно недоступны: `NEAppProxy` есть только на macOS.
+- **UDP через Xray XHTTP** ограничен возможностями Xray; Hysteria2/Mieru идут через sing-box.
+- Приложение не поддерживает Tor/SSH/OpenVPN-профили, хотя ядро собрано с `with_openvpn`.
 
 ## 9. Дорожная карта
 
-- [x] Ядро sing-box (форк Throne) + gomobile + CI + неподписанный `.ipa`
-- [x] VLESS/Reality, Hysteria2, Mieru, AmneziaWG 3.1, WireGuard
-- [x] Turnable как транспорт (VK-авторизация, капча, SRTP)
-- [x] WireGuard поверх Turnable (WireTurn), MTU, DNS через туннель
-- [x] Проверка выхода: IP + страна + пинг в один круг, серийная проверка профилей
-- [ ] **Xray**: VLESS + XHTTP (оверлей `zz_xray.go`, `replace` на `throneproj/xray-core`)
-- [ ] Профиль «AUTO» (urltest по всей подписке) отдельной кнопкой
-- [ ] Поднятие Turnable внутри PacketTunnel
-- [ ] Подпись и установка без LiveContainer
+- [x] sing-box + Xray + Turnable в одном фреймворке
+- [x] подписки, папки, автообновление, срок и трафик
+- [x] параллельный пинг через Clash API, тест скорости
+- [x] профили маршрутизации с атрибутами, экспорт/импорт `throne://route`
+- [x] живые соединения и накопление трафика
+- [ ] UI для MasterDNS (ядро уже умеет `type: masterdns`)
+- [ ] применение правил в реальном трафике (NE-сборка)
+- [ ] история соединений, как в Karing
+- [ ] подпись и TestFlight-канал
+
+## Лицензия
+
+GPL-3.0, как у Throne и sing-box. Ядра: `throneproj/sing-box` (GPL-3.0),
+`throneproj/xray-core` (MPL-2.0), `TheAirBlow/Turnable` (MIT).

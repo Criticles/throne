@@ -103,10 +103,71 @@ struct RoutePlanEntry: Codable, Identifiable, Hashable {
     var id = UUID()
     /// `rule` — условие, `outbound` — принудительная цель.
     var kind = "rule"
+    /// Атрибут условия: domain, domain_suffix, rule_set, process_name…
+    var attr = "domain"
     var value = ""
 
     var title: String {
-        kind == "outbound" ? "Outbound: " + value : value
+        kind == "outbound" ? "Outbound: " + value : attr + ": " + value
+    }
+
+    init(id: UUID = UUID(), kind: String = "rule", attr: String = "domain", value: String = "") {
+        self.id = id
+        self.kind = kind
+        self.attr = attr
+        self.value = value
+    }
+
+    /// Планы, сохранённые до появления `attr`, должны читаться: поля необязательные.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try container.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+        kind = (try container.decodeIfPresent(String.self, forKey: .kind)) ?? "rule"
+        attr = (try container.decodeIfPresent(String.self, forKey: .attr)) ?? "domain"
+        value = (try container.decodeIfPresent(String.self, forKey: .value)) ?? ""
+    }
+}
+
+/// Атрибуты маршрутизации, которые понимает sing-box. В интерфейсе показываем
+/// сначала те, которыми реально пользуются (порядок = популярность).
+enum RouteAttribute {
+    static let all: [String] = [
+        "domain", "domain_suffix", "domain_keyword", "domain_regex",
+        "rule_set", "process_name", "package_name", "protocol", "network",
+        "ip_cidr", "source_ip_cidr", "source_ip_is_private", "ip_is_private",
+        "port", "port_range", "source_port", "source_port_range",
+        "inbound", "wifi_ssid", "wifi_bssid", "process_path", "process_path_regex",
+        "ip_version", "invert",
+    ]
+
+    static func hint(_ attr: String) -> String {
+        switch attr {
+        case "domain": return "точный домен: claude.ai"
+        case "domain_suffix": return "домен и поддомены: example.com"
+        case "domain_keyword": return "слово в домене: ads"
+        case "domain_regex": return "регулярное выражение по домену"
+        case "rule_set": return "набор: geosite-ru, geoip-ru, geosite-spotify@ads"
+        case "process_name": return "имя процесса: Telegram.exe"
+        case "package_name": return "пакет Android: org.telegram.messenger"
+        case "protocol": return "dns, http, tls, bittorrent"
+        case "network": return "tcp или udp"
+        case "ip_cidr": return "получатель: 10.0.0.0/8"
+        case "source_ip_cidr": return "источник: 192.168.0.0/16"
+        case "source_ip_is_private": return "true — источник из локальной сети"
+        case "ip_is_private": return "true — получатель локальный"
+        case "port": return "порт: 443 или 443,8443"
+        case "port_range": return "диапазон: 1000:2000"
+        case "source_port": return "порт источника"
+        case "source_port_range": return "диапазон портов источника"
+        case "inbound": return "тег входящего соединения"
+        case "wifi_ssid": return "имя Wi-Fi сети"
+        case "wifi_bssid": return "BSSID сети"
+        case "process_path": return "путь к процессу"
+        case "process_path_regex": return "регулярное выражение по пути"
+        case "ip_version": return "4 или 6"
+        case "invert": return "true — инвертировать условие"
+        default: return ""
+        }
     }
 }
 
@@ -121,6 +182,29 @@ struct RoutePlan: Codable {
     var proxyList = ""
     var blockList = ""
     var warpList = ""
+
+    init(name: String = "Маршрут", finalTarget: String = "proxy",
+         entries: [RoutePlanEntry] = [], directList: String = "",
+         proxyList: String = "", blockList: String = "", warpList: String = "") {
+        self.name = name
+        self.finalTarget = finalTarget
+        self.entries = entries
+        self.directList = directList
+        self.proxyList = proxyList
+        self.blockList = blockList
+        self.warpList = warpList
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try container.decodeIfPresent(String.self, forKey: .name)) ?? "Маршрут"
+        finalTarget = (try container.decodeIfPresent(String.self, forKey: .finalTarget)) ?? "proxy"
+        entries = (try container.decodeIfPresent([RoutePlanEntry].self, forKey: .entries)) ?? []
+        directList = (try container.decodeIfPresent(String.self, forKey: .directList)) ?? ""
+        proxyList = (try container.decodeIfPresent(String.self, forKey: .proxyList)) ?? ""
+        blockList = (try container.decodeIfPresent(String.self, forKey: .blockList)) ?? ""
+        warpList = (try container.decodeIfPresent(String.self, forKey: .warpList)) ?? ""
+    }
 }
 
 /// Скачанный список: geoip.dat / geosite.dat.
