@@ -309,15 +309,6 @@ struct AdvancedRouteView: View {
     }
 }
 
-/// Рамки строк атрибутов в координатах формы — по ним меню значений встаёт под своей строкой.
-private struct AttributeFrameKey: PreferenceKey {
-    static var defaultValue: [UUID: CGRect] = [:]
-
-    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
 /// Редактор одной папки: название, действие, outbound и список атрибутов внутри.
 struct RouteRuleEditorView: View {
     @Environment(\.presentationMode) private var presentation
@@ -352,11 +343,6 @@ struct RouteRuleEditorView: View {
 
     @State private var rule: RoutePlanRule
     @State private var sheet: Sheet?
-    /// Развёрнутый атрибут: варианты всплывают поверх формы, строки не сдвигаются.
-    @State private var openAttr: UUID?
-
-    /// Система координат формы: по ней считаются рамки строк для всплывающего меню.
-    private static let formSpace = "routeFolderForm"
 
     init(rule: RoutePlanRule, targets: [String], onSave: @escaping (RoutePlanRule) -> Void) {
         self.targets = targets
@@ -410,31 +396,6 @@ struct RouteRuleEditorView: View {
             }
             .navigationTitle(rule.name.isEmpty ? "Папка" : rule.name)
             .navigationBarTitleDisplayMode(.inline)
-            .coordinateSpace(name: Self.formSpace)
-            // Меню значений рисуется поверх формы: координаты строк приходят из
-            // AttributeFrameKey, поэтому список висит ровно под своей строкой.
-            .overlayPreferenceValue(AttributeFrameKey.self) { frames in
-                GeometryReader { proxy in
-                    if let id = openAttr,
-                       let frame = frames[id],
-                       let item = rule.attrs.first(where: { $0.id == id }) {
-                        let width: CGFloat = 236
-                        let height = CGFloat(RouteAttribute.options(item.attr).count) * 38 + 54
-                        ZStack(alignment: .topLeading) {
-                            Color.black.opacity(0.001)
-                                .contentShape(Rectangle())
-                                .onTapGesture { openAttr = nil }
-                            optionsPopup(for: item)
-                                .frame(width: width)
-                                .offset(
-                                    x: max(12, proxy.size.width - width - 16),
-                                    y: min(frame.maxY + 6,
-                                           max(12, proxy.size.height - height - 12))
-                                )
-                        }
-                    }
-                }
-            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { presentation.wrappedValue.dismiss() }
@@ -464,10 +425,12 @@ struct RouteRuleEditorView: View {
         .navigationViewStyle(.stack)
     }
 
-    /// Строка атрибута: имя и значение слева, «Выбрать» справа. Варианты до пяти всплывают
-    /// поверх формы — строки не сдвигаются, отдельное окно не открывается.
+    /// Строка атрибута: имя и значение слева, «Выбрать» справа. До пяти вариантов — нативное
+    /// меню (как у строки DNS): всплывает над содержимым, ничего не сдвигает, ставит галочку.
     private func attrRow(_ item: RoutePlanAttr) -> some View {
-        HStack(spacing: 10) {
+        let options = RouteAttribute.options(item.attr)
+
+        return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.attr)
                     .font(.caption.weight(.semibold))
@@ -479,34 +442,30 @@ struct RouteRuleEditorView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button(openAttr == item.id ? "Принять" : "Выбрать") { pick(item) }
-                .font(.caption2.weight(.medium))
-                .buttonStyle(.borderless)
+            if options.isEmpty || options.count > 5 {
+                Button("Выбрать") { sheet = .value(item) }
+                    .font(.caption2.weight(.medium))
+                    .buttonStyle(.borderless)
+            } else {
+                Menu {
+                    ForEach(options, id: \.self) { option in
+                        Button {
+                            choose(option, in: item)
+                        } label: {
+                            Text(item.values.contains(option) ? "✓ \(option)" : option)
+                        }
+                    }
+                } label: {
+                    Text("Выбрать")
+                        .font(.caption2.weight(.medium))
+                        .foregroundColor(Theme.accent)
+                }
+            }
         }
         .padding(.vertical, 2)
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: AttributeFrameKey.self,
-                    value: [item.id: proxy.frame(in: .named(Self.formSpace))]
-                )
-            }
-        )
     }
 
-    /// «Выбрать»: до пяти вариантов — всплывающий список, иначе окно (поиск или ввод).
-    private func pick(_ item: RoutePlanAttr) {
-        let options = RouteAttribute.options(item.attr)
-        if options.isEmpty || options.count > 5 {
-            openAttr = nil
-            sheet = .value(item)
-            return
-        }
-        openAttr = openAttr == item.id ? nil : item.id
-    }
-
-    /// Одиночный выбор заменяет значение, наборы (`rule_set`) копятся. Список остаётся
-    /// открытым: галочка должна быть видна сразу, без повторного тапа.
+    /// Одиночный выбор заменяет значение, наборы (`rule_set`) копятся.
     private func choose(_ option: String, in item: RoutePlanAttr) {
         guard let index = rule.attrs.firstIndex(where: { $0.id == item.id }) else { return }
         var values = rule.attrs[index].values
@@ -518,51 +477,6 @@ struct RouteRuleEditorView: View {
             values.append(option)
         }
         rule.attrs[index].values = values
-    }
-
-    /// Всплывающий список значений: галочки и «Принять» внизу.
-    private func optionsPopup(for item: RoutePlanAttr) -> some View {
-        let options = RouteAttribute.options(item.attr)
-        return VStack(spacing: 0) {
-            ForEach(options, id: \.self) { option in
-                Button {
-                    choose(option, in: item)
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(option)
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundColor(.primary)
-                        Spacer(minLength: 6)
-                        if item.values.contains(option) {
-                            Image(systemName: "checkmark")
-                                .font(.caption.weight(.semibold))
-                                .foregroundColor(Theme.accent)
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Divider()
-            Button {
-                openAttr = nil
-            } label: {
-                Text("Принять")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(Theme.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
-                .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
-        )
     }
 
     /// Новый атрибут только добавляется: значения выбираются по «Выбрать», а не сразу
