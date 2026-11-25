@@ -321,9 +321,21 @@ private struct AttributeFrameKey: PreferenceKey {
 /// Редактор одной папки: название, действие, outbound и список атрибутов внутри.
 struct RouteRuleEditorView: View {
     @Environment(\.presentationMode) private var presentation
+    /// Сервера берём из хранилища напрямую: в outbound папки можно указать конкретный сервер,
+    /// а не только proxy/direct/reject, и список не должен зависеть от того, что передал родитель.
+    @EnvironmentObject private var store: ProfileStore
 
     let targets: [String]
     let onSave: (RoutePlanRule) -> Void
+
+    /// Встроенные цели плюс все сервера (по имени, без повторов).
+    private var destinations: [String] {
+        var list = targets
+        for profile in store.profiles where !list.contains(profile.name) {
+            list.append(profile.name)
+        }
+        return list
+    }
 
     /// Один лист на экран (iOS 15 не умеет два `.sheet` на одном виде).
     private enum Sheet: Identifiable {
@@ -357,8 +369,8 @@ struct RouteRuleEditorView: View {
             Form {
                 Section {
                     TextField("Название папки", text: $rule.name)
-                    Picker("Куда пускать", selection: $rule.outbound) {
-                        ForEach(targets, id: \.self) { target in
+                    Picker("Outbound по умолчанию", selection: $rule.outbound) {
+                        ForEach(destinations, id: \.self) { target in
                             Text(target).tag(target)
                         }
                     }
