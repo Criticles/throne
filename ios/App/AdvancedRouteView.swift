@@ -309,6 +309,15 @@ struct AdvancedRouteView: View {
     }
 }
 
+/// Рамки строк атрибутов в координатах формы — по ним меню значений встаёт под своей строкой.
+private struct AttributeFrameKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
 /// Редактор одной папки: название, действие, outbound и список атрибутов внутри.
 struct RouteRuleEditorView: View {
     @Environment(\.presentationMode) private var presentation
@@ -331,6 +340,11 @@ struct RouteRuleEditorView: View {
 
     @State private var rule: RoutePlanRule
     @State private var sheet: Sheet?
+    /// Развёрнутый атрибут: варианты всплывают поверх формы, строки не сдвигаются.
+    @State private var openAttr: UUID?
+
+    /// Система координат формы: по ней считаются рамки строк для всплывающего меню.
+    private static let formSpace = "routeFolderForm"
 
     init(rule: RoutePlanRule, targets: [String], onSave: @escaping (RoutePlanRule) -> Void) {
         self.targets = targets
@@ -338,30 +352,25 @@ struct RouteRuleEditorView: View {
         _rule = State(initialValue: rule)
     }
 
-    private var isBlocking: Binding<Bool> {
-        Binding(get: { rule.action == "reject" },
-                set: { rule.action = $0 ? "reject" : "route" })
-    }
-
     var body: some View {
         NavigationView {
             Form {
                 Section {
                     TextField("Название папки", text: $rule.name)
-                    Toggle("Блокировать", isOn: isBlocking)
-                    if rule.action != "reject" {
-                        Picker("Куда пускать", selection: $rule.outbound) {
-                            ForEach(targets, id: \.self) { target in
-                                Text(target).tag(target)
-                            }
+                    Picker("Куда пускать", selection: $rule.outbound) {
+                        ForEach(targets, id: \.self) { target in
+                            Text(target).tag(target)
                         }
+                    }
+                    .onChange(of: rule.outbound) { target in
+                        // «Блокировать» — это тот же outbound, просто reject: отдельного
+                        // переключателя не нужно, action держим в согласии с выбором.
+                        rule.action = target == "reject" ? "reject" : "route"
                     }
                 } header: {
                     Text("Папка")
                 } footer: {
-                    Text(rule.action == "reject"
-                         ? "Всё, что попадёт под атрибуты ниже, блокируется."
-                         : "Всё, что попадёт под атрибуты ниже, уходит в этот outbound.")
+                    Text("Direct — напрямую, Proxy — через прокси, Reject — заблокировать.\nВсё, что попадёт под атрибуты ниже, уходит в выбранный outbound.")
                 }
 
                 Section {
@@ -382,13 +391,38 @@ struct RouteRuleEditorView: View {
                         Label("Добавить атрибут", systemImage: "plus.circle")
                     }
                 } header: {
-                    Text("Атрибуты")
+                    Text("Атрибуты · свайп влево, чтоб удалить")
                 } footer: {
                     Text("Условия внутри одной папки складываются: сработает, когда совпало каждое.")
                 }
             }
             .navigationTitle(rule.name.isEmpty ? "Папка" : rule.name)
             .navigationBarTitleDisplayMode(.inline)
+            .coordinateSpace(name: Self.formSpace)
+            // Меню значений рисуется поверх формы: координаты строк приходят из
+            // AttributeFrameKey, поэтому список висит ровно под своей строкой.
+            .overlayPreferenceValue(AttributeFrameKey.self) { frames in
+                GeometryReader { proxy in
+                    if let id = openAttr,
+                       let frame = frames[id],
+                       let item = rule.attrs.first(where: { $0.id == id }) {
+                        let width: CGFloat = 236
+                        let height = CGFloat(RouteAttribute.options(item.attr).count) * 38 + 54
+                        ZStack(alignment: .topLeading) {
+                            Color.black.opacity(0.001)
+                                .contentShape(Rectangle())
+                                .onTapGesture { openAttr = nil }
+                            optionsPopup(for: item)
+                                .frame(width: width)
+                                .offset(
+                                    x: max(12, proxy.size.width - width - 16),
+                                    y: min(frame.maxY + 6,
+                                           max(12, proxy.size.height - height - 12))
+                                )
+                        }
+                    }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { presentation.wrappedValue.dismiss() }
@@ -418,55 +452,113 @@ struct RouteRuleEditorView: View {
         .navigationViewStyle(.stack)
     }
 
+    /// Строка атрибута: имя и значение слева, «Выбрать» справа. Варианты до пяти всплывают
+    /// поверх формы — строки не сдвигаются, отдельное окно не открывается.
     private func attrRow(_ item: RoutePlanAttr) -> some View {
-        HStack(spacing: 8) {
-            Button {
-                sheet = .value(item)
-            } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.attr)
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(Theme.accent)
-                    Text(item.summary)
-                        .font(.caption2)
-                        .foregroundColor(item.values.isEmpty ? .red : .secondary)
-                        .lineLimit(2)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.attr)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Theme.accent)
+                Text(item.summary)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
             }
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            if RouteAttribute.needsChoice(item.attr) {
-                Button("Выбрать") { sheet = .value(item) }
-                    .font(.caption2.weight(.medium))
-                    .buttonStyle(.borderless)
-            }
-
-            Button {
-                rule.attrs.removeAll { $0.id == item.id }
-            } label: {
-                Image(systemName: "trash")
-                    .font(.caption)
-                    .foregroundColor(.red)
-            }
-            .buttonStyle(.borderless)
+            Button(openAttr == item.id ? "Принять" : "Выбрать") { pick(item) }
+                .font(.caption2.weight(.medium))
+                .buttonStyle(.borderless)
         }
         .padding(.vertical, 2)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: AttributeFrameKey.self,
+                    value: [item.id: proxy.frame(in: .named(Self.formSpace))]
+                )
+            }
+        )
     }
 
+    /// «Выбрать»: до пяти вариантов — всплывающий список, иначе окно (поиск или ввод).
+    private func pick(_ item: RoutePlanAttr) {
+        let options = RouteAttribute.options(item.attr)
+        if options.isEmpty || options.count > 5 {
+            openAttr = nil
+            sheet = .value(item)
+            return
+        }
+        openAttr = openAttr == item.id ? nil : item.id
+    }
+
+    /// Одиночный выбор заменяет значение, наборы (`rule_set`) копятся. Список остаётся
+    /// открытым: галочка должна быть видна сразу, без повторного тапа.
+    private func choose(_ option: String, in item: RoutePlanAttr) {
+        guard let index = rule.attrs.firstIndex(where: { $0.id == item.id }) else { return }
+        var values = rule.attrs[index].values
+        if let at = values.firstIndex(of: option) {
+            values.remove(at: at)
+        } else if RouteAttribute.singleChoice(item.attr) {
+            values = [option]
+        } else {
+            values.append(option)
+        }
+        rule.attrs[index].values = values
+    }
+
+    /// Всплывающий список значений: галочки и «Принять» внизу.
+    private func optionsPopup(for item: RoutePlanAttr) -> some View {
+        let options = RouteAttribute.options(item.attr)
+        return VStack(spacing: 0) {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    choose(option, in: item)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(option)
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundColor(.primary)
+                        Spacer(minLength: 6)
+                        if item.values.contains(option) {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(Theme.accent)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Divider()
+            Button {
+                openAttr = nil
+            } label: {
+                Text("Принять")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Theme.accent)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+        )
+    }
+
+    /// Новый атрибут только добавляется: значения выбираются по «Выбрать», а не сразу
+    /// открытым листом — иначе после каждого добавления поверх экрана висит окно.
     private func addAttr(_ attr: String) {
         guard !rule.attrs.contains(where: { $0.attr == attr }) else { return }
-        let created = RoutePlanAttr(attr: attr)
-        rule.attrs.append(created)
-        // Сразу открываем значения: лишний тап по новой строке не нужен. Список атрибутов
-        // закрываем сами — iOS 15 не открывает второй лист поверх закрывающегося.
+        rule.attrs.append(RoutePlanAttr(attr: attr))
         sheet = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            if let fresh = rule.attrs.first(where: { $0.id == created.id }) {
-                sheet = .value(fresh)
-            }
-        }
     }
 }
 
@@ -522,18 +614,17 @@ struct RouteAttributePicker: View {
     }
 }
 
-/// Значения атрибута: список уже выбранных, поле для своего значения и готовые варианты.
-///
-/// Варианты отмечаются галочкой и сразу попадают в значение — в поиск ничего не подставляется.
-/// Выбранные варианты всегда стоят сверху. Если вариантов больше пяти, они открываются
-/// отдельным окном, иначе — прямо здесь.
+/// Значения атрибута. Два случая и ни одним больше:
+/// — вариантов нет: поле с «＋» и список добавленного с удалением;
+/// — вариантов больше пяти (`rule_set` — 48): поиск сверху, выбранные с галочкой держатся первыми.
+/// До пяти вариантов окно не открывается вовсе — они раскрываются прямо в папке.
 struct RouteValueView: View {
     @Environment(\.presentationMode) private var presentation
 
     let attr: String
     @State private var values: [String]
     @State private var text = ""
-    @State private var showOptions = false
+    @State private var query = ""
     let onDone: ([String]) -> Void
 
     init(attr: String, values: [String], onDone: @escaping ([String]) -> Void) {
@@ -543,105 +634,24 @@ struct RouteValueView: View {
     }
 
     private var options: [String] { RouteAttribute.options(attr) }
-    private var manyOptions: Bool { options.count > 5 }
 
-    /// Выбранные — сверху, остальные ниже; фильтр применяется только к невыбранным.
-    private var sortedOptions: [String] {
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    /// Выбранные — сверху, остальные ниже; поиск фильтрует только невыбранные.
+    private var shown: [String] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let chosen = options.filter { values.contains($0) }
-        let rest = options.filter { !values.contains($0) && (query.isEmpty || $0.lowercased().contains(query)) }
+        let rest = options.filter {
+            !values.contains($0) && (needle.isEmpty || $0.lowercased().contains(needle))
+        }
         return chosen + rest
     }
 
     var body: some View {
         NavigationView {
-            Form {
-                if !values.isEmpty {
-                    Section {
-                        ForEach(values, id: \.self) { value in
-                            HStack {
-                                Text(value)
-                                    .font(.system(.footnote, design: .monospaced))
-                                Spacer()
-                                Button {
-                                    values.removeAll { $0 == value }
-                                } label: {
-                                    Image(systemName: "minus.circle.fill")
-                                        .foregroundColor(.red)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                        }
-                    } header: {
-                        Text("Значения")
-                    }
-                }
-
-                Section {
-                    HStack {
-                        TextField("Значение", text: $text)
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                            .font(.system(.footnote, design: .monospaced))
-                        Button("Добавить") { addTyped() }
-                            .font(.caption.weight(.semibold))
-                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    if options.isEmpty {
-                        Text(RouteAttribute.hint(attr))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                } header: {
-                    Text(attr)
-                } footer: {
-                    Text("Можно вписать своё значение — список только подсказывает формат.")
-                }
-
-                if !options.isEmpty {
-                    Section {
-                        if manyOptions {
-                            Button {
-                                showOptions = true
-                            } label: {
-                                HStack {
-                                    Text("Выбрать из вариантов")
-                                    Spacer()
-                                    Text(String(options.count))
-                                        .foregroundColor(.secondary)
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        } else {
-                            // До пяти вариантов — выплывающий список, а не отдельное окно:
-                            // окно на два-три пункта выглядит тяжелее самого действия.
-                            Menu {
-                                ForEach(sortedOptions, id: \.self) { option in
-                                    Button {
-                                        toggle(option)
-                                    } label: {
-                                        Text(values.contains(option) ? "✓ " + option : option)
-                                    }
-                                }
-                            } label: {
-                                HStack {
-                                    Text("Выбрать значение")
-                                    Spacer()
-                                    Text(String(options.count))
-                                        .foregroundColor(.secondary)
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
-                    } header: {
-                        Text("Готовые варианты")
-                    } footer: {
-                        Text("Нажатие отмечает вариант галочкой и сразу добавляет его к значению: выбранные держатся сверху.")
-                    }
+            Group {
+                if options.isEmpty {
+                    typedForm
+                } else {
+                    optionsList
                 }
             }
             .navigationTitle(attr)
@@ -657,11 +667,76 @@ struct RouteValueView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showOptions) {
-                RouteOptionsSheet(attr: attr, options: options, values: $values)
-            }
         }
         .navigationViewStyle(.stack)
+    }
+
+    /// Вариантов нет: поле ввода с «＋» справа, введённое копится ниже с удалением.
+    private var typedForm: some View {
+        Form {
+            Section {
+                HStack(spacing: 8) {
+                    TextField("Значение", text: $text)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .font(.system(.footnote, design: .monospaced))
+                        .onSubmit { addTyped() }
+                    Button {
+                        addTyped()
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundColor(Theme.accent)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } header: {
+                Text("Значение")
+            } footer: {
+                Text(RouteAttribute.hint(attr))
+            }
+
+            if !values.isEmpty {
+                Section {
+                    ForEach(values, id: \.self) { value in
+                        HStack {
+                            Text(value)
+                                .font(.system(.footnote, design: .monospaced))
+                            Spacer()
+                            Button {
+                                values.removeAll { $0 == value }
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                } header: {
+                    Text("Добавлено · \(values.count)")
+                } footer: {
+                    Text("Можно вписать своё значение — список только подсказывает формат.")
+                }
+            }
+        }
+    }
+
+    /// Длинный список: поиск и галочки в этом же окне, без второго листа.
+    private var optionsList: some View {
+        List {
+            Section {
+                ForEach(shown, id: \.self) { option in
+                    optionRow(option)
+                }
+            } header: {
+                Text("Выбрано: \(values.count) из \(options.count)")
+            } footer: {
+                Text("Нажатие ставит галочку, выбранные поднимаются наверх. Поиск фильтрует остальные.")
+            }
+        }
+        .listStyle(.insetGrouped)
+        .searchable(text: $query, prompt: "Найти значение")
     }
 
     private func optionRow(_ option: String) -> some View {
@@ -684,9 +759,12 @@ struct RouteValueView: View {
         .buttonStyle(.plain)
     }
 
+    /// Одиночный выбор заменяет значение, наборы (`rule_set`) копятся.
     private func toggle(_ option: String) {
         if let index = values.firstIndex(of: option) {
             values.remove(at: index)
+        } else if RouteAttribute.singleChoice(attr) {
+            values = [option]
         } else {
             values.append(option)
         }
@@ -697,102 +775,6 @@ struct RouteValueView: View {
         guard !trimmed.isEmpty else { return }
         if !values.contains(trimmed) { values.append(trimmed) }
         text = ""
-    }
-}
-
-/// Окно выбора для атрибутов с длинным списком значений: галочки, выбранные сверху.
-struct RouteOptionsSheet: View {
-    @Environment(\.presentationMode) private var presentation
-    @Binding var values: [String]
-
-    let attr: String
-    let options: [String]
-
-    @State private var query = ""
-
-    init(attr: String, options: [String], values: Binding<[String]>) {
-        self.attr = attr
-        self.options = options
-        _values = values
-    }
-
-    private var ordered: [String] {
-        let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let chosen = options.filter { values.contains($0) }
-        let rest = options.filter { !values.contains($0) && (text.isEmpty || $0.lowercased().contains(text)) }
-        return chosen + rest
-    }
-
-    var body: some View {
-        NavigationView {
-            List {
-                if !values.isEmpty {
-                    Section {
-                        ForEach(values, id: \.self) { value in
-                            HStack {
-                                Image(systemName: "checkmark")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundColor(Theme.accent)
-                                Text(value)
-                                    .font(.system(.footnote, design: .monospaced))
-                                Spacer()
-                                Button {
-                                    values.removeAll { $0 == value }
-                                } label: {
-                                    Image(systemName: "minus.circle.fill").foregroundColor(.red)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture { toggle(value) }
-                        }
-                    } header: {
-                        Text("Выбрано: \(values.count)")
-                    }
-                }
-                Section {
-                    ForEach(ordered, id: \.self) { option in
-                        Button {
-                            toggle(option)
-                        } label: {
-                            HStack {
-                                Text(option)
-                                    .font(.system(.footnote, design: .monospaced))
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                if values.contains(option) {
-                                    Image(systemName: "checkmark")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundColor(Theme.accent)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                } header: {
-                    Text("Варианты")
-                }
-            }
-            .listStyle(.insetGrouped)
-            .searchable(text: $query, prompt: "Поиск варианта")
-            .navigationTitle(attr)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { presentation.wrappedValue.dismiss() }
-                }
-            }
-        }
-        .navigationViewStyle(.stack)
-    }
-
-    private func toggle(_ option: String) {
-        if let index = values.firstIndex(of: option) {
-            values.remove(at: index)
-        } else {
-            values.append(option)
-        }
     }
 }
 

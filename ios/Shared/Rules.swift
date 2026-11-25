@@ -302,6 +302,14 @@ enum RouteAttribute {
         enumerated.contains(attr)
     }
 
+    /// Атрибуты, у которых копится несколько значений (наборы правил). Остальные
+    /// перечислимые — одно значение: второй выбор снимает первый.
+    static let multiple: Set<String> = ["rule_set"]
+
+    static func singleChoice(_ attr: String) -> Bool {
+        enumerated.contains(attr) && !multiple.contains(attr)
+    }
+
     /// Варианты для кнопки «Выбрать». Пусто — значит атрибут пишется текстом.
     static func options(_ attr: String) -> [String] {
         switch attr {
