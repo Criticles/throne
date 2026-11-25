@@ -438,14 +438,16 @@ struct RouteRuleEditorView: View {
         let shown = isDestination
             ? (rule.outbound.isEmpty ? "не задано" : rule.outbound)
             : item.summary
+        let placeholder = isDestination ? rule.outbound.isEmpty : item.values.isEmpty
 
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.attr)
                     .font(.caption.weight(.semibold))
                     .foregroundColor(Theme.accent)
+                // «не задано» — обычным шрифтом: в моноширинном пробел выглядит вдвое шире.
                 Text(shown)
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(.system(.caption2, design: placeholder ? .default : .monospaced))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
             }
