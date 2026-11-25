@@ -615,8 +615,26 @@ struct RouteValueView: View {
                                 }
                             }
                         } else {
-                            ForEach(sortedOptions, id: \.self) { option in
-                                optionRow(option)
+                            // До пяти вариантов — выплывающий список, а не отдельное окно:
+                            // окно на два-три пункта выглядит тяжелее самого действия.
+                            Menu {
+                                ForEach(sortedOptions, id: \.self) { option in
+                                    Button {
+                                        toggle(option)
+                                    } label: {
+                                        Text(values.contains(option) ? "✓ " + option : option)
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Text("Выбрать значение")
+                                    Spacer()
+                                    Text(String(options.count))
+                                        .foregroundColor(.secondary)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
                             }
                         }
                     } header: {

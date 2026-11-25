@@ -105,7 +105,9 @@ struct ProfilesView: View {
             guard width > available else { continue }
             needed = min(needed, base * available / width)
         }
-        return max(11, (needed * 10).rounded(.down) / 10)
+        // Ниже 12,5 pt текст перестаёт читаться, поэтому дальше не уменьшаем: слишком длинное
+        // имя обрезается многоточием (одна строка), а целиком видно в подробностях по долгому нажатию.
+        return max(12.5, (needed * 10).rounded(.down) / 10)
     }
 
     private var fastest: Profile? {

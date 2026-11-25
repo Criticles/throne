@@ -24,7 +24,10 @@ struct ConnectionsView: View {
     @State private var closedAt: [String: Date] = [:]
     @State private var notice = ""
 
-    private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    /// Опрос Clash API — только пока экран на виду. Раньше это был Timer.publish: он
+    /// продолжал стучаться в 19090 и после ухода с вкладки, в том числе во время серии
+    /// проверок, когда ядро перезапускается десятки раз.
+    @State private var polling: Task<Void, Never>?
 
     private var ruleNames: [String] {
         var names: [String] = []
@@ -94,8 +97,14 @@ struct ConnectionsView: View {
             .navigationTitle("Соединения")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
-            .onReceive(timer) { _ in refresh() }
-            .onAppear { refresh() }
+            .onAppear {
+                refresh()
+                startPolling()
+            }
+            .onDisappear {
+                polling?.cancel()
+                polling = nil
+            }
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .detail(let item):
@@ -322,6 +331,17 @@ struct ConnectionsView: View {
         return item.rule + "[" + item.rulePayload + "]"
     }
 
+    private func startPolling() {
+        polling?.cancel()
+        polling = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if Task.isCancelled { return }
+                refresh()
+            }
+        }
+    }
+
     private func refresh() {
         // На паузе список не трогаем: он показывает соединения на момент нажатия.
         guard !paused else { return }
@@ -351,7 +371,7 @@ struct ConnectionsView: View {
                     recentlyClosed = Array(recentlyClosed.suffix(80))
                 }
 
-                connections = list
+                connections = list.count > 400 ? Array(list.prefix(400)) : list
                 refreshed = Date()
                 if !ruleFilter.isEmpty, !list.contains(where: { $0.rule == ruleFilter }) {
                     ruleFilter = ""
@@ -509,7 +529,6 @@ struct ConnectionsFilterSheet: View {
 
 /// Подробности соединения: адрес, порт и кнопки «добавить в правило».
 struct ConnectionDetailView: View {
-    @EnvironmentObject private var rules: RuleStore
     @Environment(\.presentationMode) private var presentation
 
     let connection: ClashApi.Connection

@@ -251,6 +251,17 @@ final class DevEngine: ObservableObject {
         }
     }
 
+    /// Во время серии проверок Xray работает вместе с sing-box (как в настольном Throne, где
+    /// оба ядра стартуют одновременно), поэтому `stop()` его не гасит до конца серии.
+    private var keepXray = false
+
+    private func stopXrayIfIdle() {
+        guard !keepXray, LibboxXrayIsRunning() else { return }
+        var error: NSError?
+        _ = LibboxXrayStop(&error)
+        append("xray: остановлен")
+    }
+
     /// Запуск Xray (VLESS + XHTTP): свой socks-инбаунд на 127.0.0.1:7892.
     private func startXray(_ profile: Profile) {
         do {
@@ -311,17 +322,14 @@ final class DevEngine: ObservableObject {
 
     func stop() {
         transportOnly = false
+        stopXrayIfIdle()
         activeProfileID = nil
         liveTags = [:]
         probePorts = [:]
         activeCoreName = "—"
         connectedSince = nil
         turnable.stop()
-        if LibboxXrayIsRunning() {
-            var error: NSError?
-            _ = LibboxXrayStop(&error)
-            append("xray: остановлен")
-        }
+        stopXrayIfIdle()
         proxyPort = ConfigBuilder.listenPort
         guard let server else {
             running = false
@@ -403,15 +411,76 @@ final class DevEngine: ObservableObject {
         defer { bulkRunning = false; probing = false }
         bulk = profiles.map { BulkRow(id: $0.id, name: $0.name, badge: $0.badge ?? $0.kind.title) }
 
+        // Xray — отдельное ядро, оно не мешает sing-box: поднимаем оба сразу и меряем
+        // XHTTP-серверы параллельно с остальными (в Throne PC Xray стартует в том же заходе).
+        let xrayPorts = startXrayPool(profiles)
+        keepXray = !xrayPorts.isEmpty
+        async let xrayProbe = probeXray(profiles, ports: xrayPorts)
         let rest = await measure(profiles)
+        let xrayLeft = await xrayProbe
+        keepXray = false
+
         let plain = rest.filter { !Self.needsTransport($0) && $0.kind != .xray }
-        let xray = rest.filter { $0.kind == .xray }
+        let xray = xrayLeft.filter { $0.kind == .xray }
         let turnable = rest.filter { Self.needsTransport($0) }
 
         await checkSequential(plain)
         await checkSequential(xray)
         await checkSequential(turnable, limitTransport: true)
         append("проверка всех серверов завершена")
+    }
+
+    /// Общий конфиг Xray на все XHTTP-профили: один запуск ядра, у каждого сервера свой
+    /// socks-вход. Возвращает порты; пустой словарь — поднять не удалось (тогда по одному).
+    private func startXrayPool(_ profiles: [Profile]) -> [UUID: Int] {
+        let targets = profiles.filter { $0.kind == .xray }
+        guard !targets.isEmpty else { return [:] }
+        var entries: [(id: UUID, link: VLESSLink)] = []
+        for profile in targets {
+            guard let link = try? VLESSLink.parse(profile.payload) else { continue }
+            entries.append((profile.id, link))
+        }
+        guard !entries.isEmpty else { return [:] }
+        let built = XrayConfig.buildPool(links: entries)
+        var error: NSError?
+        guard LibboxXrayStart(built.json, &error) else {
+            append("xray: общий конфиг не поднялся — проверю по одному")
+            return [:]
+        }
+        append("xray: общее ядро на \(built.ports.count) серверов")
+        return built.ports
+    }
+
+    /// Замер Xray-серверов через свои входы. Возвращает тех, кого померить не вышло.
+    private func probeXray(_ profiles: [Profile], ports: [UUID: Int]) async -> [Profile] {
+        guard !ports.isEmpty else { return profiles }
+        var measured: Set<UUID> = []
+        await withTaskGroup(of: (UUID, ProbeResult?).self) { group in
+            for (id, port) in ports where !cancelRequested && !Task.isCancelled {
+                group.addTask {
+                    // Ядро только поднялось: входы могут слушать не сразу, поэтому три подхода.
+                    for attempt in 0..<3 {
+                        if let result = await Probe.timed(port: port, timeout: 8) {
+                            return (id, result)
+                        }
+                        if attempt < 2 { try? await Task.sleep(nanoseconds: 700_000_000) }
+                    }
+                    return (id, nil as ProbeResult?)
+                }
+            }
+            for await (id, result) in group {
+                measured.insert(id)
+                guard let row = bulk.firstIndex(where: { $0.id == id }) else { continue }
+                if let result {
+                    bulk[row].result = result
+                } else {
+                    bulk[row].result = ProbeResult(ok: false, error: "нет ответа")
+                }
+                bulk[row].done = true
+            }
+        }
+        if !measured.isEmpty { append("xray: замерено \(measured.count)") }
+        return profiles.filter { $0.kind != .xray || !measured.contains($0.id) }
     }
 
     /// Параллельный замер. Если ядро уже держит все серверы в живом конфиге — пингуем

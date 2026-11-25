@@ -8,8 +8,59 @@ import Foundation
 enum XrayConfig {
     /// Локальный socks-порт Xray. Не пересекается с mixed-инбаундом sing-box (7891).
     static let socksPort = 7892
+    /// Первый порт общего конфига: по одному входу на сервер, как у sing-box в 21000+.
+    static let socksPortBase = 7892
+
+    /// Общий конфиг: по socks-входу и outbound'у на каждый XHTTP-сервер, правила разводят
+    /// вход в свой сервер. Так Xray меряет все свои профили разом, а не перезапуском на каждый.
+    static func buildPool(links: [(id: UUID, link: VLESSLink)]) -> (json: String, ports: [UUID: Int]) {
+        var inbounds: [[String: Any]] = []
+        var outbounds: [[String: Any]] = []
+        var rules: [[String: Any]] = []
+        var ports: [UUID: Int] = [:]
+        for (index, entry) in links.enumerated() {
+            let port = socksPortBase + index
+            let inTag = "socks-" + String(index)
+            let outTag = "proxy-" + String(index)
+            inbounds.append([
+                "tag": inTag,
+                "listen": "127.0.0.1",
+                "port": port,
+                "protocol": "socks",
+                "settings": ["auth": "noauth", "udp": true],
+            ])
+            outbounds.append(outbound(link: entry.link, tag: outTag))
+            rules.append(["type": "field", "inboundTag": [inTag], "outboundTag": outTag])
+            ports[entry.id] = port
+        }
+        outbounds.append(["protocol": "freedom", "tag": "direct"])
+        let config: [String: Any] = [
+            "log": ["loglevel": "warning"],
+            "inbounds": inbounds,
+            "outbounds": outbounds,
+            "routing": ["rules": rules],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8)
+        else { return ("{}", [:]) }
+        return (json, ports)
+    }
 
     static func build(link: VLESSLink) -> [String: Any] {
+        return [
+            "log": ["loglevel": "warning"],
+            "inbounds": [[
+                "tag": "socks-in",
+                "listen": "127.0.0.1",
+                "port": socksPort,
+                "protocol": "socks",
+                "settings": ["auth": "noauth", "udp": true],
+            ]],
+            "outbounds": [outbound(link: link, tag: "proxy")],
+        ]
+    }
+
+    private static func outbound(link: VLESSLink, tag: String) -> [String: Any] {
         var user: [String: Any] = ["id": link.uuid, "encryption": "none"]
         if let flow = link.flow, !flow.isEmpty {
             user["flow"] = flow
@@ -52,8 +103,8 @@ enum XrayConfig {
             stream["xhttpSettings"] = xhttp
         }
 
-        let outbound: [String: Any] = [
-            "tag": "proxy",
+        return [
+            "tag": tag,
             "protocol": "vless",
             "settings": [
                 "vnext": [[
@@ -63,18 +114,6 @@ enum XrayConfig {
                 ]],
             ],
             "streamSettings": stream,
-        ]
-
-        return [
-            "log": ["loglevel": "warning"],
-            "inbounds": [[
-                "tag": "socks-in",
-                "listen": "127.0.0.1",
-                "port": socksPort,
-                "protocol": "socks",
-                "settings": ["auth": "noauth", "udp": true],
-            ]],
-            "outbounds": [outbound],
         ]
     }
 }
