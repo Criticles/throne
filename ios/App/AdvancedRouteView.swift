@@ -406,8 +406,10 @@ struct RouteRuleEditorView: View {
                     if let id = openAttr,
                        let frame = frames[id],
                        let item = rule.attrs.first(where: { $0.id == id }) {
-                        let width: CGFloat = 236
-                        let height = CGFloat(RouteAttribute.options(item.attr).count) * 38 + 54
+                        // Во всю ширину, как строка списка; закрывается тапом мимо или «Принять»
+                        // на самой строке — отдельной кнопки в списке нет.
+                        let width = max(200, proxy.size.width - 32)
+                        let height = CGFloat(RouteAttribute.options(item.attr).count) * 38 + 10
                         ZStack(alignment: .topLeading) {
                             Color.black.opacity(0.001)
                                 .contentShape(Rectangle())
@@ -415,7 +417,7 @@ struct RouteRuleEditorView: View {
                             optionsPopup(for: item)
                                 .frame(width: width)
                                 .offset(
-                                    x: max(12, proxy.size.width - width - 16),
+                                    x: 16,
                                     y: min(frame.maxY + 6,
                                            max(12, proxy.size.height - height - 12))
                                 )
@@ -508,7 +510,8 @@ struct RouteRuleEditorView: View {
         rule.attrs[index].values = values
     }
 
-    /// Всплывающий список значений: галочки и «Принять» внизу.
+    /// Всплывающий список значений: одни галочки, без кнопки внизу — закрывается тапом мимо
+    /// или «Принять» на строке атрибута.
     private func optionsPopup(for item: RoutePlanAttr) -> some View {
         let options = RouteAttribute.options(item.attr)
         return VStack(spacing: 0) {
@@ -533,18 +536,6 @@ struct RouteRuleEditorView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Divider()
-            Button {
-                openAttr = nil
-            } label: {
-                Text("Принять")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(Theme.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
         }
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
