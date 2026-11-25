@@ -218,7 +218,7 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
             try container.encode(outbound, forKey: AnyAttributeKey("outbound"))
         }
         try container.encode(id.uuidString, forKey: AnyAttributeKey("id"))
-        for item in attrs where !item.values.isEmpty {
+        for item in attrs where !item.values.isEmpty && item.attr != "outbound" {
             // Настольный клиент одиночное значение пишет по-разному: `protocol` — строкой,
             // `rule_set`/`domain` — массивом даже из одного элемента. Повторяем это, чтобы наш
             // экспорт совпадал с его документом, а не был просто «тоже валидным».

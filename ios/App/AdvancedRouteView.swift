@@ -347,7 +347,15 @@ struct RouteRuleEditorView: View {
     init(rule: RoutePlanRule, targets: [String], onSave: @escaping (RoutePlanRule) -> Void) {
         self.targets = targets
         self.onSave = onSave
-        _rule = State(initialValue: rule)
+        var initial = rule
+        // `outbound` всегда в списке: он задаёт, куда папка уходит, и правится как остальные
+        // атрибуты. В JSON он при этом остаётся полем правила, а не ключом-массивом.
+        if !initial.attrs.contains(where: { $0.attr == "outbound" }) {
+            initial.attrs.insert(RoutePlanAttr(attr: "outbound",
+                                               values: [initial.outbound.isEmpty ? "proxy" : initial.outbound]),
+                                 at: 0)
+        }
+        _rule = State(initialValue: initial)
     }
 
     var body: some View {
@@ -355,20 +363,10 @@ struct RouteRuleEditorView: View {
             Form {
                 Section {
                     TextField("Название папки", text: $rule.name)
-                    Picker("Outbound по умолчанию", selection: $rule.outbound) {
-                        ForEach(destinations, id: \.self) { target in
-                            Text(target).tag(target)
-                        }
-                    }
-                    .onChange(of: rule.outbound) { target in
-                        // «Блокировать» — это тот же outbound, просто reject: отдельного
-                        // переключателя не нужно, action держим в согласии с выбором.
-                        rule.action = target == "reject" ? "reject" : "route"
-                    }
                 } header: {
                     Text("Папка")
                 } footer: {
-                    Text("Direct — напрямую, Proxy — через прокси, Reject — заблокировать.\nВсё, что попадёт под атрибуты ниже, уходит в выбранный outbound.")
+                    Text("Куда направить папку — атрибут outbound: proxy, direct, reject или конкретный сервер.\nУсловия ниже складываются: сработает, когда совпало каждое.")
                 }
 
                 Section {
@@ -414,9 +412,11 @@ struct RouteRuleEditorView: View {
                         addAttr(attr)
                     }
                 case .value(let current):
-                    RouteValueView(attr: current.attr, values: current.values) { updated in
+                    RouteValueView(attr: current.attr, values: current.values,
+                                   options: valueOptions(current.attr)) { updated in
                         if let index = rule.attrs.firstIndex(where: { $0.id == current.id }) {
                             rule.attrs[index].values = updated
+                            syncDestination(current.attr)
                         }
                     }
                 }
@@ -425,17 +425,26 @@ struct RouteRuleEditorView: View {
         .navigationViewStyle(.stack)
     }
 
+    /// Значения атрибута: у `outbound` — все сервера, у остальных — справочник.
+    private func valueOptions(_ attr: String) -> [String] {
+        attr == "outbound" ? destinations : RouteAttribute.options(attr)
+    }
+
     /// Строка атрибута: имя и значение слева, «Выбрать» справа. До пяти вариантов — нативное
     /// меню (как у строки DNS): всплывает над содержимым, ничего не сдвигает, ставит галочку.
     private func attrRow(_ item: RoutePlanAttr) -> some View {
-        let options = RouteAttribute.options(item.attr)
+        let options = valueOptions(item.attr)
+        let isDestination = item.attr == "outbound"
+        let shown = isDestination
+            ? (rule.outbound.isEmpty ? "не задано" : rule.outbound)
+            : item.summary
 
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.attr)
                     .font(.caption.weight(.semibold))
                     .foregroundColor(Theme.accent)
-                Text(item.summary)
+                Text(shown)
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
@@ -477,19 +486,31 @@ struct RouteRuleEditorView: View {
             values.append(option)
         }
         rule.attrs[index].values = values
+        syncDestination(item.attr)
+    }
+
+    /// `outbound` — это поле правила, а не обычный ключ: держим `rule.outbound`/`action`
+    /// в согласии с выбранным значением, иначе JSON уедет не туда.
+    private func syncDestination(_ attr: String) {
+        guard attr == "outbound" else { return }
+        let destination = rule.attrs.first(where: { $0.attr == "outbound" })?.values.first ?? "proxy"
+        rule.outbound = destination.isEmpty ? "proxy" : destination
+        rule.action = rule.outbound == "reject" ? "reject" : "route"
     }
 
     /// Новый атрибут только добавляется: значения выбираются по «Выбрать», а не сразу
     /// открытым листом — иначе после каждого добавления поверх экрана висит окно.
     private func addAttr(_ attr: String) {
         guard !rule.attrs.contains(where: { $0.attr == attr }) else { return }
-        rule.attrs.append(RoutePlanAttr(attr: attr))
+        // У outbound значение уже есть — это поле самой папки.
+        let seeded = attr == "outbound" ? [rule.outbound] : []
+        rule.attrs.append(RoutePlanAttr(attr: attr, values: seeded))
         sheet = nil
     }
 }
 
 /// Полный список атрибутов. Открывается сразу по «Добавить атрибут».
-/// `outbound` здесь нет: он принадлежит папке, а не атрибуту.
+/// `outbound` здесь есть: он же выбирает, куда папка уходит (proxy, direct, reject или сервер).
 struct RouteAttributePicker: View {
     @Environment(\.presentationMode) private var presentation
     @State private var query = ""
@@ -498,8 +519,8 @@ struct RouteAttributePicker: View {
 
     private var attributes: [String] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !text.isEmpty else { return RouteAttribute.all.filter { $0 != "outbound" } }
-        return RouteAttribute.all.filter { $0 != "outbound" && $0.contains(text) }
+        guard !text.isEmpty else { return RouteAttribute.all }
+        return RouteAttribute.all.filter { $0.contains(text) }
     }
 
     var body: some View {
@@ -551,15 +572,19 @@ struct RouteValueView: View {
     @State private var values: [String]
     @State private var text = ""
     @State private var query = ""
+    /// Свой список значений (у `outbound` — все сервера); nil — справочник по атрибуту.
+    let customOptions: [String]?
     let onDone: ([String]) -> Void
 
-    init(attr: String, values: [String], onDone: @escaping ([String]) -> Void) {
+    init(attr: String, values: [String], options: [String]? = nil,
+         onDone: @escaping ([String]) -> Void) {
         self.attr = attr
         _values = State(initialValue: values)
+        self.customOptions = options
         self.onDone = onDone
     }
 
-    private var options: [String] { RouteAttribute.options(attr) }
+    private var options: [String] { customOptions ?? RouteAttribute.options(attr) }
 
     /// Выбранные — сверху, остальные ниже; поиск фильтрует только невыбранные.
     private var shown: [String] {
