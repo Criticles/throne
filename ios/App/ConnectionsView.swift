@@ -277,17 +277,9 @@ struct ConnectionsView: View {
                     }
                 }
 
-                TrafficGraph(samples: windowSamples.map { $0.down },
-                             up: windowSamples.map { $0.up })
-                    .frame(height: 96)
-
-                HStack {
-                    Text(windowSamples.first.map { Self.time.string(from: $0.at) } ?? "—")
-                    Spacer()
-                    Text("сейчас")
-                }
-                .font(.caption2)
-                .foregroundColor(.secondary)
+                TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
+                             start: windowStart, end: windowEnd,
+                             peakLabel: Self.rate(max(lastDown, lastUp)))
 
                 HStack(spacing: 18) {
                     Button {
@@ -307,7 +299,8 @@ struct ConnectionsView: View {
             }
             .padding(.vertical, 2)
         } footer: {
-            Text("Входящий — цвет акцента, исходящий — серый. «Скопировать» и «Экспорт в txt» выводят сводку целиком: трафик, выходы, правила и все соединения.")
+            Text("Окно " + window.rawValue + " · точек " + String(windowSamples.count)
+                 + ". Входящий — цвет акцента, исходящий — серый. «Скопировать» и «Экспорт в txt» выводят сводку целиком: трафик, выходы, правила и все соединения.")
         }
     }
 
@@ -452,9 +445,13 @@ struct ConnectionsView: View {
 
     // MARK: - Сбор статистики
 
+    /// Правый край окна — последний сэмпл, чтобы график не «уезжал» между опросами.
+    private var windowEnd: Date { samples.last?.at ?? Date() }
+
+    private var windowStart: Date { windowEnd.addingTimeInterval(-window.seconds) }
+
     private var windowSamples: [TrafficSample] {
-        let from = Date().addingTimeInterval(-window.seconds)
-        return samples.filter { $0.at >= from }
+        samples.filter { $0.at >= windowStart }
     }
 
     private var lastDown: Double { samples.last?.down ?? 0 }
@@ -960,34 +957,68 @@ struct TrafficSample: Identifiable {
     let bytesByOutbound: [String: TrafficCounters]
 }
 
-/// График за выбранное окно: входящий — акцентом, исходящий — серым, шкала общая.
+/// График за выбранное окно: X — реальное время, Y — общая шкала,
+/// входящий — акцентом, исходящий — серым.
 struct TrafficGraph: View {
-    let samples: [Double]
-    let up: [Double]
+    let points: [(at: Date, down: Double, up: Double)]
+    let start: Date
+    let end: Date
+    let peakLabel: String
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(uiColor: .tertiarySystemFill))
-                line(values: samples, peak: peak, size: geometry.size, color: Theme.accent)
-                line(values: up, peak: peak, size: geometry.size, color: .gray)
+        VStack(spacing: 3) {
+            GeometryReader { geometry in
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(uiColor: .tertiarySystemFill))
+                    grid(size: geometry.size)
+                    line(incoming: true, peak: peak, size: geometry.size, color: Theme.accent)
+                    line(incoming: false, peak: peak, size: geometry.size, color: .gray)
+                    Text("пик " + peakLabel)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .padding(4)
+                }
             }
+            .frame(height: 96)
+            HStack {
+                Text(clock(start))
+                Spacer()
+                Text(clock(start.addingTimeInterval(end.timeIntervalSince(start) / 2)))
+                Spacer()
+                Text(clock(end))
+            }
+            .font(.system(size: 9))
+            .foregroundColor(.secondary)
         }
     }
 
     private var peak: Double {
-        let maximum = max(samples.max() ?? 0, up.max() ?? 0)
+        let maximum = points.map { max($0.down, $0.up) }.max() ?? 0
         return maximum > 0 ? maximum : 1
     }
 
-    private func line(values: [Double], peak: Double, size: CGSize, color: Color) -> some View {
+    /// Три горизонтальные линии — чтобы видеть масштаб.
+    private func grid(size: CGSize) -> some View {
         Path { path in
-            guard values.count > 1 else { return }
-            let step = size.width / CGFloat(max(values.count - 1, 1))
-            for index in values.indices {
-                let x = CGFloat(index) * step
-                let ratio = CGFloat(values[index] / peak)
+            for step in 1...3 {
+                let y = size.height * CGFloat(step) / 4
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+            }
+        }
+        .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+    }
+
+    /// X считается по времени: иначе смена окна не видна — линии просто растягивались.
+    private func line(incoming: Bool, peak: Double, size: CGSize, color: Color) -> some View {
+        let span = max(end.timeIntervalSince(start), 1)
+        return Path { path in
+            guard points.count > 1 else { return }
+            for (index, point) in points.enumerated() {
+                let x = CGFloat(max(min(point.at.timeIntervalSince(start) / span, 1), 0)) * size.width
+                let value = incoming ? point.down : point.up
+                let ratio = CGFloat(value / peak)
                 let y = size.height - ratio * (size.height - 8) - 4
                 if index == 0 {
                     path.move(to: CGPoint(x: x, y: y))
@@ -998,5 +1029,17 @@ struct TrafficGraph: View {
         }
         .stroke(color, style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
     }
+
+    private func clock(_ date: Date) -> String {
+        Self.clockFormat.string(from: date)
+    }
+
+    static let clockFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 }
+
+
 
