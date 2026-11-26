@@ -982,11 +982,11 @@ struct TrafficGraph: View {
             }
             .frame(height: 96)
             HStack {
-                Text(clock(start))
+                Text(agoLabel(start))
                 Spacer()
-                Text(clock(start.addingTimeInterval(end.timeIntervalSince(start) / 2)))
+                Text(agoLabel(start.addingTimeInterval(end.timeIntervalSince(start) / 2)))
                 Spacer()
-                Text(clock(end))
+                Text("сейчас")
             }
             .font(.system(size: 9))
             .foregroundColor(.secondary)
@@ -1030,15 +1030,15 @@ struct TrafficGraph: View {
         .stroke(color, style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
     }
 
-    private func clock(_ date: Date) -> String {
-        Self.clockFormat.string(from: date)
+    /// Не абсолютное время, а «сколько назад»: −2 мин, −30 с, сейчас.
+    private func agoLabel(_ date: Date) -> String {
+        let seconds = Int(end.timeIntervalSince(date).rounded())
+        if seconds <= 5 { return "сейчас" }
+        if seconds < 60 { return "−" + String(seconds) + " с" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "−" + String(minutes) + " мин" }
+        return "−" + String(minutes / 60) + " ч"
     }
-
-    static let clockFormat: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
 }
 
 
