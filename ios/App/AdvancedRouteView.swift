@@ -197,55 +197,42 @@ struct AdvancedRouteView: View {
 
     // MARK: - Строка папки
 
+    /// Строка папки: только стрелка перехода. Выше/Ниже — свайпом слева,
+    /// удаление — свайпом справа (см. onDelete у списка).
     private func folderRow(_ rule: RoutePlanRule) -> some View {
-        HStack(spacing: 8) {
-            NavigationLink {
-                RouteRuleEditorView(rule: rule, targets: targets, embedded: true) { updated in
-                    if let index = folders.firstIndex(where: { $0.id == updated.id }) {
-                        folders[index] = updated
-                    }
+        NavigationLink {
+            RouteRuleEditorView(rule: rule, targets: targets, embedded: true) { updated in
+                if let index = folders.firstIndex(where: { $0.id == updated.id }) {
+                    folders[index] = updated
                 }
-            } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(rule.name.isEmpty ? "Папка" : rule.name)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    Text(rule.subtitle)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
             }
-
-            Menu {
-                Button {
-                    moveRule(rule, by: -1)
-                } label: {
-                    Label("Выше", systemImage: "arrow.up")
-                }
-                .disabled(folders.first?.id == rule.id)
-                Button {
-                    moveRule(rule, by: 1)
-                } label: {
-                    Label("Ниже", systemImage: "arrow.down")
-                }
-                .disabled(folders.last?.id == rule.id)
-                Button(role: .destructive) {
-                    folders.removeAll { $0.id == rule.id }
-                } label: {
-                    Label("Удалить папку", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.body)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(rule.name.isEmpty ? "Папка" : rule.name)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                Text(rule.subtitle)
+                    .font(.caption2)
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
             }
-            .buttonStyle(.borderless)
+            .padding(.vertical, 2)
         }
-        .padding(.vertical, 2)
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button {
+                moveRule(rule, by: -1)
+            } label: {
+                Label("Выше", systemImage: "arrow.up")
+            }
+            .tint(Theme.accent)
+            Button {
+                moveRule(rule, by: 1)
+            } label: {
+                Label("Ниже", systemImage: "arrow.down")
+            }
+            .tint(.gray)
+        }
     }
 
     private var newRuleSheet: some View {
