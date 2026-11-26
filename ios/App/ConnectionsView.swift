@@ -267,170 +267,27 @@ struct ConnectionsView: View {
                     .buttonStyle(.borderless)
                 }
 
-                VStack(spacing: 5) {
-                    statRow("Сейчас", down: Self.rate(lastDown), up: Self.rate(lastUp))
-                    statRow("За " + window.rawValue, down: Self.size(windowBytes.down),
-                            up: Self.size(windowBytes.up))
-                    statRow("С включения", down: Self.size(sessionDown), up: Self.size(sessionUp))
+                // Крупно — что происходит сейчас, мелко — сколько всего с запуска ядра.
+                HStack(spacing: 16) {
+                    Label(Self.rate(lastDown), systemImage: "arrow.down")
+                        .font(.title3.weight(.semibold))
+                        .foregroundColor(Theme.accent)
+                    Label(Self.rate(lastUp), systemImage: "arrow.up")
+                        .font(.title3.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 4)
                 }
-
-                TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
-                             start: windowStart, end: windowEnd,
-                             peakLabel: Self.rate(max(lastDown, lastUp)))
-
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    /// Строка карточки: подпись слева, входящий и исходящий справа.
-    private func statRow(_ title: String, down: String, up: String) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer(minLength: 6)
-            Text("↓ " + down)
-                .font(.caption.weight(.medium))
-                .foregroundColor(Theme.accent)
-                .frame(width: 92, alignment: .trailing)
-            Text("↑ " + up)
-                .font(.caption.weight(.medium))
-                .foregroundColor(.secondary)
-                .frame(width: 92, alignment: .trailing)
-        }
-    }
-
-    private var activeFilterSection: some View {
-        Section {
-            HStack(spacing: 6) {
-                Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                    .foregroundColor(Theme.accent)
-                Text(filterSummary).font(.caption2)
-                Spacer()
-                Button("Сбросить") {
-                    query = ""
-                    networkFilter = 0
-                    ruleFilter = ""
-                    outboundFilter = ""
-                }
-                .font(.caption2.weight(.medium))
-                .buttonStyle(.borderless)
-            }
-        } footer: {
-            Text("Показано \(visible.count) из \(shown.count)")
-        }
-    }
-
-    private var filterSummary: String {
-        var parts: [String] = []
-        if !query.isEmpty { parts.append("«\(query)»") }
-        if networkFilter == 1 { parts.append("tcp") }
-        if networkFilter == 2 { parts.append("udp") }
-        if !ruleFilter.isEmpty { parts.append("правило: \(ruleFilter)") }
-        if !outboundFilter.isEmpty { parts.append("сервер: \(outboundFilter)") }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: - Трафик
-
-    /// Карточка как «Live graphs»: окно 1/2/5/10 минут, пауза справа от него,
-    /// текущие скорости по выходам и график за выбранное окно.
-    private var trafficSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Text("Трафик").font(.headline)
-                    Spacer()
-                    ForEach(TrafficWindow.allCases) { item in
-                        Button(item.rawValue) { window = item }
-                            .font(.caption2.weight(.semibold))
-                            .buttonStyle(.borderless)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
-                            .background(window == item ? Theme.accent.opacity(0.18) : Color.clear)
-                            .foregroundColor(window == item ? Theme.accent : .primary)
-                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    }
-                    Button {
-                        paused.toggle()
-                        notice = paused ? "пауза: список и график замерли" : ""
-                        if !paused { lastSampleAt = nil; counters.removeAll() }
-                    } label: {
-                        Image(systemName: paused ? "play.fill" : "pause.fill")
-                            .font(.caption.weight(.semibold))
-                            .frame(width: 26, height: 22)
-                    }
-                    .buttonStyle(.borderless)
-                }
-
-                VStack(spacing: 5) {
-                    statRow("Сейчас", down: Self.rate(lastDown), up: Self.rate(lastUp))
-                    statRow("За " + window.rawValue, down: Self.size(windowBytes.down),
-                            up: Self.size(windowBytes.up))
-                    statRow("С включения", down: Self.size(sessionDown), up: Self.size(sessionUp))
-                }
-
-                TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
-                             start: windowStart, end: windowEnd,
-                             peakLabel: Self.rate(max(lastDown, lastUp)))
-
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    /// Строка карточки: подпись слева, входящий и исходящий справа.
-    private func statRow(_ title: String, down: String, up: String) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer(minLength: 6)
-            Text("↓ " + down)
-                .font(.caption.weight(.medium))
-                .foregroundColor(Theme.accent)
-                .frame(width: 92, alignment: .trailing)
-            Text("↑ " + up)
-                .font(.caption.weight(.medium))
-                .foregroundColor(.secondary)
-                .frame(width: 92, alignment: .trailing)
-        }
-    }
-
-    private var summarySection: some View {
-        Section {
-            HStack {
-                Label("↑ " + Self.size(totalUp), systemImage: "arrow.up")
-                    .foregroundColor(.orange)
-                Spacer()
-                Label("↓ " + Self.size(totalDown), systemImage: "arrow.down")
-                    .foregroundColor(.green)
-            }
-            .font(.footnote.weight(.medium))
-            HStack {
-                Text("Соединений")
-                Spacer()
-                Text(String(shown.count)).foregroundColor(.secondary)
-            }
-            .font(.footnote)
-            HStack {
-                Text("Обновлено")
-                Spacer()
-                // Время последнего опроса Clash API. При выключенном ядре опроса нет —
-                // показывать старое время нельзя, легко принять за свежие данные.
-                Text(engine.running ? Self.time.string(from: refreshed) : "—")
+                Text("С включения ядра: ↓ " + Self.size(sessionDown)
+                     + " · ↑ " + Self.size(sessionUp))
+                    .font(.caption2)
                     .foregroundColor(.secondary)
+
+                TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
+                             start: windowStart, end: windowEnd,
+                             peakLabel: Self.rate(max(lastDown, lastUp)))
+
             }
-            .font(.footnote)
-        } header: {
-            Text("Сейчас")
-        } footer: {
-            if engine.running {
-                Text("Список опрашивается каждые 2 секунды.")
-            } else {
-                Text("Ядро выключено: опроса нет, счётчики не растут.")
-            }
+            .padding(.vertical, 2)
         }
     }
 
@@ -460,7 +317,14 @@ struct ConnectionsView: View {
                 }
             }
         } header: {
-            Text("Соединения · " + String(activeIDs.count) + " активных")
+            HStack(spacing: 6) {
+                Text("Соединения · " + String(activeIDs.count) + " активных")
+                Spacer(minLength: 6)
+                Text("↓ " + Self.rate(lastDown))
+                    .foregroundColor(Theme.accent)
+                Text("↑ " + Self.rate(lastUp))
+                    .foregroundColor(.secondary)
+            }
         } footer: {
             Text("Остановленные висят десять секунд и гаснут, если трафик не возобновился; возобновился — снова активны.")
         }
