@@ -19,6 +19,13 @@ struct ConnectionsView: View {
 
     /// Пауза: сбор соединений останавливается, список замирает на моменте нажатия —
     /// вместе с теми соединениями, что закрылись в последние пять секунд.
+    /// Окно графика: 1/2/5/10 минут. Пауза — справа от кнопок окна.
+    @State private var window: TrafficWindow = .two
+    /// Сэмплы трафика: раз в опрос, хранится десять минут.
+    @State private var samples: [TrafficSample] = []
+    /// Счётчики соединений с прошлого опроса — по ним считаются скорости.
+    @State private var counters: [String: TrafficCounters] = [:]
+    @State private var lastSampleAt: Date?
     @State private var paused = false
     @State private var recentlyClosed: [ClashApi.Connection] = []
     @State private var closedAt: [String: Date] = [:]
@@ -89,6 +96,7 @@ struct ConnectionsView: View {
         NavigationView {
             List {
                 if paused || !notice.isEmpty { statusSection }
+                trafficSection
                 summarySection
                 if filterActive { activeFilterSection }
                 listSection
@@ -149,8 +157,7 @@ struct ConnectionsView: View {
                 }
                 Divider()
                 Button {
-                    UIPasteboard.general.string = plainText(visible)
-                    notice = "скопировано: \(visible.count) соединений"
+                    copySummary()
                 } label: {
                     Label("Скопировать", systemImage: "doc.on.doc")
                 }
@@ -207,6 +214,101 @@ struct ConnectionsView: View {
         if !ruleFilter.isEmpty { parts.append("правило: \(ruleFilter)") }
         if !outboundFilter.isEmpty { parts.append("сервер: \(outboundFilter)") }
         return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Трафик
+
+    /// Карточка как «Live graphs»: окно 1/2/5/10 минут, пауза справа от него,
+    /// текущие скорости по выходам и график за выбранное окно.
+    private var trafficSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Text("Трафик").font(.headline)
+                    Spacer()
+                    ForEach(TrafficWindow.allCases) { item in
+                        Button(item.rawValue) { window = item }
+                            .font(.caption2.weight(.semibold))
+                            .buttonStyle(.borderless)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(window == item ? Theme.accent.opacity(0.18) : Color.clear)
+                            .foregroundColor(window == item ? Theme.accent : .primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    }
+                    Button {
+                        paused.toggle()
+                        notice = paused ? "пауза: список и график замерли" : ""
+                        if !paused { lastSampleAt = nil; counters.removeAll() }
+                    } label: {
+                        Image(systemName: paused ? "play.fill" : "pause.fill")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 26, height: 22)
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                HStack(spacing: 12) {
+                    Label(Self.rate(lastDown), systemImage: "arrow.down")
+                        .foregroundColor(Theme.accent)
+                    Label(Self.rate(lastUp), systemImage: "arrow.up")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("↓ " + Self.size(windowBytes.down) + " · ↑ " + Self.size(windowBytes.up))
+                        .foregroundColor(.secondary)
+                }
+                .font(.caption.weight(.medium))
+
+                if !outboundRows.isEmpty {
+                    VStack(spacing: 3) {
+                        ForEach(outboundRows, id: \.name) { row in
+                            HStack {
+                                Text(row.name).lineLimit(1)
+                                Spacer()
+                                Text(Self.rate(row.down))
+                                    .foregroundColor(Theme.accent)
+                                    .frame(width: 88, alignment: .trailing)
+                                Text(Self.rate(row.up))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 88, alignment: .trailing)
+                            }
+                            .font(.caption2)
+                        }
+                    }
+                }
+
+                TrafficGraph(samples: windowSamples.map { $0.down },
+                             up: windowSamples.map { $0.up })
+                    .frame(height: 96)
+
+                HStack {
+                    Text(windowSamples.first.map { Self.time.string(from: $0.at) } ?? "—")
+                    Spacer()
+                    Text("сейчас")
+                }
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+                HStack(spacing: 18) {
+                    Button {
+                        copySummary()
+                    } label: {
+                        Label("Копировать", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        export()
+                    } label: {
+                        Label("Экспорт в txt", systemImage: "square.and.arrow.up")
+                    }
+                    Spacer()
+                }
+                .font(.caption.weight(.medium))
+                .buttonStyle(.borderless)
+            }
+            .padding(.vertical, 2)
+        } footer: {
+            Text("Входящий — цвет акцента, исходящий — серый. «Скопировать» и «Экспорт в txt» выводят сводку целиком: трафик, выходы, правила и все соединения.")
+        }
     }
 
     private var summarySection: some View {
@@ -348,6 +450,109 @@ struct ConnectionsView: View {
         return item.rule + "[" + item.rulePayload + "]"
     }
 
+    // MARK: - Сбор статистики
+
+    private var windowSamples: [TrafficSample] {
+        let from = Date().addingTimeInterval(-window.seconds)
+        return samples.filter { $0.at >= from }
+    }
+
+    private var lastDown: Double { samples.last?.down ?? 0 }
+    private var lastUp: Double { samples.last?.up ?? 0 }
+
+    private var windowBytes: (down: Int64, up: Int64) {
+        windowSamples.reduce((0, 0)) { ($0.0 + $1.bytesDown, $0.1 + $1.bytesUp) }
+    }
+
+    private var windowBytesByOutbound: [(name: String, down: Int64, up: Int64)] {
+        var totals: [String: TrafficCounters] = [:]
+        for sample in windowSamples {
+            for (name, bytes) in sample.bytesByOutbound {
+                var row = totals[name] ?? TrafficCounters(up: 0, down: 0)
+                row.up += bytes.up
+                row.down += bytes.down
+                totals[name] = row
+            }
+        }
+        return totals.map { (name: $0.key, down: $0.value.down, up: $0.value.up) }
+            .filter { $0.down + $0.up > 0 }
+            .sorted { $0.down + $0.up > $1.down + $1.up }
+    }
+
+    /// Скорости по выходам за последний сэмпл — то, что видно строками под шапкой.
+    private var outboundRows: [(name: String, down: Double, up: Double)] {
+        guard let last = samples.last else { return [] }
+        return last.byOutbound.map { (name: $0.key, down: $0.value.down, up: $0.value.up) }
+            .sorted { $0.down + $0.up > $1.down + $1.up }
+            .prefix(5)
+            .map { $0 }
+    }
+
+    /// Сводка по правилам: сколько соединений и сколько байт прошло через каждое.
+    private func ruleTotals(_ list: [ClashApi.Connection])
+        -> [(name: String, count: Int, down: Int64, up: Int64)] {
+        var totals: [String: (count: Int, down: Int64, up: Int64)] = [:]
+        for item in list {
+            let key = ruleText(item)
+            var row = totals[key] ?? (0, 0, 0)
+            row.count += 1
+            row.down += Int64(item.download)
+            row.up += Int64(item.upload)
+            totals[key] = row
+        }
+        return totals.map { (name: $0.key, count: $0.value.count, down: $0.value.down, up: $0.value.up) }
+            .sorted { $0.count > $1.count }
+    }
+
+    /// Один сэмпл на опрос: дельты счётчиков делим на прошедшее время.
+    private func recordSample(_ list: [ClashApi.Connection], at now: Date) {
+        var next: [String: TrafficCounters] = [:]
+        var byOutbound: [String: TrafficCounters] = [:]
+        var bytesDown: Int64 = 0
+        var bytesUp: Int64 = 0
+        for item in list {
+            let down = Int64(item.download)
+            let up = Int64(item.upload)
+            next[item.id] = TrafficCounters(up: up, down: down)
+            // Считаем только тех, кого видели в прошлом опросе: счётчики закрытых
+            // соединений исчезают, и разница «минус всё» дала бы ложный всплеск.
+            guard let previous = counters[item.id] else { continue }
+            let deltaDown = max(down - previous.down, 0)
+            let deltaUp = max(up - previous.up, 0)
+            bytesDown += deltaDown
+            bytesUp += deltaUp
+            var row = byOutbound[item.outbound] ?? TrafficCounters(up: 0, down: 0)
+            row.down += deltaDown
+            row.up += deltaUp
+            byOutbound[item.outbound] = row
+        }
+        counters = next
+        let elapsed = now.timeIntervalSince(lastSampleAt ?? now)
+        lastSampleAt = now
+        // После паузы или возврата на вкладку разница накопилась за минуты —
+        // такой сэмпл только испортил бы график.
+        guard elapsed > 0, elapsed < 10 else { return }
+        samples.append(TrafficSample(
+            at: now,
+            down: Double(bytesDown) / elapsed,
+            up: Double(bytesUp) / elapsed,
+            bytesDown: bytesDown,
+            bytesUp: bytesUp,
+            byOutbound: byOutbound.mapValues {
+                TrafficRates(down: Double($0.down) / elapsed, up: Double($0.up) / elapsed)
+            },
+            bytesByOutbound: byOutbound))
+        let horizon = now.addingTimeInterval(-610)
+        if let first = samples.first, first.at < horizon {
+            samples.removeAll { $0.at < horizon }
+        }
+    }
+
+    static func rate(_ value: Double) -> String {
+        let bytes = max(Int64(value.rounded()), 0)
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) + "/с"
+    }
+
     private func startPolling() {
         polling?.cancel()
         polling = Task {
@@ -389,6 +594,7 @@ struct ConnectionsView: View {
                 }
 
                 connections = list.count > 400 ? Array(list.prefix(400)) : list
+                recordSample(list, at: now)
                 refreshed = Date()
                 if !ruleFilter.isEmpty, !list.contains(where: { $0.rule == ruleFilter }) {
                     ruleFilter = ""
@@ -403,7 +609,25 @@ struct ConnectionsView: View {
     /// Таблица в текст: одна строка на соединение, читается и в чате, и в файле.
     private func plainText(_ list: [ClashApi.Connection]) -> String {
         var lines: [String] = []
-        lines.append("Соединения · \(Self.fileStamp.string(from: Date())) · всего \(list.count)")
+        lines.append("Соединения · \(Self.fileStamp.string(from: Date())) · окно \(window.rawValue) · всего \(list.count)")
+        let bytes = windowBytes
+        lines.append("Трафик за \(window.rawValue): ↓ \(Self.size(bytes.down)) ↑ \(Self.size(bytes.up))")
+        let byOutbound = windowBytesByOutbound
+        if !byOutbound.isEmpty {
+            lines.append("По выходам:")
+            for row in byOutbound {
+                lines.append("  " + row.name + ": ↓ " + Self.size(row.down) + " ↑ " + Self.size(row.up))
+            }
+        }
+        let rulesSummary = ruleTotals(list)
+        if !rulesSummary.isEmpty {
+            lines.append("Правила:")
+            for row in rulesSummary {
+                lines.append("  " + row.name + " → " + String(row.count) + " соединений, ↓ "
+                             + Self.size(row.down) + " ↑ " + Self.size(row.up))
+            }
+        }
+        lines.append("Соединения:")
         for (index, item) in list.enumerated() {
             var parts: [String] = []
             parts.append(item.destination)
@@ -416,6 +640,12 @@ struct ConnectionsView: View {
             lines.append(String(index + 1) + ". " + parts.joined(separator: " · "))
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Сводка в буфер: трафик за окно, выходы, правила и все соединения.
+    private func copySummary() {
+        UIPasteboard.general.string = plainText(visible)
+        notice = "скопировано: " + String(visible.count) + " соединений"
     }
 
     private func export() {
@@ -689,3 +919,84 @@ struct ConnectionDetailView: View {
         presentation.wrappedValue.dismiss()
     }
 }
+
+// MARK: - Статистика трафика
+
+/// Окно графика: кнопки «1м 2м 5м 10м» в карточке трафика.
+enum TrafficWindow: String, CaseIterable, Identifiable {
+    case one = "1м", two = "2м", five = "5м", ten = "10м"
+
+    var id: String { rawValue }
+
+    var seconds: TimeInterval {
+        switch self {
+        case .one: return 60
+        case .two: return 120
+        case .five: return 300
+        case .ten: return 600
+        }
+    }
+}
+
+struct TrafficCounters {
+    var up: Int64
+    var down: Int64
+}
+
+struct TrafficRates {
+    var down: Double
+    var up: Double
+}
+
+/// Сэмпл трафика: скорости для графика и байты за интервал для сводки.
+struct TrafficSample: Identifiable {
+    let id = UUID()
+    let at: Date
+    let down: Double
+    let up: Double
+    let bytesDown: Int64
+    let bytesUp: Int64
+    let byOutbound: [String: TrafficRates]
+    let bytesByOutbound: [String: TrafficCounters]
+}
+
+/// График за выбранное окно: входящий — акцентом, исходящий — серым, шкала общая.
+struct TrafficGraph: View {
+    let samples: [Double]
+    let up: [Double]
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(uiColor: .tertiarySystemFill))
+                line(values: samples, peak: peak, size: geometry.size, color: Theme.accent)
+                line(values: up, peak: peak, size: geometry.size, color: .gray)
+            }
+        }
+    }
+
+    private var peak: Double {
+        let maximum = max(samples.max() ?? 0, up.max() ?? 0)
+        return maximum > 0 ? maximum : 1
+    }
+
+    private func line(values: [Double], peak: Double, size: CGSize, color: Color) -> some View {
+        Path { path in
+            guard values.count > 1 else { return }
+            let step = size.width / CGFloat(max(values.count - 1, 1))
+            for index in values.indices {
+                let x = CGFloat(index) * step
+                let ratio = CGFloat(values[index] / peak)
+                let y = size.height - ratio * (size.height - 8) - 4
+                if index == 0 {
+                    path.move(to: CGPoint(x: x, y: y))
+                } else {
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+        }
+        .stroke(color, style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
+    }
+}
+
