@@ -175,7 +175,7 @@ struct AdvancedRouteView: View {
         } header: {
             Text("Папки с атрибутами")
         } footer: {
-            Text("Приоритет исполнения — сверху вниз: каждая следующая папка менее приоритетна, чем предыдущая. Зажмите папку, чтобы переставить.")
+            Text("Приоритет исполнения — сверху вниз: каждая следующая папка менее приоритетна, чем предыдущая. Зажмите папку, чтобы переставить; свайп влево — удалить.")
         }
     }
 
@@ -204,10 +204,7 @@ struct AdvancedRouteView: View {
     /// удаление — свайпом вправо или кнопкой внутри папки.
     private func folderRow(_ rule: RoutePlanRule) -> some View {
         NavigationLink {
-            RouteRuleEditorView(rule: rule, targets: targets, embedded: true,
-                                onDelete: {
-                                    folders.removeAll { $0.id == rule.id }
-                                }) { updated in
+            RouteRuleEditorView(rule: rule, targets: targets, embedded: true) { updated in
                 if let index = folders.firstIndex(where: { $0.id == updated.id }) {
                     folders[index] = updated
                 }
@@ -343,8 +340,6 @@ struct RouteRuleEditorView: View {
     let targets: [String]
     /// true — открыт переходом (свой NavigationView не нужен, «Отмены» нет, есть «назад»).
     let embedded: Bool
-    /// Удаление папки: показываем кнопку внизу, чтобы не искать свайп.
-    let onDelete: (() -> Void)?
     let onSave: (RoutePlanRule) -> Void
 
     /// Встроенные цели плюс все сервера (по имени, без повторов).
@@ -373,11 +368,9 @@ struct RouteRuleEditorView: View {
     @State private var sheet: Sheet?
 
     init(rule: RoutePlanRule, targets: [String], embedded: Bool = false,
-         onDelete: (() -> Void)? = nil,
          onSave: @escaping (RoutePlanRule) -> Void) {
         self.targets = targets
         self.embedded = embedded
-        self.onDelete = onDelete
         self.onSave = onSave
         var initial = rule
         // На iPhone нет процессов, Android-пакетов и Wi-Fi: такие атрибуты из папки убираем
@@ -463,17 +456,6 @@ struct RouteRuleEditorView: View {
                     Text("Условия внутри одной папки складываются: сработает, когда совпало каждое.")
                 }
 
-                if let onDelete {
-                    Section {
-                        Button {
-                            onDelete()
-                            presentation.wrappedValue.dismiss()
-                        } label: {
-                            Label("Удалить папку", systemImage: "trash")
-                                .foregroundColor(.red)
-                        }
-                    }
-                }
             }
             .navigationTitle(rule.name.isEmpty ? "Папка" : rule.name)
             .navigationBarTitleDisplayMode(.inline)
