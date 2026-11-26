@@ -25,7 +25,6 @@ struct AdvancedRouteView: View {
     /// Один лист на экран: несколько `.sheet` на одном виде в iOS 15 конфликтуют, и открывается
     /// только последний.
     private enum Sheet: Identifiable {
-        case rule(RoutePlanRule)
         case newFolder
         case preview
         case export
@@ -34,7 +33,6 @@ struct AdvancedRouteView: View {
 
         var id: String {
             switch self {
-            case .rule(let rule): return "rule-\(rule.id.uuidString)"
             case .newFolder: return "newFolder"
             case .preview: return "preview"
             case .export: return "export"
@@ -85,12 +83,6 @@ struct AdvancedRouteView: View {
         }
         .sheet(item: $sheet) { item in
             switch item {
-            case .rule(let rule):
-                RouteRuleEditorView(rule: rule, targets: targets) { updated in
-                    if let index = folders.firstIndex(where: { $0.id == updated.id }) {
-                        folders[index] = updated
-                    }
-                }
             case .newFolder:
                 newRuleSheet
             case .preview:
@@ -207,8 +199,12 @@ struct AdvancedRouteView: View {
 
     private func folderRow(_ rule: RoutePlanRule) -> some View {
         HStack(spacing: 8) {
-            Button {
-                sheet = .rule(rule)
+            NavigationLink {
+                RouteRuleEditorView(rule: rule, targets: targets, embedded: true) { updated in
+                    if let index = folders.firstIndex(where: { $0.id == updated.id }) {
+                        folders[index] = updated
+                    }
+                }
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(rule.name.isEmpty ? "Папка" : rule.name)
@@ -223,7 +219,6 @@ struct AdvancedRouteView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
 
             Menu {
                 Button {
@@ -337,6 +332,8 @@ struct RouteRuleEditorView: View {
     @EnvironmentObject private var store: ProfileStore
 
     let targets: [String]
+    /// true — открыт переходом (свой NavigationView не нужен, «Отмены» нет, есть «назад»).
+    let embedded: Bool
     let onSave: (RoutePlanRule) -> Void
 
     /// Встроенные цели плюс все сервера (по имени, без повторов).
@@ -364,8 +361,10 @@ struct RouteRuleEditorView: View {
     @State private var rule: RoutePlanRule
     @State private var sheet: Sheet?
 
-    init(rule: RoutePlanRule, targets: [String], onSave: @escaping (RoutePlanRule) -> Void) {
+    init(rule: RoutePlanRule, targets: [String], embedded: Bool = false,
+         onSave: @escaping (RoutePlanRule) -> Void) {
         self.targets = targets
+        self.embedded = embedded
         self.onSave = onSave
         var initial = rule
         // На iPhone нет процессов, Android-пакетов и Wi-Fi: такие атрибуты из папки убираем
@@ -388,7 +387,18 @@ struct RouteRuleEditorView: View {
     }
 
     var body: some View {
-        NavigationView {
+        if embedded {
+            content
+        } else {
+            NavigationView {
+                content
+            }
+            .navigationViewStyle(.stack)
+        }
+    }
+
+    private var content: some View {
+        Group {
             Form {
                 Section {
                     TextField("Название папки", text: $rule.name)
@@ -424,8 +434,10 @@ struct RouteRuleEditorView: View {
             .navigationTitle(rule.name.isEmpty ? "Папка" : rule.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { presentation.wrappedValue.dismiss() }
+                if !embedded {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Отмена") { presentation.wrappedValue.dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Готово") {
@@ -451,7 +463,6 @@ struct RouteRuleEditorView: View {
                 }
             }
         }
-        .navigationViewStyle(.stack)
     }
 
     /// Значения атрибута: у `outbound` — все сервера, у остальных — справочник.
