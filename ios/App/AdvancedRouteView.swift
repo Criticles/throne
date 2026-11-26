@@ -109,7 +109,7 @@ struct AdvancedRouteView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("outbound")
                         .font(.caption.weight(.semibold))
-                        .foregroundColor(Theme.accent)
+                        .foregroundColor(.primary)
                     Text(finalTarget)
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundColor(.secondary)
@@ -406,7 +406,7 @@ struct RouteRuleEditorView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Outbound по умолчанию")
                                 .font(.caption.weight(.semibold))
-                                .foregroundColor(Theme.accent)
+                                .foregroundColor(.primary)
                             Text(rule.outbound.isEmpty ? "не задано" : rule.outbound)
                                 .font(.system(.caption2, design: .monospaced))
                                 .foregroundColor(.secondary)
@@ -494,7 +494,7 @@ struct RouteRuleEditorView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.attr)
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(Theme.accent)
+                    .foregroundColor(.primary)
                 // «не задано» — обычным шрифтом: в моноширинном пробел выглядит вдвое шире.
                 Text(item.summary)
                     .font(.system(.caption2, design: placeholder ? .default : .monospaced))
