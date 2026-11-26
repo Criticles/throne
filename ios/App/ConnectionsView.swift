@@ -131,13 +131,15 @@ struct ConnectionsView: View {
                                          exitName: exitName(item)) { attr, value, title in
                         activeSheet = nil
                         LogStore.shared.append("соединения: переносим «" + value + "» в правило")
-                        // Листов не открываем: закрываем подробности и уходим на вкладку
-                        // «Маршрут», где профиль предложит выбрать папку.
+                        // Один и тот же лист на одном уровне: закрылись подробности —
+                        // открылся выбор профиля и папки.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            router.openRouting(with: RouteInsertPrefill(title: title, attr: attr,
-                                                                       value: value))
+                            activeSheet = .insert(RouteInsertPrefill(title: title, attr: attr,
+                                                                     value: value))
                         }
                     }
+                case .insert(let prefill):
+                    RouteInsertSheet(prefill: prefill)
                 case .filter:
                     ConnectionsFilterSheet(query: $query,
                                            network: $networkFilter,
@@ -366,7 +368,7 @@ struct ConnectionsView: View {
     /// Свайп по строке: сразу в «добавить правило», без открытия подробностей.
     private func insertFromRow(_ item: ClashApi.Connection) {
         let host = item.host.trimmingCharacters(in: .whitespacesAndNewlines)
-        router.openRouting(with: RouteInsertPrefill(
+        activeSheet = .insert(RouteInsertPrefill(
             title: host.isEmpty ? "IP → правило" : "домен → правило",
             attr: host.isEmpty ? "ip_cidr" : "domain",
             value: host.isEmpty ? item.ip : host))
@@ -705,12 +707,14 @@ struct ConnectionsView: View {
 enum ConnectionsSheet: Identifiable {
     case detail(ClashApi.Connection)
     case filter
+    case insert(RouteInsertPrefill)
     case export(URL)
 
     var id: String {
         switch self {
         case .detail(let item): return "detail-" + item.id
         case .filter: return "filter"
+        case .insert(let prefill): return "insert-" + prefill.id.uuidString
         case .export(let url): return "export-" + url.lastPathComponent
         }
     }

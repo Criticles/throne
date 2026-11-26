@@ -5,7 +5,6 @@ import SwiftUI
 struct RoutingView: View {
     @EnvironmentObject private var prefs: Prefs
     @EnvironmentObject private var rules: RuleStore
-    @EnvironmentObject private var router: AppRouter
 
     @State private var showGeoSheet = false
     @State private var geoName = ""
@@ -26,19 +25,6 @@ struct RoutingView: View {
         .sheet(isPresented: $showGeoSheet) { geoSheet }
     }
 
-    /// Подпись строки «Профили маршрутизации»: активный профиль или заявка из «Соединений».
-    /// Считаем заранее: в одном выражении компилятор упирался в таймаут проверки типов.
-    private var profilesSubtitle: String {
-        if let pending = router.pendingInsert {
-            return "ждёт: «" + pending.value + "» → выберите профиль"
-        }
-        return "активно: " + rules.plan.name + " · профилей: " + String(rules.plans.count)
-    }
-
-    private var profilesSubtitleAccent: Bool {
-        router.pendingInsert != nil
-    }
-
     private var advancedSection: some View {
         Section {
             NavigationLink {
@@ -50,9 +36,9 @@ struct RoutingView: View {
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Профили маршрутизации").font(.subheadline.weight(.medium))
-                        Text(profilesSubtitle)
+                        Text("активно: " + rules.plan.name + " · профилей: " + String(rules.plans.count))
                             .font(.caption2)
-                            .foregroundColor(profilesSubtitleAccent ? Theme.accent : Color.secondary)
+                            .foregroundColor(.secondary)
                     }
                 }
             }

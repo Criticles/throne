@@ -8,7 +8,6 @@ import SwiftUI
 struct AdvancedRouteView: View {
     @EnvironmentObject private var rules: RuleStore
     @EnvironmentObject private var store: ProfileStore
-    @EnvironmentObject private var router: AppRouter
     @Environment(\.presentationMode) private var presentation
 
     let planID: UUID
@@ -68,7 +67,6 @@ struct AdvancedRouteView: View {
 
     var body: some View {
         Form {
-            insertSection
             commonSection
             typeSection
             if tab == 0 {
@@ -110,42 +108,6 @@ struct AdvancedRouteView: View {
     }
 
     // MARK: - Секции
-
-    /// Заявка из «Соединений»: значение уже есть, остаётся выбрать папку.
-    @ViewBuilder
-    private var insertSection: some View {
-        if let pending = router.pendingInsert {
-            Section {
-                Text(pending.value)
-                    .font(.system(.footnote, design: .monospaced))
-                Menu {
-                    ForEach(folders) { folder in
-                        Button(folder.name) { add(pending, to: folder) }
-                    }
-                } label: {
-                    Label("Добавить в папку", systemImage: "folder.badge.plus")
-                }
-                .disabled(folders.isEmpty)
-                Button("Отменить") { router.pendingInsert = nil }
-                    .foregroundColor(Theme.accent)
-            } header: {
-                Text(pending.title.isEmpty ? "Из соединения" : pending.title)
-            } footer: {
-                Text(folders.isEmpty
-                     ? "В этом профиле нет папок: создайте папку с атрибутами, и заявка останется ждать."
-                     : "Атрибут «" + pending.attr + "» ляжет в выбранную папку.")
-            }
-        }
-    }
-
-    /// Кладём значение и сразу показываем обновлённые папки.
-    private func add(_ pending: RouteInsertPrefill, to folder: RoutePlanRule) {
-        guard rules.addValue(pending.value, attr: pending.attr, to: planID,
-                             ruleID: folder.id) else { return }
-        LogStore.shared.append("маршрут: «" + pending.value + "» → " + folder.name)
-        if let updated = rules.plan(with: planID) { folders = updated.rules }
-        router.pendingInsert = nil
-    }
 
     private var commonSection: some View {
         Section {
