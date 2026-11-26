@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Редактор профиля маршрутизации: упрощённый вид (четыре списка) и расширенный.
 ///
@@ -43,6 +44,8 @@ struct AdvancedRouteView: View {
 
     @State private var sheet: Sheet?
     @State private var newRuleName = ""
+    /// Какая папка сейчас «в руке» при перетаскивании.
+    @State private var dragging: UUID?
 
     private var targets: [String] {
         var list = ["proxy", "direct", "reject"]
@@ -172,7 +175,7 @@ struct AdvancedRouteView: View {
         } header: {
             Text("Папки с атрибутами")
         } footer: {
-            Text("Приоритет исполнения — сверху вниз: каждая следующая папка менее приоритетна, чем предыдущая.")
+            Text("Приоритет исполнения — сверху вниз: каждая следующая папка менее приоритетна, чем предыдущая. Зажмите папку, чтобы переставить.")
         }
     }
 
@@ -197,11 +200,14 @@ struct AdvancedRouteView: View {
 
     // MARK: - Строка папки
 
-    /// Строка папки: только стрелка перехода. Выше/Ниже — свайпом слева,
-    /// удаление — свайпом справа (см. onDelete у списка).
+    /// Строка папки: только стрелка перехода. Порядок — зажать и потянуть,
+    /// удаление — свайпом вправо или кнопкой внутри папки.
     private func folderRow(_ rule: RoutePlanRule) -> some View {
         NavigationLink {
-            RouteRuleEditorView(rule: rule, targets: targets, embedded: true) { updated in
+            RouteRuleEditorView(rule: rule, targets: targets, embedded: true,
+                                onDelete: {
+                                    folders.removeAll { $0.id == rule.id }
+                                }) { updated in
                 if let index = folders.firstIndex(where: { $0.id == updated.id }) {
                     folders[index] = updated
                 }
@@ -219,20 +225,13 @@ struct AdvancedRouteView: View {
             }
             .padding(.vertical, 2)
         }
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            Button {
-                moveRule(rule, by: -1)
-            } label: {
-                Label("Выше", systemImage: "arrow.up")
-            }
-            .tint(Theme.accent)
-            Button {
-                moveRule(rule, by: 1)
-            } label: {
-                Label("Ниже", systemImage: "arrow.down")
-            }
-            .tint(.gray)
+        .onDrag {
+            dragging = rule.id
+            return NSItemProvider(object: rule.id.uuidString as NSString)
         }
+        .onDrop(of: [.text], delegate: FolderDropDelegate(item: rule,
+                                                        items: $folders,
+                                                        dragging: $dragging))
     }
 
     private var newRuleSheet: some View {
@@ -309,6 +308,32 @@ struct AdvancedRouteView: View {
 }
 
 /// Редактор одной папки: название, действие, outbound и список атрибутов внутри.
+/// Перестановка папок долгим нажатием: тянем строку, порядок меняется на лету.
+struct FolderDropDelegate: DropDelegate {
+    let item: RoutePlanRule
+    @Binding var items: [RoutePlanRule]
+    @Binding var dragging: UUID?
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging, dragging != item.id,
+              let from = items.firstIndex(where: { $0.id == dragging }),
+              let to = items.firstIndex(where: { $0.id == item.id }) else { return }
+        withAnimation {
+            items.move(fromOffsets: IndexSet(integer: from),
+                       toOffset: to > from ? to + 1 : to)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
+    }
+}
+
 struct RouteRuleEditorView: View {
     @Environment(\.presentationMode) private var presentation
     /// Сервера берём из хранилища напрямую: в outbound папки можно указать конкретный сервер,
@@ -318,6 +343,8 @@ struct RouteRuleEditorView: View {
     let targets: [String]
     /// true — открыт переходом (свой NavigationView не нужен, «Отмены» нет, есть «назад»).
     let embedded: Bool
+    /// Удаление папки: показываем кнопку внизу, чтобы не искать свайп.
+    let onDelete: (() -> Void)?
     let onSave: (RoutePlanRule) -> Void
 
     /// Встроенные цели плюс все сервера (по имени, без повторов).
@@ -346,9 +373,11 @@ struct RouteRuleEditorView: View {
     @State private var sheet: Sheet?
 
     init(rule: RoutePlanRule, targets: [String], embedded: Bool = false,
+         onDelete: (() -> Void)? = nil,
          onSave: @escaping (RoutePlanRule) -> Void) {
         self.targets = targets
         self.embedded = embedded
+        self.onDelete = onDelete
         self.onSave = onSave
         var initial = rule
         // На iPhone нет процессов, Android-пакетов и Wi-Fi: такие атрибуты из папки убираем
@@ -432,6 +461,18 @@ struct RouteRuleEditorView: View {
                     Text("Атрибуты · свайп влево, чтоб удалить")
                 } footer: {
                     Text("Условия внутри одной папки складываются: сработает, когда совпало каждое.")
+                }
+
+                if let onDelete {
+                    Section {
+                        Button {
+                            onDelete()
+                            presentation.wrappedValue.dismiss()
+                        } label: {
+                            Label("Удалить папку", systemImage: "trash")
+                                .foregroundColor(.red)
+                        }
+                    }
                 }
             }
             .navigationTitle(rule.name.isEmpty ? "Папка" : rule.name)
