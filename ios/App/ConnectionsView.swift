@@ -52,14 +52,24 @@ struct ConnectionsView: View {
         !query.isEmpty || networkFilter != 0 || !ruleFilter.isEmpty || !outboundFilter.isEmpty
     }
 
-    /// Что показываем: на паузе — снимок плюс те, кто закрылся в последние пять секунд.
+    private var activeIDs: Set<String> { Set(connections.map { $0.id }) }
+
+    /// Что показываем: активные сверху (по объёму), остановленные — снизу,
+    /// в порядке «чем позже остановилось, тем выше».
     private var shown: [ClashApi.Connection] {
-        guard paused else { return connections }
         var merged = connections
         for item in recentlyClosed where !merged.contains(where: { $0.id == item.id }) {
             merged.append(item)
         }
-        return merged
+        return merged.sorted { left, right in
+            let leftActive = activeIDs.contains(left.id)
+            let rightActive = activeIDs.contains(right.id)
+            if leftActive != rightActive { return leftActive }
+            if leftActive { return left.download + left.upload > right.download + right.upload }
+            let leftClosed = closedAt[left.id] ?? .distantPast
+            let rightClosed = closedAt[right.id] ?? .distantPast
+            return leftClosed > rightClosed
+        }
     }
 
     private var visible: [ClashApi.Connection] {
@@ -281,26 +291,11 @@ struct ConnectionsView: View {
                              start: windowStart, end: windowEnd,
                              peakLabel: Self.rate(max(lastDown, lastUp)))
 
-                HStack(spacing: 18) {
-                    Button {
-                        copySummary()
-                    } label: {
-                        Label("Копировать", systemImage: "doc.on.doc")
-                    }
-                    Button {
-                        export()
-                    } label: {
-                        Label("Экспорт в txt", systemImage: "square.and.arrow.up")
-                    }
-                    Spacer()
-                }
-                .font(.caption.weight(.medium))
-                .buttonStyle(.borderless)
             }
             .padding(.vertical, 2)
         } footer: {
             Text("Окно " + window.rawValue + " · точек " + String(windowSamples.count)
-                 + ". Входящий — цвет акцента, исходящий — серый. «Скопировать» и «Экспорт в txt» выводят сводку целиком: трафик, выходы, правила и все соединения.")
+                 + ". Входящий — цвет акцента, исходящий — серый. Сводка целиком — в меню «⋯»: «Скопировать» и «Экспорт в txt» (трафик, выходы, правила, все соединения).")
         }
     }
 
@@ -340,11 +335,11 @@ struct ConnectionsView: View {
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
-            ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+            ForEach(visible, id: \.id) { item in
                 Button {
                     activeSheet = .detail(item)
                 } label: {
-                    connectionRow(index: index + 1, item: item)
+                    connectionRow(item: item)
                 }
                 .buttonStyle(.plain)
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -357,7 +352,9 @@ struct ConnectionsView: View {
                 }
             }
         } header: {
-            Text("Соединения")
+            Text("Соединения · " + String(activeIDs.count) + " активных")
+        } footer: {
+            Text("Остановленные висят минуту и гаснут, если трафик не возобновился; возобновился — снова активны.")
         }
     }
 
@@ -370,66 +367,48 @@ struct ConnectionsView: View {
             value: host.isEmpty ? item.ip : host))
     }
 
-    private func connectionRow(index: Int, item: ClashApi.Connection) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(spacing: 4) {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 8, height: 8)
-                Text(String(index))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 18)
-            .padding(.top, 3)
+    /// Строка: точка активности, адрес с портом, сколько живёт, правило и выход.
+    private func connectionRow(item: ClashApi.Connection) -> some View {
+        let active = activeIDs.contains(item.id)
+        return HStack(alignment: .center, spacing: 8) {
+            Circle()
+                .fill(active ? Color.green : Color(uiColor: .tertiaryLabel))
+                .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .top) {
-                    Text(item.destination)
-                        .font(.caption.weight(.medium))
+                Text(item.destination)
+                    .font(.footnote.weight(.medium))
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(ruleText(item))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                         .lineLimit(1)
-                    Spacer(minLength: 6)
-                    Text(Self.duration(item.start))
+                    Text(item.outbound)
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(active ? Theme.accent : Color(uiColor: .tertiaryLabel))
+                        .lineLimit(1)
                 }
-                HStack(spacing: 4) {
-                    Text(item.source)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    if !item.proto.isEmpty {
-                        Text(item.proto)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .lineLimit(1)
-                HStack(spacing: 4) {
-                    Text(networkText(item))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Text("↑ " + Self.size(Int64(item.upload)))
-                        .font(.caption2)
-                    Text("↓ " + Self.size(Int64(item.download)))
-                        .font(.caption2)
-                }
-                .lineLimit(1)
-                Text(ruleText(item))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                Text(item.outbound)
-                    .font(.caption2)
-                    .foregroundColor(Theme.accent)
-                    .lineLimit(1)
             }
+
+            Spacer(minLength: 8)
+
+            Text(durationText(item))
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundColor(active ? .secondary : Color(uiColor: .tertiaryLabel))
+                .frame(minWidth: 52, alignment: .trailing)
 
             Image(systemName: "chevron.right")
                 .font(.caption2)
                 .foregroundColor(Color(uiColor: .tertiaryLabel))
-                .padding(.top, 3)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
+    }
+
+    /// Активное — до сейчас, остановленное — до момента, когда пропало из опроса.
+    private func durationText(_ item: ClashApi.Connection) -> String {
+        Self.duration(item.start, to: closedAt[item.id] ?? Date())
     }
 
     private func networkText(_ item: ClashApi.Connection) -> String {
@@ -576,6 +555,8 @@ struct ConnectionsView: View {
                 // видно и то, что только что оборвалось, — иначе строка исчезает до нажатия.
                 let now = Date()
                 let currentIDs = Set(list.map { $0.id })
+                // Соединение из списка закрытых снова в опросе — трафик возобновился.
+                recentlyClosed.removeAll { currentIDs.contains($0.id) }
                 for item in connections where !currentIDs.contains(item.id) {
                     if !recentlyClosed.contains(where: { $0.id == item.id }) {
                         recentlyClosed.append(item)
@@ -584,7 +565,7 @@ struct ConnectionsView: View {
                 }
                 recentlyClosed.removeAll { item in
                     guard let closed = closedAt[item.id] else { return true }
-                    return now.timeIntervalSince(closed) > 5
+                    return now.timeIntervalSince(closed) > 60
                 }
                 if recentlyClosed.count > 80 {
                     recentlyClosed = Array(recentlyClosed.suffix(80))
@@ -662,8 +643,13 @@ struct ConnectionsView: View {
     }
 
     static func duration(_ start: Date?) -> String {
-        guard let start else { return "" }
-        let seconds = max(Int(Date().timeIntervalSince(start)), 0)
+        duration(start, to: Date())
+    }
+
+    /// Длительность до конкретного момента — для остановленных соединений это время закрытия.
+    static func duration(_ start: Date?, to end: Date) -> String {
+        guard let start else { return "—" }
+        let seconds = max(Int(end.timeIntervalSince(start)), 0)
         let hours = seconds / 3600
         let minutes = (seconds % 3600) / 60
         let rest = seconds % 60
