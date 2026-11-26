@@ -356,10 +356,12 @@ struct ConnectionsView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
-                    Text(exitName(item))
-                        .font(.caption2)
-                        .foregroundColor(active ? Theme.accent : Color(uiColor: .tertiaryLabel))
-                        .lineLimit(1)
+                    if !item.isService {
+                        Text(exitName(item))
+                            .font(.caption2)
+                            .foregroundColor(active ? Theme.accent : Color(uiColor: .tertiaryLabel))
+                            .lineLimit(1)
+                    }
                 }
             }
 
@@ -392,6 +394,7 @@ struct ConnectionsView: View {
     /// Имя папки из профиля маршрутизации, чьё значение сработало:
     /// в конфиг ядра имя папки не попадает, ищем по значению правила.
     private func folderName(_ item: ClashApi.Connection) -> String {
+        if item.isService { return "Служебное подключение" }
         let payload = item.rulePayload
         if !payload.isEmpty {
             for folder in rules.plan.rules {
@@ -410,6 +413,8 @@ struct ConnectionsView: View {
 
     /// Выход: активный сервер — proxy, напрямую — direct, конкретный сервер — его имя.
     private func exitName(_ item: ClashApi.Connection) -> String {
+        // Для замера пинга выход не показываем: строка целиком про служебное соединение.
+        if item.isService { return "" }
         let tag = item.outbound
         if tag.isEmpty { return "—" }
         if tag == "direct" || tag == "reject" { return tag }
@@ -839,7 +844,7 @@ struct ConnectionDetailView: View {
                     HStack {
                         Text("Условие")
                         Spacer()
-                        Text(connection.rule)
+                        Text(connection.isService ? "замер пинга" : connection.rule)
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     }
@@ -853,12 +858,14 @@ struct ConnectionDetailView: View {
                                 .lineLimit(1)
                         }
                     }
-                    HStack {
-                        Text("Выход")
-                        Spacer()
-                        Text(exitName)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
+                    if !connection.isService {
+                        HStack {
+                            Text("Выход")
+                            Spacer()
+                            Text(exitName)
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                        }
                     }
                     HStack {
                         Text("Трафик")

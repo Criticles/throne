@@ -75,6 +75,14 @@ enum ClashApi {
 
         var outbound: String { chain.last ?? "—" }
 
+        /// Служебное соединение — наш собственный замер пинга: ядро описывает правило
+        /// как `inbound=probe-s25 => route(s25)`. У таких нет значения правила,
+        /// и в маршруте они ни одной папке не соответствуют.
+        var isService: Bool {
+            rule.lowercased().contains("probe-")
+                || proto.lowercased().contains("probe-")
+        }
+
         var processText: String {
             process.isEmpty ? "" : process
         }
