@@ -175,9 +175,15 @@ struct RouteInsertView: View {
     private func save() {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let plan = planID, let folderID = ruleID ?? folders.first?.id else { return }
+        guard folders.contains(where: { $0.id == folderID }) else { return }
         guard rules.addValue(trimmed, attr: attr, to: plan, ruleID: folderID) else { return }
-        // Правило добавлено — теперь показываем вкладку «Маршрут», где его видно.
-        router.tab = 1
+        LogStore.shared.append("маршрут: «" + trimmed + "» → папка, атрибут " + attr)
+        // Сначала закрываем лист, потом переключаем вкладку: смена таба под шторкой
+        // на iOS 15 даёт повторную презентацию и падение.
         presentation.wrappedValue.dismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            router.tab = 1
+            router.insert = nil
+        }
     }
 }

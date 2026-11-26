@@ -130,11 +130,17 @@ struct ConnectionsView: View {
                                          folderName: folderName(item),
                                          exitName: exitName(item)) { attr, value, title in
                         activeSheet = nil
-                        // Даём шторке закрыться, иначе iOS 15 проглатывает следующий лист.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            router.openRouting(with: RouteInsertPrefill(title: title, attr: attr, value: value))
+                        LogStore.shared.append("соединения: переносим «" + value + "» в правило")
+                        // Один лист на одном уровне: закрыли подробности — открыли
+                        // добавление. Второй лист на RootView поверх закрывающейся
+                        // шторки ронял iOS 15.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            activeSheet = .insert(RouteInsertPrefill(title: title, attr: attr,
+                                                                     value: value))
                         }
                     }
+                case .insert(let prefill):
+                    RouteInsertView(prefill: prefill)
                 case .filter:
                     ConnectionsFilterSheet(query: $query,
                                            network: $networkFilter,
@@ -363,7 +369,7 @@ struct ConnectionsView: View {
     /// Свайп по строке: сразу в «добавить правило», без открытия подробностей.
     private func insertFromRow(_ item: ClashApi.Connection) {
         let host = item.host.trimmingCharacters(in: .whitespacesAndNewlines)
-        router.openRouting(with: RouteInsertPrefill(
+        activeSheet = .insert(RouteInsertPrefill(
             title: host.isEmpty ? "IP → правило" : "домен → правило",
             attr: host.isEmpty ? "ip_cidr" : "domain",
             value: host.isEmpty ? item.ip : host))
@@ -702,12 +708,14 @@ struct ConnectionsView: View {
 enum ConnectionsSheet: Identifiable {
     case detail(ClashApi.Connection)
     case filter
+    case insert(RouteInsertPrefill)
     case export(URL)
 
     var id: String {
         switch self {
         case .detail(let item): return "detail-" + item.id
         case .filter: return "filter"
+        case .insert(let prefill): return "insert-" + prefill.id.uuidString
         case .export(let url): return "export-" + url.lastPathComponent
         }
     }
