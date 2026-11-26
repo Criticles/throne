@@ -341,9 +341,10 @@ struct ProfilesView: View {
         } header: {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
+                    // Заголовок папки тоже переносится, если не влезает в строку.
                     Text(folderID == nil ? "Все серверы" : store.folderName(folderID))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(String(visible.count) + "/" + String(aliveCount))
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -826,10 +827,12 @@ struct ServerRow: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
+                    // Длинное название переносится на вторую строку, а не обрезается.
                     Text(profile.name)
                         .font(.system(size: nameSize, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                     if profile.favorite {
                         Image(systemName: "star.fill").font(.caption2).foregroundColor(.yellow)
                     }
