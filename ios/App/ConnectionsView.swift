@@ -126,7 +126,9 @@ struct ConnectionsView: View {
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .detail(let item):
-                    ConnectionDetailView(connection: item) { attr, value, title in
+                    ConnectionDetailView(connection: item,
+                                         folderName: folderName(item),
+                                         exitName: exitName(item)) { attr, value, title in
                         activeSheet = nil
                         // Даём шторке закрыться, иначе iOS 15 проглатывает следующий лист.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -380,11 +382,11 @@ struct ConnectionsView: View {
                     .font(.footnote.weight(.medium))
                     .lineLimit(1)
                 HStack(spacing: 4) {
-                    Text(ruleText(item))
+                    Text(folderName(item))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
-                    Text(item.outbound)
+                    Text(exitName(item))
                         .font(.caption2)
                         .foregroundColor(active ? Theme.accent : Color(uiColor: .tertiaryLabel))
                         .lineLimit(1)
@@ -415,6 +417,29 @@ struct ConnectionsView: View {
         var text = item.network.isEmpty ? "—" : item.network
         if !item.process.isEmpty { text += "(\(item.process))" }
         return text
+    }
+
+    /// Имя папки из профиля маршрутизации, чьё значение сработало:
+    /// в конфиг ядра имя папки не попадает, ищем по значению правила.
+    private func folderName(_ item: ClashApi.Connection) -> String {
+        let payload = item.rulePayload
+        if !payload.isEmpty {
+            for folder in rules.plan.rules {
+                for attribute in folder.attrs where attribute.values.contains(payload) {
+                    return folder.name
+                }
+            }
+        }
+        return item.rule
+    }
+
+    /// Выход: активный сервер — proxy, напрямую — direct, конкретный сервер — его имя.
+    private func exitName(_ item: ClashApi.Connection) -> String {
+        let tag = item.outbound
+        if tag.isEmpty { return "—" }
+        if tag == "direct" || tag == "reject" { return tag }
+        if tag == engine.selectedTag { return "proxy" }
+        return engine.tagNames[tag] ?? tag
     }
 
     private func ruleText(_ item: ClashApi.Connection) -> String {
@@ -613,8 +638,8 @@ struct ConnectionsView: View {
             if !item.proto.isEmpty { parts.append(item.proto) }
             parts.append(networkText(item))
             parts.append("↑ " + Self.size(Int64(item.upload)) + " ↓ " + Self.size(Int64(item.download)))
-            parts.append(ruleText(item))
-            parts.append(item.outbound)
+            parts.append(folderName(item))
+            parts.append(exitName(item))
             lines.append(String(index + 1) + ". " + parts.joined(separator: " · "))
         }
         return lines.joined(separator: "\n") + "\n"
@@ -762,6 +787,9 @@ struct ConnectionDetailView: View {
     @Environment(\.presentationMode) private var presentation
 
     let connection: ClashApi.Connection
+    /// Имя папки маршрута и человеческое имя выхода — считает список.
+    let folderName: String
+    let exitName: String
     let onInsert: (_ attr: String, _ value: String, _ title: String) -> Void
 
     var body: some View {
@@ -792,9 +820,9 @@ struct ConnectionDetailView: View {
                     }
                     .disabled(connection.port <= 0)
                 } header: {
-                    Text("Нажмите, чтобы добавить в маршрутизацию")
+                    Text("Перенести в правило")
                 } footer: {
-                    Text("Откроется добавление в маршрутизацию: выберете профиль и папку с атрибутами — значение ляжет туда.")
+                    Text("Нажмите на домен — откроется выбор профиля и папки: значение ляжет в выбранную папку своим атрибутом.")
                 }
 
                 Section {
@@ -830,7 +858,15 @@ struct ConnectionDetailView: View {
                         }
                     }
                     HStack {
-                        Text("Правило")
+                        Text("Папка")
+                        Spacer()
+                        Text(folderName)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    HStack {
+                        Text("Условие")
                         Spacer()
                         Text(connection.rule)
                             .font(.footnote)
@@ -847,9 +883,9 @@ struct ConnectionDetailView: View {
                         }
                     }
                     HStack {
-                        Text("Outbound")
+                        Text("Выход")
                         Spacer()
-                        Text(connection.outbound)
+                        Text(exitName)
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     }

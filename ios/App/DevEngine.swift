@@ -18,6 +18,10 @@ final class DevEngine: ObservableObject {
     private var platform: DevPlatform?
     /// Теги outbound'ов живого конфига: сервер → имя в ядре (для Clash API).
     private var liveTags: [UUID: String] = [:]
+    /// Тег активного сервера в живом конфиге: «Соединения» показывают его как proxy.
+    @Published private(set) var selectedTag: String?
+    /// Тег ядра → имя сервера, чтобы в «Соединениях» не было s1/s2.
+    @Published private(set) var tagNames: [String: String] = [:]
     /// Локальный порт пробы для сервера из живого конфига: пинг идёт в свой инбаунд,
     /// поэтому соединение не рвётся, а замер — это RTT, а не «хендшейк + запрос».
     private var probePorts: [UUID: Int] = [:]
@@ -177,6 +181,14 @@ final class DevEngine: ObservableObject {
     /// Запуск профиля. `pool` — остальные серверы: они добавляются в тот же конфиг,
     /// чтобы пинги не требовали перезапуска ядра. `plan` — профиль маршрутизации: его папки
     /// становятся правилами в том же конфиге.
+    private func names(for tags: [UUID: String], in profiles: [Profile]) -> [String: String] {
+        var names: [String: String] = [:]
+        for profile in profiles {
+            if let tag = tags[profile.id] { names[tag] = profile.name }
+        }
+        return names
+    }
+
     func start(profile: Profile, pool: [Profile] = [], plan: RoutePlan? = nil,
                ruleSetPaths: [String: String] = [:]) {
         if let plan { routePlan = plan }
@@ -208,6 +220,8 @@ final class DevEngine: ObservableObject {
                                                         plan: routePlan, ruleSetPaths: routeRuleSetPaths) {
                 config = built.json
                 liveTags = built.tags
+                selectedTag = built.tags[profile.id]
+                tagNames = names(for: built.tags, in: candidates)
                 probePorts = built.probePorts
                 append("ядро: \(candidates.count) серверов в одном конфиге, активен \(profile.name)")
                 append("маршрут: \(routePlan?.name ?? "—"), папок \(routePlan?.rules.count ?? 0)")
@@ -218,6 +232,8 @@ final class DevEngine: ObservableObject {
                 config = try ConfigBuilder.build(profile: profile, plan: routePlan,
                                                  ruleSetPaths: routeRuleSetPaths)
                 liveTags = [:]
+                selectedTag = "proxy"
+                tagNames = ["proxy": profile.name]
                 probePorts = [:]
             }
 
@@ -337,6 +353,8 @@ final class DevEngine: ObservableObject {
         stopXrayIfIdle()
         activeProfileID = nil
         liveTags = [:]
+        selectedTag = nil
+        tagNames = [:]
         probePorts = [:]
         activeCoreName = "—"
         connectedSince = nil
