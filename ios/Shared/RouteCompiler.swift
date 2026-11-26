@@ -29,16 +29,8 @@ enum RouteCompiler {
     /// `strategy` в правилах не существует; `override_destination` живёт у `action: sniff`.
     private static let skipped: Set<String> = ["strategy", "rule_set", "override_destination"]
 
-    /// Числа: ядро ждёт их числами, а не строками.
-    private static let integerAttributes: Set<String> = ["port", "source_port", "override_port"]
-    /// Булевы: та же история.
-    private static let booleanAttributes: Set<String> = [
-        "invert", "ip_is_private", "source_ip_is_private", "no_drop",
-    ]
-    /// Одиночная строка, не список.
-    private static let scalarAttributes: Set<String> = [
-        "override_address", "tls_spoof", "tls_spoof_method", "method",
-    ]
+    /// Числа, булевы и одиночные строки описывает `RouteAttribute.jsonValue` — здесь
+    /// только то, что в правила ядра не пойдёт.
 
     /// Правила профиля по порядку папок. Пустые папки и папки только на `rule_set`
     /// пропускаются — иначе правило без условий перехватило бы всё.
