@@ -481,12 +481,11 @@ struct ProfilesView: View {
         ToolbarItem(placement: .navigationBarTrailing) {
             Menu {
                 Button {
-                    // Ссылка, буфер и QR — один путь: всё открывает этот же лист.
+                    // Буфер не читаем сами: вставка — только по кнопке в открывшемся окне.
+                    addText = ""
                     addTitle = ""
                     targetFolderID = folderID
                     createFolder = true
-                    let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    addText = text.hasPrefix("http") || !text.isEmpty ? text : ""
                     sheet = .add
                 } label: {
                     Label("Добавить подписку", systemImage: "plus.circle")
@@ -548,9 +547,11 @@ struct ProfilesView: View {
                          : "Серверы добавятся в выбранную папку рядом с теми, что там уже есть.")
                 }
                 Section {
-                    Button("Взять из буфера обмена") {
+                    Button {
                         let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                         if !text.isEmpty { addText = text }
+                    } label: {
+                        Label("Взять из буфера обмена", systemImage: "doc.on.clipboard")
                     }
                     Button {
                         // Второй лист поверх первого iOS 15 не открывает: закрываем и ждём.
@@ -559,16 +560,8 @@ struct ProfilesView: View {
                     } label: {
                         Label("Сканировать QR", systemImage: "qrcode.viewfinder")
                     }
-                }
-            }
-            // Первый запуск: iOS показывает «Разрешить вставку» и отдаёт пустую строку,
-            // поэтому буфер читаем ещё раз уже внутри открывшегося окна.
-            .onAppear {
-                guard addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
-                    addText = text
-                    probeLine = ""
+                } footer: {
+                    Text("QR подписки или сервера — то же, что ссылка в поле выше.")
                 }
             }
             .navigationTitle("Новая подписка")
