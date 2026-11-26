@@ -367,8 +367,8 @@ enum RouteAttribute {
         case "override_port": return "подменить порт назначения"
         case "override_destination": return "true — отдавать подменённый адрес"
         case "tls_spoof": return "подмена TLS для обхода блокировок"
-        case "tls_spoof_method": return "способ подмены: fake_tls или fake_http"
-        case "method": return "HTTP-метод для ответа reject: GET, POST, HEAD"
+        case "tls_spoof_method": return "способ подмены: wrong-sequence, wrong-checksum, wrong-ack…"
+        case "method": return "ответ на reject: default, drop, reply"
         case "no_drop": return "true — не отбрасывать пакеты, а отвечать на них"
         case "strategy": return "как резолвить имя: prefer_ipv4, ipv6_only…"
         default: return ""
@@ -417,14 +417,16 @@ enum RouteAttribute {
     /// Варианты для кнопки «Выбрать». Пусто — значит атрибут пишется текстом.
     static func options(_ attr: String) -> [String] {
         switch attr {
-        case "network": return ["tcp", "udp"]
-        case "protocol": return ["dns", "http", "tls", "quic", "stun", "bittorrent", "dtls"]
+        // Значения — ровно те, что перечислены в enum закреплённого ядра:
+        // иначе оно падает с `unknown reject method` / `unknown method`.
+        case "network": return ["tcp", "udp", "icmp"]
+        case "protocol": return ["dns", "http", "tls", "quic", "stun", "bittorrent", "dtls", "ssh", "rdp", "ntp"]
         case "ip_version": return ["4", "6"]
         case "inbound": return ["mixed-in", "tun-in"]
         case "ip_is_private", "source_ip_is_private", "invert", "no_drop": return ["true", "false"]
-        case "tls_spoof_method": return ["fake_tls", "fake_http"]
-        case "method": return ["GET", "POST", "HEAD"]
-        case "strategy": return ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]
+        case "tls_spoof_method":
+            return ["wrong-sequence", "wrong-checksum", "wrong-ack", "wrong-md5", "wrong-timestamp"]
+        case "method": return ["default", "drop", "reply"]
         case "outbound": return ["proxy", "direct", "reject"]
         case "rule_set":
             return RouteCatalog.geositeTags.map { "geosite-" + $0 } + RouteCatalog.geoipCodes.map { "geoip-" + $0 }
@@ -464,8 +466,8 @@ enum RouteAttribute {
         case "override_port": return "подменить порт назначения"
         case "override_destination": return "true — отдавать подменённый адрес"
         case "tls_spoof": return "подмена TLS (для обхода блокировок)"
-        case "tls_spoof_method": return "fake_tls или fake_http"
-        case "method": return "HTTP-метод: GET, POST, HEAD"
+        case "tls_spoof_method": return "какой сбой подделывать: wrong-sequence, wrong-checksum, wrong-ack…"
+        case "method": return "как ответить на reject: default, drop, reply"
         case "no_drop": return "true — не отбрасывать пакеты"
         case "strategy": return "prefer_ipv4, ipv6_only…"
         default: return ""
