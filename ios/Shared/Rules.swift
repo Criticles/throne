@@ -191,6 +191,12 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
         for key in container.allKeys where !service.contains(key.stringValue) {
             if let values = try? container.decode([String].self, forKey: key) {
                 collected.append(RoutePlanAttr(attr: key.stringValue, values: values))
+            } else if let numbers = try? container.decode([Int].self, forKey: key) {
+                // Мы пишем `port` числами — читаем обратно строками, как их правит редактор.
+                collected.append(RoutePlanAttr(attr: key.stringValue, values: numbers.map(String.init)))
+            } else if let flags = try? container.decode([Bool].self, forKey: key) {
+                collected.append(RoutePlanAttr(attr: key.stringValue,
+                                               values: flags.map { $0 ? "true" : "false" }))
             } else if let single = try? container.decode(String.self, forKey: key) {
                 collected.append(RoutePlanAttr(attr: key.stringValue, values: [single]))
             } else if let flag = try? container.decode(Bool.self, forKey: key) {
@@ -219,24 +225,68 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
         }
         try container.encode(id.uuidString, forKey: AnyAttributeKey("id"))
         for item in attrs where !item.values.isEmpty && item.attr != "outbound" {
-            // Настольный клиент одиночное значение пишет по-разному: `protocol` — строкой,
-            // `rule_set`/`domain` — массивом даже из одного элемента. Повторяем это, чтобы наш
-            // экспорт совпадал с его документом, а не был просто «тоже валидным».
-            if item.values.count == 1,
-               let single = item.values.first,
-               Self.scalarAttributes.contains(item.attr) {
-                try container.encode(single, forKey: AnyAttributeKey(item.attr))
-            } else {
-                try container.encode(item.values, forKey: AnyAttributeKey(item.attr))
+            // Типы — как ждёт ядро: числа числами, булевы true/false, остальное строкой
+            // или массивом, как в документе Throne. Строки вида "443"/"true" ядро
+            // отвергает: `cannot unmarshal string into Go value of type uint16`.
+            if let value = Self.jsonValue(item.attr, item.values) {
+                try Self.encode(value, into: &container, key: item.attr)
             }
         }
     }
 
-    /// Атрибуты, которые в документе Throne занимают одно значение (строка), а не список.
+    /// Значение атрибута в JSON нужного типа.
+    static func jsonValue(_ attr: String, _ values: [String]) -> Any? {
+        let cleaned = values
+            .flatMap { $0.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) } }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return nil }
+
+        if attr == "ip_version" { return Int(cleaned[0]) }
+        if Self.integerAttributes.contains(attr) {
+            let numbers = cleaned.compactMap { Int($0) }
+            return numbers.isEmpty ? nil : numbers
+        }
+        if Self.booleanAttributes.contains(attr) {
+            let lower = cleaned[0].lowercased()
+            if lower == "true" || lower == "1" { return true }
+            if lower == "false" || lower == "0" { return false }
+            return nil
+        }
+        if Self.scalarAttributes.contains(attr) { return cleaned[0] }
+        return cleaned
+    }
+
+    private static func encode(_ value: Any,
+                               into container: inout KeyedEncodingContainer<AnyAttributeKey>,
+                               key: String) throws {
+        switch value {
+        case let numbers as [Int]:
+            try container.encode(numbers, forKey: AnyAttributeKey(key))
+        case let list as [String]:
+            try container.encode(list, forKey: AnyAttributeKey(key))
+        case let number as Int:
+            try container.encode(number, forKey: AnyAttributeKey(key))
+        case let flag as Bool:
+            try container.encode(flag, forKey: AnyAttributeKey(key))
+        case let text as String:
+            try container.encode(text, forKey: AnyAttributeKey(key))
+        default:
+            break
+        }
+    }
+
+    /// Числа в JSON: ядро ждёт `uint16`/`int`, а не строку.
+    static let integerAttributes: Set<String> = ["port", "source_port", "override_port"]
+
+    /// Булевы в JSON.
+    static let booleanAttributes: Set<String> = [
+        "invert", "no_drop", "ip_is_private", "source_ip_is_private",
+    ]
+
+    /// Одиночная строка, а не список (так пишет и настольный Throne).
     static let scalarAttributes: Set<String> = [
-        "protocol", "network", "ip_version", "inbound", "method", "strategy",
-        "tls_spoof_method", "invert", "no_drop", "ip_is_private", "source_ip_is_private",
-        "override_port", "override_address", "override_destination",
+        "protocol", "network", "inbound", "method", "strategy", "tls_spoof",
+        "tls_spoof_method", "override_address", "override_destination",
     ]
 }
 

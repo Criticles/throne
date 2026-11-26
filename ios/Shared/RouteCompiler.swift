@@ -90,25 +90,9 @@ enum RouteCompiler {
     }
 
     /// Значение в том типе, который ждёт ядро. nil — атрибут не компилируется.
+    /// Сами типы живут в `RouteAttribute.jsonValue`: экспорт и конфиг должны совпадать.
     private static func payload(_ attr: String, _ values: [String]) -> Any? {
         guard !skipped.contains(attr) else { return nil }
-        let cleaned = values
-            .flatMap { $0.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) } }
-            .filter { !$0.isEmpty }
-        guard !cleaned.isEmpty else { return nil }
-
-        if attr == "ip_version" { return Int(cleaned[0]) }
-        if integerAttributes.contains(attr) {
-            let numbers = cleaned.compactMap { Int($0) }
-            return numbers.isEmpty ? nil : numbers
-        }
-        if booleanAttributes.contains(attr) {
-            let lower = cleaned[0].lowercased()
-            if lower == "true" || lower == "1" { return true }
-            if lower == "false" || lower == "0" { return false }
-            return nil
-        }
-        if scalarAttributes.contains(attr) { return cleaned[0] }
-        return cleaned
+        return RouteAttribute.jsonValue(attr, values)
     }
 }
