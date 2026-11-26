@@ -414,6 +414,11 @@ struct ConnectionsView: View {
                 }
             }
         }
+        // Ни одна папка не совпала: сработал outbound по умолчанию.
+        if item.rule.isEmpty || item.rule.lowercased() == "final"
+            || item.rule.lowercased() == "match" {
+            return "по умолчанию"
+        }
         return item.rule
     }
 

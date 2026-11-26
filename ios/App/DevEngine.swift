@@ -181,6 +181,14 @@ final class DevEngine: ObservableObject {
     /// Запуск профиля. `pool` — остальные серверы: они добавляются в тот же конфиг,
     /// чтобы пинги не требовали перезапуска ядра. `plan` — профиль маршрутизации: его папки
     /// становятся правилами в том же конфиге.
+    /// Итоговый выход одиночного конфига: `route.final` из собранного JSON.
+    private static func finalTag(in json: String) -> String? {
+        guard let data = json.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let route = root["route"] as? [String: Any] else { return nil }
+        return route["final"] as? String
+    }
+
     private func names(for tags: [UUID: String], in profiles: [Profile]) -> [String: String] {
         var names: [String: String] = [:]
         for profile in profiles {
@@ -232,8 +240,11 @@ final class DevEngine: ObservableObject {
                 config = try ConfigBuilder.build(profile: profile, plan: routePlan,
                                                  ruleSetPaths: routeRuleSetPaths)
                 liveTags = [:]
-                selectedTag = "proxy"
-                tagNames = ["proxy": profile.name]
+                // Тег выхода в одиночном конфиге — из route.final: для WireGuard это
+                // «wg-out». Без этой карты «Соединения» показывали сырой тег вместо proxy.
+                let singleTag = Self.finalTag(in: config) ?? "proxy"
+                selectedTag = singleTag
+                tagNames = [singleTag: profile.name]
                 probePorts = [:]
             }
 
