@@ -267,12 +267,9 @@ struct AdvancedRouteView: View {
                     Button("Создать") {
                         let created = RoutePlanRule(name: newRuleName.trimmingCharacters(in: .whitespacesAndNewlines))
                         folders.append(created)
-                        // Сначала закрываем лист создания: подмена одного листа другим на iOS 15
-                        // не срабатывает, поэтому редактор открываем чуть позже.
+                        // Редактор теперь открывается переходом по строке папки,
+                        // поэтому лист просто закрываем.
                         sheet = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                            sheet = .rule(created)
-                        }
                     }
                     .disabled(newRuleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -388,12 +385,31 @@ struct RouteRuleEditorView: View {
 
     var body: some View {
         if embedded {
-            content
+            content.toolbar { confirmToolbar }
         } else {
             NavigationView {
-                content
+                content.toolbar { cancelToolbar; confirmToolbar }
             }
             .navigationViewStyle(.stack)
+        }
+    }
+
+    /// «Готово» есть всегда: и на экране, и в листе.
+    @ToolbarContentBuilder
+    private var confirmToolbar: some ToolbarContent {
+        ToolbarItem(placement: .confirmationAction) {
+            Button("Готово") {
+                onSave(rule)
+                presentation.wrappedValue.dismiss()
+            }
+        }
+    }
+
+    /// «Отмена» только у листа — на экране возвращает стрелка «назад».
+    @ToolbarContentBuilder
+    private var cancelToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button("Отмена") { presentation.wrappedValue.dismiss() }
         }
     }
 
@@ -433,19 +449,6 @@ struct RouteRuleEditorView: View {
             }
             .navigationTitle(rule.name.isEmpty ? "Папка" : rule.name)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if !embedded {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Отмена") { presentation.wrappedValue.dismiss() }
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") {
-                        onSave(rule)
-                        presentation.wrappedValue.dismiss()
-                    }
-                }
-            }
             .sheet(item: $sheet) { item in
                 switch item {
                 case .attribute:
