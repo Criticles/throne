@@ -26,6 +26,9 @@ struct ConnectionsView: View {
     /// Счётчики соединений с прошлого опроса — по ним считаются скорости.
     @State private var counters: [String: TrafficCounters] = [:]
     @State private var lastSampleAt: Date?
+    /// Трафик с момента включения ядра — как его считает сам sing-box.
+    @State private var sessionDown: Int64 = 0
+    @State private var sessionUp: Int64 = 0
     @State private var paused = false
     @State private var recentlyClosed: [ClashApi.Connection] = []
     @State private var closedAt: [String: Date] = [:]
@@ -107,7 +110,6 @@ struct ConnectionsView: View {
             List {
                 if paused || !notice.isEmpty { statusSection }
                 trafficSection
-                summarySection
                 if filterActive { activeFilterSection }
                 listSection
             }
@@ -265,16 +267,12 @@ struct ConnectionsView: View {
                     .buttonStyle(.borderless)
                 }
 
-                HStack(spacing: 12) {
-                    Label(Self.rate(lastDown), systemImage: "arrow.down")
-                        .foregroundColor(Theme.accent)
-                    Label(Self.rate(lastUp), systemImage: "arrow.up")
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("↓ " + Self.size(windowBytes.down) + " · ↑ " + Self.size(windowBytes.up))
-                        .foregroundColor(.secondary)
+                VStack(spacing: 5) {
+                    statRow("Сейчас", down: Self.rate(lastDown), up: Self.rate(lastUp))
+                    statRow("За " + window.rawValue, down: Self.size(windowBytes.down),
+                            up: Self.size(windowBytes.up))
+                    statRow("С включения", down: Self.size(sessionDown), up: Self.size(sessionUp))
                 }
-                .font(.caption.weight(.medium))
 
                 TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
                              start: windowStart, end: windowEnd,
@@ -282,6 +280,121 @@ struct ConnectionsView: View {
 
             }
             .padding(.vertical, 2)
+        }
+    }
+
+    /// Строка карточки: подпись слева, входящий и исходящий справа.
+    private func statRow(_ title: String, down: String, up: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer(minLength: 6)
+            Text("↓ " + down)
+                .font(.caption.weight(.medium))
+                .foregroundColor(Theme.accent)
+                .frame(width: 92, alignment: .trailing)
+            Text("↑ " + up)
+                .font(.caption.weight(.medium))
+                .foregroundColor(.secondary)
+                .frame(width: 92, alignment: .trailing)
+        }
+    }
+
+    private var activeFilterSection: some View {
+        Section {
+            HStack(spacing: 6) {
+                Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                    .foregroundColor(Theme.accent)
+                Text(filterSummary).font(.caption2)
+                Spacer()
+                Button("Сбросить") {
+                    query = ""
+                    networkFilter = 0
+                    ruleFilter = ""
+                    outboundFilter = ""
+                }
+                .font(.caption2.weight(.medium))
+                .buttonStyle(.borderless)
+            }
+        } footer: {
+            Text("Показано \(visible.count) из \(shown.count)")
+        }
+    }
+
+    private var filterSummary: String {
+        var parts: [String] = []
+        if !query.isEmpty { parts.append("«\(query)»") }
+        if networkFilter == 1 { parts.append("tcp") }
+        if networkFilter == 2 { parts.append("udp") }
+        if !ruleFilter.isEmpty { parts.append("правило: \(ruleFilter)") }
+        if !outboundFilter.isEmpty { parts.append("сервер: \(outboundFilter)") }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Трафик
+
+    /// Карточка как «Live graphs»: окно 1/2/5/10 минут, пауза справа от него,
+    /// текущие скорости по выходам и график за выбранное окно.
+    private var trafficSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Text("Трафик").font(.headline)
+                    Spacer()
+                    ForEach(TrafficWindow.allCases) { item in
+                        Button(item.rawValue) { window = item }
+                            .font(.caption2.weight(.semibold))
+                            .buttonStyle(.borderless)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(window == item ? Theme.accent.opacity(0.18) : Color.clear)
+                            .foregroundColor(window == item ? Theme.accent : .primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    }
+                    Button {
+                        paused.toggle()
+                        notice = paused ? "пауза: список и график замерли" : ""
+                        if !paused { lastSampleAt = nil; counters.removeAll() }
+                    } label: {
+                        Image(systemName: paused ? "play.fill" : "pause.fill")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 26, height: 22)
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                VStack(spacing: 5) {
+                    statRow("Сейчас", down: Self.rate(lastDown), up: Self.rate(lastUp))
+                    statRow("За " + window.rawValue, down: Self.size(windowBytes.down),
+                            up: Self.size(windowBytes.up))
+                    statRow("С включения", down: Self.size(sessionDown), up: Self.size(sessionUp))
+                }
+
+                TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
+                             start: windowStart, end: windowEnd,
+                             peakLabel: Self.rate(max(lastDown, lastUp)))
+
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    /// Строка карточки: подпись слева, входящий и исходящий справа.
+    private func statRow(_ title: String, down: String, up: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer(minLength: 6)
+            Text("↓ " + down)
+                .font(.caption.weight(.medium))
+                .foregroundColor(Theme.accent)
+                .frame(width: 92, alignment: .trailing)
+            Text("↑ " + up)
+                .font(.caption.weight(.medium))
+                .foregroundColor(.secondary)
+                .frame(width: 92, alignment: .trailing)
         }
     }
 
@@ -557,7 +670,8 @@ struct ConnectionsView: View {
             return
         }
         Task {
-            let list = await ClashApi.connections()
+            let snapshot = await ClashApi.snapshot()
+            let list = snapshot.list
             await MainActor.run {
                 guard !paused else { return }
                 // Соединения, закрывшиеся с прошлого опроса, держим ещё пять секунд: на паузе
@@ -581,6 +695,8 @@ struct ConnectionsView: View {
                 }
 
                 connections = list.count > 400 ? Array(list.prefix(400)) : list
+                sessionDown = snapshot.totals.download
+                sessionUp = snapshot.totals.upload
                 recordSample(list, at: now)
                 refreshed = Date()
                 if !ruleFilter.isEmpty, !list.contains(where: { $0.rule == ruleFilter }) {

@@ -80,16 +80,32 @@ enum ClashApi {
         }
     }
 
+    /// Итоги ядра с момента его запуска: Clash API отдаёт их рядом со списком.
+    struct Totals {
+        var download: Int64 = 0
+        var upload: Int64 = 0
+    }
+
     static func connections() async -> [Connection] {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/connections") else { return [] }
+        await snapshot().list
+    }
+
+    /// Список соединений и накопленный трафик за один запрос.
+    static func snapshot() async -> (list: [Connection], totals: Totals) {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/connections") else {
+            return ([], Totals())
+        }
         guard let (data, response) = try? await session.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let parsed = try? JSONSerialization.jsonObject(with: data),
               let object = parsed as? [String: Any],
               let list = object["connections"] as? [[String: Any]]
-        else { return [] }
+        else { return ([], Totals()) }
 
-        return list.map { item in
+        let totals = Totals(download: int64Value(object["downloadTotal"]),
+                            upload: int64Value(object["uploadTotal"]))
+
+        let items = list.map { item in
             let metadata = item["metadata"] as? [String: Any] ?? [:]
             let host = (metadata["host"] as? String) ?? ""
             let ip = (metadata["destinationIP"] as? String) ?? ""
@@ -119,6 +135,14 @@ enum ClashApi {
                 start: parseDate(item["start"])
             )
         }
+        return (items, totals)
+    }
+
+    /// Число любого вида: Int, Double или строка.
+    private static func int64Value(_ value: Any?) -> Int64 {
+        if let number = value as? NSNumber { return number.int64Value }
+        if let text = value as? String { return Int64(text) ?? 0 }
+        return 0
     }
 
     /// В JSON числа приходят то числами, то строками — приводим оба варианта.
