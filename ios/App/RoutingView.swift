@@ -26,6 +26,19 @@ struct RoutingView: View {
         .sheet(isPresented: $showGeoSheet) { geoSheet }
     }
 
+    /// Подпись строки «Профили маршрутизации»: активный профиль или заявка из «Соединений».
+    /// Считаем заранее: в одном выражении компилятор упирался в таймаут проверки типов.
+    private var profilesSubtitle: String {
+        if let pending = router.pendingInsert {
+            return "ждёт: «" + pending.value + "» → выберите профиль"
+        }
+        return "активно: " + rules.plan.name + " · профилей: " + String(rules.plans.count)
+    }
+
+    private var profilesSubtitleAccent: Bool {
+        router.pendingInsert != nil
+    }
+
     private var advancedSection: some View {
         Section {
             NavigationLink {
@@ -37,10 +50,9 @@ struct RoutingView: View {
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Профили маршрутизации").font(.subheadline.weight(.medium))
-                        Text(router.pendingInsert.map { "ждёт: «" + $0.value + "» → выберите профиль" }
-                             ?? "активно: " + rules.plan.name + " · профилей: " + String(rules.plans.count))
+                        Text(profilesSubtitle)
                             .font(.caption2)
-                            .foregroundColor(router.pendingInsert == nil ? .secondary : Theme.accent)
+                            .foregroundColor(profilesSubtitleAccent ? Theme.accent : Color.secondary)
                     }
                 }
             }
