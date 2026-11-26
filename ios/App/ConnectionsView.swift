@@ -304,11 +304,20 @@ struct ConnectionsView: View {
             HStack {
                 Text("Обновлено")
                 Spacer()
-                Text(Self.time.string(from: refreshed)).foregroundColor(.secondary)
+                // Время последнего опроса Clash API. При выключенном ядре опроса нет —
+                // показывать старое время нельзя, легко принять за свежие данные.
+                Text(engine.running ? Self.time.string(from: refreshed) : "—")
+                    .foregroundColor(.secondary)
             }
             .font(.footnote)
         } header: {
             Text("Сейчас")
+        } footer: {
+            if engine.running {
+                Text("Список опрашивается каждые 2 секунды.")
+            } else {
+                Text("Ядро выключено: опроса нет, счётчики не растут.")
+            }
         }
     }
 
