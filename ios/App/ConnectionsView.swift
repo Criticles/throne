@@ -393,12 +393,6 @@ struct ConnectionsView: View {
     }
 
     /// Активное — до сейчас, остановленное — до момента, когда пропало из опроса.
-    /// Ключ адреса: хост, IP, порт и сеть. По нему видно, что новое соединение —
-    /// это та же самая строка, только с другим id.
-    private func destinationKey(_ item: ClashApi.Connection) -> String {
-        item.host + "|" + item.ip + "|" + String(item.port) + "|" + item.network
-    }
-
     private func durationText(_ item: ClashApi.Connection) -> String {
         Self.duration(item.start, to: closedAt[item.id] ?? Date())
     }
@@ -560,13 +554,8 @@ struct ConnectionsView: View {
                 // видно и то, что только что оборвалось, — иначе строка исчезает до нажатия.
                 let now = Date()
                 let currentIDs = Set(list.map { $0.id })
-                // sing-box на переподключение к тому же адресу выдаёт новый id, поэтому
-                // сравниваем ещё и адрес: иначе одна и та же строка копится вечно.
-                let liveDestinations = Set(list.map { destinationKey($0) })
                 // Соединение из списка закрытых снова в опросе — трафик возобновился.
-                recentlyClosed.removeAll { item in
-                    currentIDs.contains(item.id) || liveDestinations.contains(destinationKey(item))
-                }
+                recentlyClosed.removeAll { currentIDs.contains($0.id) }
                 for item in connections where !currentIDs.contains(item.id) {
                     if !recentlyClosed.contains(where: { $0.id == item.id }) {
                         recentlyClosed.append(item)
@@ -577,12 +566,9 @@ struct ConnectionsView: View {
                     guard let closed = closedAt[item.id] else { return true }
                     return now.timeIntervalSince(closed) > 10
                 }
-                if recentlyClosed.count > 40 {
-                    recentlyClosed = Array(recentlyClosed.suffix(40))
+                if recentlyClosed.count > 80 {
+                    recentlyClosed = Array(recentlyClosed.suffix(80))
                 }
-                // Таймеры закрытых, которых уже нет в списке, тоже не держим.
-                let kept = Set(recentlyClosed.map { $0.id })
-                closedAt = closedAt.filter { kept.contains($0.key) }
 
                 connections = list.count > 400 ? Array(list.prefix(400)) : list
                 recordSample(list, at: now)
