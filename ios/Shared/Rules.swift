@@ -285,8 +285,8 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
 
     /// Одиночная строка, а не список (так пишет и настольный Throne).
     static let scalarAttributes: Set<String> = [
-        "protocol", "network", "inbound", "method", "strategy", "tls_spoof",
-        "tls_spoof_method", "override_address", "override_destination",
+        "protocol", "network", "inbound", "method", "tls_spoof",
+        "tls_spoof_method", "override_address",
     ]
 }
 
@@ -337,8 +337,8 @@ enum RouteAttribute {
         "source_port", "source_port_range", "port", "port_range",
         "process_name", "process_path", "process_path_regex", "package_name",
         "wifi_ssid", "wifi_bssid", "rule_set", "invert",
-        "outbound", "override_address", "override_port", "override_destination",
-        "tls_spoof", "tls_spoof_method", "method", "no_drop", "strategy",
+        "outbound", "override_address", "override_port",
+        "tls_spoof", "tls_spoof_method", "method", "no_drop",
     ]
 
     /// Что атрибут делает — одна фраза, её показываем прямо под значением в папке.
@@ -365,12 +365,10 @@ enum RouteAttribute {
         case "outbound": return "куда направить: proxy, direct, reject или конкретный сервер"
         case "override_address": return "подменить адрес назначения"
         case "override_port": return "подменить порт назначения"
-        case "override_destination": return "true — отдавать подменённый адрес"
         case "tls_spoof": return "подмена TLS для обхода блокировок"
         case "tls_spoof_method": return "способ подмены: wrong-sequence, wrong-checksum, wrong-ack…"
         case "method": return "ответ на reject: default, drop, reply"
         case "no_drop": return "true — не отбрасывать пакеты, а отвечать на них"
-        case "strategy": return "как резолвить имя: prefer_ipv4, ipv6_only…"
         default: return ""
         }
     }
@@ -379,7 +377,7 @@ enum RouteAttribute {
     static let enumerated: Set<String> = [
         "network", "protocol", "ip_version", "inbound", "rule_set", "outbound",
         "ip_is_private", "source_ip_is_private", "invert", "no_drop",
-        "tls_spoof_method", "method", "strategy", "ip_version",
+        "tls_spoof_method", "method", "ip_version",
     ]
 
     static func needsChoice(_ attr: String) -> Bool {
@@ -410,6 +408,9 @@ enum RouteAttribute {
     static func sanitized(_ rule: RoutePlanRule) -> RoutePlanRule? {
         var rule = rule
         rule.attrs.removeAll { unavailable.contains($0.attr) }
+        // Атрибуты, которых нет в справочнике (импорт из более новой версии настольного
+        // клиента, старые сохранения), ядро не поймёт — их не держим.
+        rule.attrs.removeAll { !RouteAttribute.all.contains($0.attr) }
         let conditions = rule.attrs.filter { $0.attr != "outbound" }
         return conditions.isEmpty ? nil : rule
     }
@@ -464,12 +465,10 @@ enum RouteAttribute {
         case "outbound": return "куда направить: proxy, direct, reject или сервер"
         case "override_address": return "подменить адрес назначения"
         case "override_port": return "подменить порт назначения"
-        case "override_destination": return "true — отдавать подменённый адрес"
         case "tls_spoof": return "подмена TLS (для обхода блокировок)"
         case "tls_spoof_method": return "какой сбой подделывать: wrong-sequence, wrong-checksum, wrong-ack…"
         case "method": return "как ответить на reject: default, drop, reply"
         case "no_drop": return "true — не отбрасывать пакеты"
-        case "strategy": return "prefer_ipv4, ipv6_only…"
         default: return ""
         }
     }

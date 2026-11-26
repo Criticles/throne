@@ -61,6 +61,8 @@ enum RouteCompiler {
         }
     }
 
+    private static let rejectMethods: Set<String> = ["default", "drop", "reply"]
+
     private static func rule(for folder: RoutePlanRule, context: Context) -> [String: Any]? {
         var body: [String: Any] = [:]
         for attr in folder.attrs where !RouteAttribute.unavailable.contains(attr.attr) {
@@ -72,10 +74,23 @@ enum RouteCompiler {
 
         switch destination(folder.action == "reject" ? "reject" : folder.outbound, context: context) {
         case .reject:
+            // `method` и `no_drop` существуют только у reject; `no_drop` вместе с
+            // `method: drop` ядро отвергает («no_drop is not available in current context»).
             body["action"] = "reject"
+            if let method = body["method"] as? String, !rejectMethods.contains(method) {
+                body.removeValue(forKey: "method")
+            }
+            if (body["method"] as? String) == "drop" {
+                body.removeValue(forKey: "no_drop")
+            }
         case .outbound(let tag):
+            // У действия route этих полей нет вовсе: `unknown field "method"`.
+            body.removeValue(forKey: "method")
+            body.removeValue(forKey: "no_drop")
             body["outbound"] = tag
         case .none:
+            body.removeValue(forKey: "method")
+            body.removeValue(forKey: "no_drop")
             body["outbound"] = context.selectedTag ?? "direct"
         }
         return body
