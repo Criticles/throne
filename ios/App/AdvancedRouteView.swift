@@ -453,6 +453,11 @@ struct RouteRuleEditorView: View {
                     .font(.system(.caption2, design: placeholder ? .default : .monospaced))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
+                Text(RouteAttribute.about(item.attr))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .opacity(0.75)
+                    .lineLimit(2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

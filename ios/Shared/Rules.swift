@@ -291,6 +291,40 @@ enum RouteAttribute {
         "tls_spoof", "tls_spoof_method", "method", "no_drop", "strategy",
     ]
 
+    /// Что атрибут делает — одна фраза, её показываем прямо под значением в папке.
+    static func about(_ attr: String) -> String {
+        switch attr {
+        case "ip_version": return "версия адреса: 4 или 6"
+        case "network": return "тип соединения: tcp или udp"
+        case "protocol": return "протокол поверх TCP/UDP: dns, tls, quic, stun"
+        case "inbound": return "какой вход ядра принял соединение: mixed-in, tun-in"
+        case "domain": return "точный домен, без поддоменов"
+        case "domain_suffix": return "домен и все его поддомены"
+        case "domain_keyword": return "слово внутри домена: ads поймает ads.example.com"
+        case "domain_regex": return "регулярное выражение по домену"
+        case "source_ip_cidr": return "адрес или подсеть источника"
+        case "source_ip_is_private": return "true — запрос из локальной сети"
+        case "ip_cidr": return "адрес или подсеть получателя"
+        case "ip_is_private": return "true — получатель в локальной сети"
+        case "source_port": return "порт источника"
+        case "source_port_range": return "диапазон портов источника: 1000:2000"
+        case "port": return "порт получателя: 443 или 443,8443"
+        case "port_range": return "диапазон портов получателя"
+        case "rule_set": return "готовый набор geosite/geoip, который читает ядро"
+        case "invert": return "true — инвертировать условие"
+        case "outbound": return "куда направить: proxy, direct, reject или конкретный сервер"
+        case "override_address": return "подменить адрес назначения"
+        case "override_port": return "подменить порт назначения"
+        case "override_destination": return "true — отдавать подменённый адрес"
+        case "tls_spoof": return "подмена TLS для обхода блокировок"
+        case "tls_spoof_method": return "способ подмены: fake_tls или fake_http"
+        case "method": return "HTTP-метод для ответа reject: GET, POST, HEAD"
+        case "no_drop": return "true — не отбрасывать пакеты, а отвечать на них"
+        case "strategy": return "как резолвить имя: prefer_ipv4, ipv6_only…"
+        default: return ""
+        }
+    }
+
     /// Значения выбираются из готового списка: в этих полях опечатка ломает правило.
     static let enumerated: Set<String> = [
         "network", "protocol", "ip_version", "inbound", "rule_set",

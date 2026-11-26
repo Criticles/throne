@@ -541,6 +541,16 @@ struct ProfilesView: View {
                     }
                 }
             }
+            // Первый запуск: iOS показывает «Разрешить вставку» и отдаёт пустую строку,
+            // поэтому буфер читаем ещё раз уже внутри открывшегося окна.
+            .onAppear {
+                guard addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    addText = text
+                    probeLine = ""
+                }
+            }
             .navigationTitle("Новая подписка")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

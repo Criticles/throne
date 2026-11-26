@@ -240,6 +240,35 @@ final class ProfileStore: ObservableObject {
         status = "подписка удалена: \(subscription.name)"
     }
 
+    /// Имя подписки из ответа панели: заголовок `profile-title` (иногда с префиксом `base64:`),
+    /// иначе `Content-Disposition: filename*=UTF-8''…`.
+    static func profileTitle(from response: HTTPURLResponse?) -> String? {
+        guard let response else { return nil }
+        var candidates: [String] = []
+        if let title = response.value(forHTTPHeaderField: "profile-title") { candidates.append(title) }
+        if let disposition = response.value(forHTTPHeaderField: "Content-Disposition"),
+           let range = disposition.range(of: "filename=") {
+            candidates.append(String(disposition[range.upperBound...]))
+        }
+        for raw in candidates {
+            var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            text = text.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            if text.lowercased().hasPrefix("base64:") {
+                let encoded = String(text.dropFirst("base64:".count))
+                if let data = Data(base64Encoded: encoded),
+                   let decoded = String(data: data, encoding: .utf8) {
+                    text = decoded
+                }
+            }
+            if let decoded = text.removingPercentEncoding { text = decoded }
+            // `UTF-8''имя` из filename*= — префикс кодировки служебный.
+            if text.hasPrefix("UTF-8''") { text = String(text.dropFirst("UTF-8''".count)) }
+            text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { return text }
+        }
+        return nil
+    }
+
     /// Имя папки по ссылке подписки: первый сегмент хоста — так же, как зовёт её панель.
     ///
     /// Ссылка из буфера часто приходит с переводом строки или пробелом, и `URL(string:)`
@@ -306,6 +335,7 @@ final class ProfileStore: ObservableObject {
 
         importLog = ""
         var userinfo: String?
+        var folderTitle: String?
         let target = self.folder(folderID) ?? addFolder(name: Self.folderName(for: trimmed))
         log("импорт подписки: \(trimmed)")
         log("    папка: \(target.name)")
@@ -317,6 +347,9 @@ final class ProfileStore: ObservableObject {
             let first = try await fetch(url, userAgent: "v2rayNG/1.8.5")
             let list = first.text
             userinfo = first.response?.value(forHTTPHeaderField: "subscription-userinfo")
+            // Панель сама называет подписку заголовком `profile-title` — это настоящее имя,
+            // а не «первый сегмент хоста».
+            folderTitle = Self.profileTitle(from: first.response)
             if list.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") {
                 problems.append("вместо подписки пришёл HTML")
             } else {
@@ -386,7 +419,16 @@ final class ProfileStore: ObservableObject {
             status = "импорт отменён: папка удалена"
             return
         }
-        recordSubscription(url: trimmed, name: target.name, folderID: target.id, userinfo: userinfo)
+        // Имя из панели ставим, только если папку назвали автоматически: введённое вручную
+        // не трогаем.
+        var finalName = target.name
+        if let folderTitle,
+           target.name == Self.folderName(for: trimmed) {
+            renameFolder(target.id, to: folderTitle)
+            finalName = folderTitle
+            log("  имя папки из панели: \(folderTitle)")
+        }
+        recordSubscription(url: trimmed, name: finalName, folderID: target.id, userinfo: userinfo)
         if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
         } else {
