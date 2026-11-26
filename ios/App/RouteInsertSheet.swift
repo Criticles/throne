@@ -71,6 +71,10 @@ struct RouteInsertSheet: View {
                                         .foregroundColor(Theme.accent)
                                 }
                             }
+                            // Плашка кликабельна целиком, а не только текст: без contentShape
+                            // в List срабатывают лишь символы под курсором.
+                            .contentShape(Rectangle())
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                     }
@@ -103,6 +107,10 @@ struct RouteInsertSheet: View {
                                     .foregroundColor(selectedFolder?.id == folder.id
                                                      ? Theme.accent : Color(uiColor: .tertiaryLabel))
                             }
+                            // Плашка кликабельна целиком, а не только текст: без contentShape
+                            // в List срабатывают лишь символы под курсором.
+                            .contentShape(Rectangle())
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                     }
