@@ -44,7 +44,7 @@ final class DevEngine: ObservableObject {
 
     /// Цель пинга и параметры теста скорости берём из настроек.
     static var pingTarget: String {
-        UserDefaults.standard.string(forKey: "prefs.pingTarget") ?? "http://cp.cloudflare.com/generate_204"
+        UserDefaults.standard.string(forKey: "prefs.pingTarget") ?? "https://1.1.1.1/cdn-cgi/trace"
     }
 
     /// Зеркала для теста скорости: берём первое, которое ответило.
@@ -53,7 +53,8 @@ final class DevEngine: ObservableObject {
         let custom = UserDefaults.standard.string(forKey: "prefs.speedURL") ?? ""
         var list: [String] = []
         if !custom.isEmpty { list.append(custom) }
-        list.append("http://speedtest.tele2.net/10MB.zip")
+        // TELE2 с этого хоста не отвечает (проверено: code=000), Hetzner и
+        // thinkbroadband тоже — рабочим остаётся Cloudflare.
         list.append("https://speed.cloudflare.com/__down")
         return list
     }

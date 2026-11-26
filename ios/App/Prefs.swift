@@ -161,7 +161,12 @@ final class Prefs: ObservableObject {
         tunMTU = storedMTU == 0 ? 9000 : storedMTU
         ipv6 = defaults.object(forKey: "prefs.ipv6") as? Bool ?? true
         notifyExpiry = defaults.object(forKey: "prefs.notifyExpiry") as? Bool ?? true
-        pingTarget = defaults.string(forKey: "prefs.pingTarget") ?? "http://cp.cloudflare.com/generate_204"
+        pingTarget = defaults.string(forKey: "prefs.pingTarget") ?? "https://1.1.1.1/cdn-cgi/trace"
+        // Прежний дефолт был http:// — ядро такие адреса в Clash-задержке игнорирует,
+        // поэтому у тех, кто настройку не менял, подменяем на рабочий https-адрес.
+        if pingTarget == "http://cp.cloudflare.com/generate_204" {
+            pingTarget = "https://1.1.1.1/cdn-cgi/trace"
+        }
         speedURL = defaults.string(forKey: "prefs.speedURL") ?? "https://speed.cloudflare.com/__down"
         speedUploadURL = defaults.string(forKey: "prefs.speedUploadURL") ?? "https://speed.cloudflare.com/__up"
         let storedMB = defaults.integer(forKey: "prefs.speedMB")

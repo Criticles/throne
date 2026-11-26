@@ -248,7 +248,7 @@ struct SettingsView: View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Адрес для пинга").font(.caption).foregroundColor(.secondary)
-                TextField("http://cp.cloudflare.com/generate_204", text: $prefs.pingTarget)
+                TextField("https://1.1.1.1/cdn-cgi/trace", text: $prefs.pingTarget)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
                     .font(.system(.footnote, design: .monospaced))
