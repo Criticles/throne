@@ -419,16 +419,10 @@ final class ProfileStore: ObservableObject {
             status = "импорт отменён: папка удалена"
             return
         }
-        // Имя из панели ставим, только если папку назвали автоматически: введённое вручную
-        // не трогаем.
-        var finalName = target.name
-        if let folderTitle,
-           target.name == Self.folderName(for: trimmed) {
-            renameFolder(target.id, to: folderTitle)
-            finalName = folderTitle
-            log("  имя папки из панели: \(folderTitle)")
-        }
-        recordSubscription(url: trimmed, name: finalName, folderID: target.id, userinfo: userinfo)
+        // Имя папки остаётся по хосту (его видно в «Серверах»), а имя подписки из панели
+        // пишем в запись подписки — оно показывается второй строкой в заголовке.
+        let subscriptionName = folderTitle ?? target.name
+        recordSubscription(url: trimmed, name: subscriptionName, folderID: target.id, userinfo: userinfo)
         if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
         } else {

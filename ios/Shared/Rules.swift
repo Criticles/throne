@@ -327,7 +327,7 @@ enum RouteAttribute {
 
     /// Значения выбираются из готового списка: в этих полях опечатка ломает правило.
     static let enumerated: Set<String> = [
-        "network", "protocol", "ip_version", "inbound", "rule_set",
+        "network", "protocol", "ip_version", "inbound", "rule_set", "outbound",
         "ip_is_private", "source_ip_is_private", "invert", "no_drop",
         "tls_spoof_method", "method", "strategy", "ip_version",
     ]

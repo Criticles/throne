@@ -139,6 +139,11 @@ struct SubscriptionEditorView: View {
                         .disableAutocorrection(true)
                         .keyboardType(.URL)
                     TextField("Имя папки", text: $addName)
+                    if !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("По умолчанию: " + ProfileStore.folderName(for: addURL))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 } footer: {
                     Text("Каждый импорт создаёт папку: имя можно оставить любым, даже совпадающим с другой папкой.")
                 }

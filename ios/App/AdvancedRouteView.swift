@@ -104,9 +104,31 @@ struct AdvancedRouteView: View {
     private var commonSection: some View {
         Section {
             TextField("Название профиля", text: $name)
-            Picker("Общий outbound", selection: $finalTarget) {
-                ForEach(targets, id: \.self) { target in
-                    Text(target).tag(target)
+            // Тот же вид, что у атрибутов папки: имя, значение и меню с галочкой.
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("outbound")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Theme.accent)
+                    Text(finalTarget)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Menu {
+                    ForEach(targets, id: \.self) { target in
+                        Button {
+                            finalTarget = target
+                        } label: {
+                            Text(target == finalTarget ? "✓ \(target)" : target)
+                        }
+                    }
+                } label: {
+                    Text("Выбрать")
+                        .font(.caption2.weight(.medium))
+                        .foregroundColor(Theme.accent)
                 }
             }
         } header: {
@@ -351,6 +373,12 @@ struct RouteRuleEditorView: View {
         // На iPhone нет процессов, Android-пакетов и Wi-Fi: такие атрибуты из папки убираем
         // и в редакторе, а не только при импорте.
         initial.attrs.removeAll { RouteAttribute.unavailable.contains($0.attr) }
+        // Одиночные атрибуты (outbound, network, ip_version…) держат одно значение: старые
+        // профили могли сохранить несколько — оставляем последнее выбранное.
+        for index in initial.attrs.indices
+        where RouteAttribute.singleChoice(initial.attrs[index].attr) && initial.attrs[index].values.count > 1 {
+            initial.attrs[index].values = [initial.attrs[index].values[0]]
+        }
         // `outbound` всегда в списке: он задаёт, куда папка уходит, и правится как остальные
         // атрибуты. В JSON он при этом остаётся полем правила, а не ключом-массивом.
         if !initial.attrs.contains(where: { $0.attr == "outbound" }) {
@@ -589,7 +617,10 @@ struct RouteValueView: View {
     init(attr: String, values: [String], options: [String]? = nil,
          onDone: @escaping ([String]) -> Void) {
         self.attr = attr
-        _values = State(initialValue: values)
+        // Одиночный атрибут держит одно значение: если в старых данных их несколько,
+        // оставляем первое — иначе в списке сразу три галочки.
+        let initial = (RouteAttribute.singleChoice(attr) && values.count > 1) ? [values[0]] : values
+        _values = State(initialValue: initial)
         self.customOptions = options
         self.onDone = onDone
     }
@@ -691,7 +722,9 @@ struct RouteValueView: View {
                     optionRow(option)
                 }
             } header: {
-                Text("Выбрано: \(values.count) из \(options.count)")
+                Text(RouteAttribute.singleChoice(attr)
+                     ? "Выбрано: " + (values.first ?? "ничего")
+                     : "Выбрано: \(values.count) из \(options.count)")
             } footer: {
                 Text("Нажатие ставит галочку, выбранные поднимаются наверх. Поиск фильтрует остальные.")
             }

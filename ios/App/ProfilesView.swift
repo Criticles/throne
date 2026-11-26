@@ -316,6 +316,17 @@ struct ProfilesView: View {
         return "в этой папке ничего не нашлось"
     }
 
+    /// Вторая строка заголовка: имя подписки из панели и сколько дней до её окончания.
+    private var subscriptionSummary: String {
+        guard let folderID, let subscription = store.subscription(in: folderID) else {
+            return store.subscriptions.isEmpty ? "подписки нет" : ""
+        }
+        let name = subscription.name.isEmpty ? store.folderName(folderID) : subscription.name
+        guard let expire = subscription.expire else { return name }
+        let days = Calendar.current.dateComponents([.day], from: Date(), to: expire).day ?? 0
+        return name + " · " + (days <= 0 ? "истекла" : String(days) + " дн.")
+    }
+
     private var serverSection: some View {
         Section {
             if visible.isEmpty {
@@ -367,6 +378,12 @@ struct ProfilesView: View {
                             .font(.caption.weight(.semibold))
                             .frame(width: 26, height: 26)
                     }
+                }
+                if !subscriptionSummary.isEmpty {
+                    Text(subscriptionSummary)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
                 Text("Трафик за всё время: ↑ " + Self.size(selectedTraffic.up) + " · ↓ " + Self.size(selectedTraffic.down))
                     .font(.caption2)
@@ -464,19 +481,15 @@ struct ProfilesView: View {
         ToolbarItem(placement: .navigationBarTrailing) {
             Menu {
                 Button {
-                    addText = ""
+                    // Ссылка, буфер и QR — один путь: всё открывает этот же лист.
                     addTitle = ""
                     targetFolderID = folderID
                     createFolder = true
+                    let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    addText = text.hasPrefix("http") || !text.isEmpty ? text : ""
                     sheet = .add
                 } label: {
-                    Label("Подписка по ссылке", systemImage: "link")
-                }
-                Button { importClipboard() } label: {
-                    Label("Импорт из буфера", systemImage: "doc.on.clipboard")
-                }
-                Button { sheet = .scanner } label: {
-                    Label("Сканировать QR", systemImage: "qrcode.viewfinder")
+                    Label("Добавить подписку", systemImage: "plus.circle")
                 }
                 if !store.subscriptions.isEmpty {
                     Divider()
@@ -538,6 +551,13 @@ struct ProfilesView: View {
                     Button("Взять из буфера обмена") {
                         let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                         if !text.isEmpty { addText = text }
+                    }
+                    Button {
+                        // Второй лист поверх первого iOS 15 не открывает: закрываем и ждём.
+                        sheet = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { sheet = .scanner }
+                    } label: {
+                        Label("Сканировать QR", systemImage: "qrcode.viewfinder")
                     }
                 }
             }
