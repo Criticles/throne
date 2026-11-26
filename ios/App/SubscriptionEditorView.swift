@@ -8,6 +8,9 @@ struct SubscriptionEditorView: View {
 
     @State private var addURL = ""
     @State private var addName = ""
+    /// Куда класть серверы: новая папка или уже существующая.
+    @State private var addToExisting = false
+    @State private var addTargetFolder: UUID?
     /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки.
     private enum Sheet: Identifiable {
         case add
@@ -138,14 +141,32 @@ struct SubscriptionEditorView: View {
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .keyboardType(.URL)
-                    TextField("Имя папки", text: $addName)
-                    if !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("По умолчанию: " + ProfileStore.folderName(for: addURL))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                }
+                Section {
+                    Picker("Куда добавить", selection: $addToExisting) {
+                        Text("Новая папка").tag(false)
+                        Text("В существующую").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    if addToExisting {
+                        Picker("Папка", selection: $addTargetFolder) {
+                            ForEach(store.folders) { folder in
+                                Text(folder.name + " · " + String(store.count(in: folder.id)))
+                                    .tag(Optional(folder.id))
+                            }
+                        }
+                    } else {
+                        TextField("Имя папки", text: $addName)
+                        if !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("По умолчанию: " + ProfileStore.folderName(for: addURL))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 } footer: {
-                    Text("Каждый импорт создаёт папку: имя можно оставить любым, даже совпадающим с другой папкой.")
+                    Text(addToExisting
+                         ? "Серверы добавятся в выбранную папку рядом с теми, что там уже есть."
+                         : "Каждый импорт создаёт папку: имя можно оставить любым, даже совпадающим с другой папкой.")
                 }
                 Section {
                     Button {
@@ -167,6 +188,9 @@ struct SubscriptionEditorView: View {
             }
             .navigationTitle("Новая подписка")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                if addTargetFolder == nil { addTargetFolder = store.lastFolderID }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { sheet = nil }
@@ -175,13 +199,19 @@ struct SubscriptionEditorView: View {
                     Button("Добавить") {
                         let url = addURL.trimmingCharacters(in: .whitespacesAndNewlines)
                         let typed = addName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        // Каждый импорт — своя папка: имя можно оставить и таким же, как у другой.
-                        let base = typed.isEmpty ? ProfileStore.folderName(for: url) : typed
-                        let folder = store.addFolder(name: base)
+                        // «В существующую» — кладём в выбранную папку; иначе создаём новую,
+                        // имя можно оставить и таким же, как у другой.
+                        let target: UUID
+                        if addToExisting, let chosen = addTargetFolder ?? store.lastFolderID {
+                            target = chosen
+                        } else {
+                            target = store.addFolder(name: typed.isEmpty ? ProfileStore.folderName(for: url) : typed).id
+                        }
                         sheet = nil
-                        Task { await store.importFromURL(url, folderID: folder.id) }
+                        Task { await store.importFromURL(url, folderID: target) }
                         addURL = ""
                         addName = ""
+                        addToExisting = false
                     }
                     .disabled(addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
