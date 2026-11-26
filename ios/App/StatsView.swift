@@ -112,12 +112,11 @@ struct StatsView: View {
     }
 
     private static func size(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        Format.size(bytes)
     }
 
     private static func rate(_ bytesPerSecond: Double) -> String {
-        let value = ByteCountFormatter.string(fromByteCount: Int64(max(bytesPerSecond, 0)), countStyle: .file)
-        return value + "/с"
+        Format.rate(bytesPerSecond)
     }
 }
 

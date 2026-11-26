@@ -1002,7 +1002,7 @@ final class RuleStore: ObservableObject {
                 ruleSets[index].updated = Date()
             }
             saveSets()
-            status = set.name + " обновлён: " + ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+            status = set.name + " обновлён: " + Format.size(Int64(data.count))
         } catch {
             status = set.name + ": " + error.localizedDescription
         }
@@ -1075,7 +1075,7 @@ final class RuleStore: ObservableObject {
                 assets[index].updated = Date()
             }
             saveAssets()
-            status = "\(asset.name) обновлён: \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"
+            status = "\(asset.name) обновлён: \(Format.size(Int64(data.count)))"
         } catch {
             status = "\(asset.name): \(error.localizedDescription)"
         }

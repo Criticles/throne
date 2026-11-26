@@ -40,8 +40,8 @@ struct ServerDetailsView: View {
     }
 
     private var trafficText: String {
-        let up = ByteCountFormatter.string(fromByteCount: traffic.up, countStyle: .file)
-        let down = ByteCountFormatter.string(fromByteCount: traffic.down, countStyle: .file)
+        let up = Format.size(traffic.up)
+        let down = Format.size(traffic.down)
         return "↑ " + up + " · ↓ " + down
     }
 

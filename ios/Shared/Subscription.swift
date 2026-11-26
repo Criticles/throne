@@ -33,6 +33,6 @@ struct Subscription: Codable, Identifiable, Hashable {
     }
 
     static func size(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        Format.size(bytes)
     }
 }

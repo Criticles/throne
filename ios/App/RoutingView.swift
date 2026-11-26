@@ -158,7 +158,7 @@ struct RoutingView: View {
 
     private func detail(for asset: GeoAsset) -> String {
         guard asset.bytes > 0 else { return "не скачан" }
-        let size = ByteCountFormatter.string(fromByteCount: Int64(asset.bytes), countStyle: .file)
+        let size = Format.size(Int64(asset.bytes))
         if let updated = asset.updated {
             return size + " · " + Self.formatter.string(from: updated)
         }

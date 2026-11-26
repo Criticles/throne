@@ -671,7 +671,7 @@ struct ProfilesView: View {
     }
 
     private static func size(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        Format.size(bytes)
     }
 
     private static func duration(_ seconds: Int) -> String {

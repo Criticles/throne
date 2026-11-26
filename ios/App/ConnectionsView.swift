@@ -529,10 +529,6 @@ struct ConnectionsView: View {
         }
     }
 
-    static func rate(_ value: Double) -> String {
-        amount(max(value, 0), units: ["Б/с", "КБ/с", "МБ/с", "ГБ/с"])
-    }
-
     private func startPolling() {
         polling?.cancel()
         polling = Task {
@@ -642,22 +638,13 @@ struct ConnectionsView: View {
         }
     }
 
-    /// Единый формат размера: 0 Б, 12 КБ, 1,4 МБ. ByteCountFormatter на нуле
-    /// выдаёт «Zero KB», поэтому считаем сами.
+    /// Размер строкой: единицу подбирает общий формат приложения.
     static func size(_ bytes: Int64) -> String {
-        amount(Double(bytes), units: ["Б", "КБ", "МБ", "ГБ", "ТБ"])
+        Format.size(bytes)
     }
 
-    private static func amount(_ bytes: Double, units: [String]) -> String {
-        guard bytes > 0 else { return "0 " + units[0] }
-        var value = bytes
-        var index = 0
-        while value >= 1024, index < units.count - 1 {
-            value /= 1024
-            index += 1
-        }
-        let digits = (index == 0 || value >= 10) ? 0 : 1
-        return String(format: "%.\(digits)f", value) + " " + units[index]
+    static func rate(_ value: Double) -> String {
+        Format.rate(value)
     }
 
     static func duration(_ start: Date?) -> String {
