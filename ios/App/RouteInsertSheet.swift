@@ -14,11 +14,15 @@ struct RouteInsertSheet: View {
     private var plans: [RoutePlan] { rules.plans }
 
     /// Пока профиль не выбран вручную — берём активный профиль маршрута.
+    /// Циклы вместо `first(where:) ?? first`: компилятор не тянул такое выражение.
     private var current: RoutePlan? {
         if let planID {
-            return plans.first { $0.id == planID } ?? plans.first
+            for plan in plans where plan.id == planID { return plan }
         }
-        return plans.first { $0.id == rules.activePlanID } ?? plans.first
+        if let active = rules.activePlanID {
+            for plan in plans where plan.id == active { return plan }
+        }
+        return plans.isEmpty ? nil : plans[0]
     }
 
     private var folders: [RoutePlanRule] { current?.rules ?? [] }
@@ -106,10 +110,7 @@ struct RouteInsertSheet: View {
                     Text("Папки с атрибутами")
                 } footer: {
                     if !folders.isEmpty {
-                        Text(selectedFolder.map {
-                            "«" + prefill.value + "» попадёт в «" + $0.name + "» атрибутом «"
-                            + prefill.attr + "». Нажмите «Сохранить»."
-                        } ?? "Отметьте папку — атрибут «" + prefill.attr + "» ляжет в неё.")
+                        Text(foldersFooter)
                     }
                 }
             }
@@ -130,6 +131,15 @@ struct RouteInsertSheet: View {
     }
 
     /// Сохраняем только по кнопке: папку можно перевыбрать, ничего не добавив по ошибке.
+    /// Подпись под папками: до выбора и после.
+    private var foldersFooter: String {
+        if let folder = selectedFolder {
+            return "«" + prefill.value + "» попадёт в «" + folder.name + "» атрибутом «"
+                + prefill.attr + "». Нажмите «Сохранить»."
+        }
+        return "Отметьте папку — атрибут «" + prefill.attr + "» ляжет в неё."
+    }
+
     private func save() {
         guard let plan = current, let folder = selectedFolder else { return }
         guard rules.addValue(prefill.value, attr: prefill.attr, to: plan.id,
