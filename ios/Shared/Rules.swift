@@ -147,7 +147,13 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
         self.name = name
         self.action = action
         self.outbound = outbound
-        self.attrs = attrs
+        // `outbound` — такой же атрибут папки, как остальные: держим его в списке сразу,
+        // иначе новая папка показывала «0 атрибутов», хотя выход у неё уже задан.
+        var list = attrs
+        if !list.contains(where: { $0.attr == "outbound" }) {
+            list.insert(RoutePlanAttr(attr: "outbound", values: [outbound]), at: 0)
+        }
+        self.attrs = list
     }
 
     /// Подпись строки папки: «proxy · 3 атрибута» или «блокировать · 1 атрибут».
@@ -375,6 +381,13 @@ enum RouteAttribute {
         // Атрибуты, которых нет в справочнике (импорт из более новой версии настольного
         // клиента, старые сохранения), ядро не поймёт — их не держим.
         rule.attrs.removeAll { !RouteAttribute.all.contains($0.attr) }
+        // Старые папки сохранялись без атрибута outbound — добавляем, чтобы счётчик и
+        // редактор показывали одинаково.
+        if !rule.attrs.contains(where: { $0.attr == "outbound" }) {
+            rule.attrs.insert(RoutePlanAttr(attr: "outbound",
+                                            values: [rule.outbound.isEmpty ? "proxy" : rule.outbound]),
+                              at: 0)
+        }
         let conditions = rule.attrs.filter { $0.attr != "outbound" }
         return conditions.isEmpty ? nil : rule
     }
