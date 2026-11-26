@@ -79,11 +79,6 @@ struct AdvancedRouteView: View {
         }
         .navigationTitle(name.isEmpty ? "Профиль" : name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Сохранить") { save() }
-            }
-        }
         .sheet(item: $sheet) { item in
             switch item {
             case .newFolder:
@@ -105,6 +100,10 @@ struct AdvancedRouteView: View {
         .onChange(of: folders) { _ in persist() }
         .onChange(of: name) { _ in persist() }
         .onChange(of: finalTarget) { _ in persist() }
+        .onChange(of: directList) { _ in persist() }
+        .onChange(of: proxyList) { _ in persist() }
+        .onChange(of: blockList) { _ in persist() }
+        .onChange(of: warpList) { _ in persist() }
         .onDisappear { persist() }
     }
 
@@ -406,7 +405,10 @@ struct RouteRuleEditorView: View {
 
     var body: some View {
         if embedded {
-            content.toolbar { confirmToolbar }
+            // Кнопок нет: изменения уходят в профиль сразу, «назад» ничего не теряет.
+            content
+                .onChange(of: rule) { updated in onSave(updated) }
+                .onDisappear { onSave(rule) }
         } else {
             NavigationView {
                 content.toolbar { cancelToolbar; confirmToolbar }
