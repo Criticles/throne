@@ -12,11 +12,13 @@ struct SubscriptionEditorView: View {
     private enum Sheet: Identifiable {
         case add
         case settings(Folder)
+        case scanner
 
         var id: String {
             switch self {
             case .add: return "add"
             case .settings(let folder): return "settings-\(folder.id.uuidString)"
+            case .scanner: return "scanner"
             }
         }
     }
@@ -34,6 +36,14 @@ struct SubscriptionEditorView: View {
                 addSheet
             case .settings(let folder):
                 SubscriptionSettingsView(folderID: folder.id)
+            case .scanner:
+                NavigationView {
+                    QRScannerView { code in
+                        sheet = nil
+                        addURL = code
+                    }
+                }
+                .navigationViewStyle(.stack)
             }
         }
     }
@@ -131,6 +141,23 @@ struct SubscriptionEditorView: View {
                     TextField("Имя папки", text: $addName)
                 } footer: {
                     Text("Каждый импорт создаёт папку: имя можно оставить любым, даже совпадающим с другой папкой.")
+                }
+                Section {
+                    Button {
+                        let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty { addURL = text }
+                    } label: {
+                        Label("Взять из буфера обмена", systemImage: "doc.on.clipboard")
+                    }
+                    Button {
+                        // Второй лист поверх первого iOS 15 не открывает: закрываем и ждём.
+                        sheet = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { sheet = .scanner }
+                    } label: {
+                        Label("Сканировать QR", systemImage: "qrcode.viewfinder")
+                    }
+                } footer: {
+                    Text("QR подписки или сервера — то же, что ссылка в поле выше.")
                 }
             }
             .navigationTitle("Новая подписка")

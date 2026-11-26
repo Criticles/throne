@@ -348,6 +348,9 @@ struct RouteRuleEditorView: View {
         self.targets = targets
         self.onSave = onSave
         var initial = rule
+        // На iPhone нет процессов, Android-пакетов и Wi-Fi: такие атрибуты из папки убираем
+        // и в редакторе, а не только при импорте.
+        initial.attrs.removeAll { RouteAttribute.unavailable.contains($0.attr) }
         // `outbound` всегда в списке: он задаёт, куда папка уходит, и правится как остальные
         // атрибуты. В JSON он при этом остаётся полем правила, а не ключом-массивом.
         if !initial.attrs.contains(where: { $0.attr == "outbound" }) {
@@ -521,8 +524,8 @@ struct RouteAttributePicker: View {
 
     private var attributes: [String] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !text.isEmpty else { return RouteAttribute.all }
-        return RouteAttribute.all.filter { $0.contains(text) }
+        guard !text.isEmpty else { return RouteAttribute.available }
+        return RouteAttribute.available.filter { $0.contains(text) }
     }
 
     var body: some View {

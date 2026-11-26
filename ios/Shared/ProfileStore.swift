@@ -212,7 +212,15 @@ final class ProfileStore: ObservableObject {
 
     /// Обновить одну подписку по её ссылке — в ту же папку.
     func refresh(_ subscription: Subscription) async {
-        await importFromURL(subscription.url, folderID: subscription.folderID)
+        // Папку могли удалить, а запись подписки осталась: обновление иначе создаст папку
+        // заново и «вернёт» подписку, которую пользователь удалил.
+        guard let folderID = subscription.folderID, folder(folderID) != nil else {
+            subscriptions.removeAll { $0.id == subscription.id }
+            save()
+            status = "подписка без папки убрана"
+            return
+        }
+        await importFromURL(subscription.url, folderID: folderID)
     }
 
     /// Удалить подписку вместе с её папкой и серверами.
@@ -233,8 +241,22 @@ final class ProfileStore: ObservableObject {
     }
 
     /// Имя папки по ссылке подписки: первый сегмент хоста — так же, как зовёт её панель.
+    ///
+    /// Ссылка из буфера часто приходит с переводом строки или пробелом, и `URL(string:)`
+    /// на такой строке возвращает nil — тогда папка называлась просто «Подписка».
     static func folderName(for url: String) -> String {
-        guard let host = URL(string: url)?.host else { return "Подписка" }
+        let line = url.split(whereSeparator: { $0.isNewline }).first.map(String.init) ?? url
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        var host = URL(string: trimmed)?.host ?? ""
+        if host.isEmpty, let range = trimmed.range(of: "://") {
+            let rest = trimmed[range.upperBound...]
+            let authority = rest.split(whereSeparator: { $0 == "/" || $0 == "?" || $0 == "#" })
+                .first.map(String.init) ?? ""
+            host = authority.split(separator: "@").last.map(String.init) ?? authority
+            if let colon = host.firstIndex(of: ":") { host = String(host[host.startIndex..<colon]) }
+        }
+        host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return "Подписка" }
         let first = host.split(separator: ".").first.map(String.init) ?? host
         return first.isEmpty ? host : first
     }
@@ -357,6 +379,13 @@ final class ProfileStore: ObservableObject {
             }
         }
 
+        // Папку могли удалить, пока шёл импорт: тогда ни серверы, ни запись подписки
+        // сохранять нельзя, иначе удалённая подписка «вернётся» следующим запуском.
+        guard folders.contains(where: { $0.id == target.id }) else {
+            log("  папку удалили во время импорта — ничего не сохраняем")
+            status = "импорт отменён: папка удалена"
+            return
+        }
         recordSubscription(url: trimmed, name: target.name, folderID: target.id, userinfo: userinfo)
         if added > 0 {
             status = "добавлено профилей: \(added) (всего \(profiles.count))"
@@ -544,6 +573,8 @@ final class ProfileStore: ObservableObject {
 
     @discardableResult
     private func merge(_ incoming: [Profile], folderID: UUID?) -> Int {
+        // Папки уже нет (её удалили во время импорта) — не плодим сирот.
+        if let folderID, !folders.contains(where: { $0.id == folderID }) { return 0 }
         var added = 0
         for candidate in incoming {
             var profile = candidate
@@ -642,18 +673,18 @@ final class ProfileStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         defaults.set(data, forKey: profilesKey)
         saveFolders()
-        // Счётчики в «Подписках» берём из фактического состава папок.
-        if !subscriptions.isEmpty {
-            for index in subscriptions.indices {
-                if let folderID = subscriptions[index].folderID {
-                    subscriptions[index].count = profiles.filter { $0.folderID == folderID }.count
-                } else {
-                    subscriptions[index].count = profiles.filter { $0.group == subscriptions[index].name }.count
-                }
+        // Счётчики в «Подписках» берём из фактического состава папок. Пишем ВСЕГДА, даже
+        // пустой массив: иначе удалённая последняя подписка оставалась в хранилище и
+        // «возвращалась» после перезапуска приложения.
+        for index in subscriptions.indices {
+            if let folderID = subscriptions[index].folderID {
+                subscriptions[index].count = profiles.filter { $0.folderID == folderID }.count
+            } else {
+                subscriptions[index].count = profiles.filter { $0.group == subscriptions[index].name }.count
             }
-            if let data = try? JSONEncoder().encode(subscriptions) {
-                defaults.set(data, forKey: subscriptionsKey)
-            }
+        }
+        if let data = try? JSONEncoder().encode(subscriptions) {
+            defaults.set(data, forKey: subscriptionsKey)
         }
     }
 

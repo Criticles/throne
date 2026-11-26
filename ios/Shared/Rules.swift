@@ -310,6 +310,26 @@ enum RouteAttribute {
         enumerated.contains(attr) && !multiple.contains(attr)
     }
 
+    /// Атрибуты, которых на iPhone нет: ядро не видит процессы, Android-пакеты и имя Wi-Fi,
+    /// поэтому правило с ними молча не срабатывает. В редакторе их не предлагаем,
+    /// а из импортированного профиля выкидываем.
+    static let unavailable: Set<String> = [
+        "process_name", "process_path", "process_path_regex",
+        "package_name", "wifi_ssid", "wifi_bssid",
+    ]
+
+    /// Что можно показать в списке атрибутов на этой платформе.
+    static var available: [String] { all.filter { !unavailable.contains($0) } }
+
+    /// Папка без условий бесполезна — только `outbound` её не спасает: правило без условий
+    /// поймает всё. Возвращаем nil, если после чистки условий не осталось.
+    static func sanitized(_ rule: RoutePlanRule) -> RoutePlanRule? {
+        var rule = rule
+        rule.attrs.removeAll { unavailable.contains($0.attr) }
+        let conditions = rule.attrs.filter { $0.attr != "outbound" }
+        return conditions.isEmpty ? nil : rule
+    }
+
     /// Варианты для кнопки «Выбрать». Пусто — значит атрибут пишется текстом.
     static func options(_ attr: String) -> [String] {
         switch attr {
@@ -818,11 +838,26 @@ final class RuleStore: ObservableObject {
         if imported.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             imported.name = "Импортированный"
         }
-        plans.append(imported)
-        activePlanID = imported.id
+        let clean = Self.sanitize(imported)
+        plans.append(clean)
+        activePlanID = clean.id
         savePlans()
-        status = "профиль импортирован: " + imported.name
-        return imported
+        status = "профиль импортирован: " + clean.name
+        return clean
+    }
+
+    /// Импорт из настольного клиента приносит атрибуты, которых на iOS нет (процессы,
+    /// Android-пакеты, Wi-Fi), и папки, которые держатся только на них. Такую папку не
+    /// оставляем: без условий она поймала бы весь трафик.
+    private static func sanitize(_ plan: RoutePlan) -> RoutePlan {
+        var plan = plan
+        let before = plan.rules.count
+        plan.rules = plan.rules.compactMap(RouteAttribute.sanitized)
+        let dropped = before - plan.rules.count
+        if dropped > 0 {
+            LogStore.shared.append("маршрут «\(plan.name)»: убрано папок без условий на iOS — \(dropped)", stamp: false)
+        }
+        return plan
     }
 
     private func savePlans() {
@@ -1017,12 +1052,12 @@ final class RuleStore: ObservableObject {
         if let data = defaults.data(forKey: plansKey),
            let stored = try? JSONDecoder().decode([RoutePlan].self, from: data),
            !stored.isEmpty {
-            plans = stored
+            plans = stored.map(Self.sanitize)
         }
         if plans.isEmpty {
             if let data = defaults.data(forKey: legacyPlanKey),
                let legacy = try? JSONDecoder().decode(RoutePlan.self, from: data) {
-                plans = [legacy]
+                plans = [Self.sanitize(legacy)]
             } else {
                 plans = [RoutePlan(name: "По правилам")]
             }

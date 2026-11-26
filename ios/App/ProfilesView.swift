@@ -517,9 +517,11 @@ struct ProfilesView: View {
                     .pickerStyle(.segmented)
                     if createFolder {
                         TextField("Имя папки", text: $addTitle)
-                        Text("По умолчанию: " + ProfileStore.folderName(for: addText))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                        if !addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("По умолчанию: " + ProfileStore.folderName(for: addText))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
                     } else {
                         Picker("Папка", selection: $targetFolderID) {
                             ForEach(store.folders) { item in
@@ -533,7 +535,10 @@ struct ProfilesView: View {
                          : "Серверы добавятся в выбранную папку рядом с теми, что там уже есть.")
                 }
                 Section {
-                    Button("Взять из буфера обмена") { importClipboard() }
+                    Button("Взять из буфера обмена") {
+                        let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty { addText = text }
+                    }
                 }
             }
             .navigationTitle("Новая подписка")
@@ -681,14 +686,18 @@ struct ProfilesView: View {
 
     /// Всё добавление идёт через лист с выбором папки: буфер и QR только заполняют его.
     private func importClipboard() {
-        guard let text = UIPasteboard.general.string, !text.isEmpty else {
-            probeLine = "буфер обмена пуст"
-            return
-        }
-        addText = text
+        let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         addTitle = ""
         targetFolderID = store.lastFolderID
         createFolder = true
+        // iOS на первом обращении показывает «Разрешить вставку» и отдаёт пустую строку:
+        // тогда открываем лист и просим нажать «Взять из буфера обмена» внутри него.
+        if text.isEmpty {
+            addText = ""
+            probeLine = "буфер не отдался — нажмите «Взять из буфера обмена» в открывшемся окне"
+        } else {
+            addText = text
+        }
         sheet = .add
     }
 
