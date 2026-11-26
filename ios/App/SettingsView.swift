@@ -364,12 +364,6 @@ struct SettingsView: View {
                     Label("Скачать " + release.version, systemImage: "square.and.arrow.down")
                 }
             }
-            NavigationLink {
-                CoreUpdatesView()
-            } label: {
-                Label("Проверка обновлений ядер", systemImage: "arrow.triangle.2.circlepath")
-                    .foregroundColor(Theme.accent)
-            }
             Link(destination: URL(string: "https://github.com/Criticles/throne")!) {
                 Label("Исходники на GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
             }
