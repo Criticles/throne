@@ -845,7 +845,7 @@ final class RuleStore: ObservableObject {
 
     func deletePlan(_ id: UUID) {
         plans.removeAll { $0.id == id }
-        if plans.isEmpty { plans = [RoutePlan(name: "По правилам")] }
+        if plans.isEmpty { plans = [RoutePlan(name: "Default")] }
         if activePlanID == id { activePlanID = plans.first?.id }
         savePlans()
         status = "профиль удалён"
@@ -1156,8 +1156,13 @@ final class RuleStore: ObservableObject {
                let legacy = try? JSONDecoder().decode(RoutePlan.self, from: data) {
                 plans = [Self.sanitize(legacy)]
             } else {
-                plans = [RoutePlan(name: "По правилам")]
+                plans = [RoutePlan(name: "Default")]
             }
+        }
+        // В настольном Throne профиль по умолчанию зовётся Default — переименовываем
+        // наш прежний единственный профиль, чтобы список начинался с него.
+        if plans.count == 1, plans[0].name == "По правилам" {
+            plans[0].name = "Default"
         }
         if let raw = defaults.string(forKey: activePlanKey), let id = UUID(uuidString: raw),
            plans.contains(where: { $0.id == id }) {

@@ -9,6 +9,7 @@ struct RouteInsertSheet: View {
     let prefill: RouteInsertPrefill
 
     @State private var planID: UUID?
+    @State private var folderID: UUID?
 
     private var plans: [RoutePlan] { rules.plans }
 
@@ -21,6 +22,11 @@ struct RouteInsertSheet: View {
     }
 
     private var folders: [RoutePlanRule] { current?.rules ?? [] }
+
+    private var selectedFolder: RoutePlanRule? {
+        guard let folderID else { return nil }
+        return folders.first { $0.id == folderID }
+    }
 
     var body: some View {
         NavigationView {
@@ -44,6 +50,7 @@ struct RouteInsertSheet: View {
                     ForEach(plans) { plan in
                         Button {
                             planID = plan.id
+                            folderID = nil
                         } label: {
                             HStack(spacing: 10) {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -75,7 +82,7 @@ struct RouteInsertSheet: View {
                     }
                     ForEach(folders) { folder in
                         Button {
-                            add(folder)
+                            folderID = folder.id
                         } label: {
                             HStack(spacing: 10) {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -87,8 +94,10 @@ struct RouteInsertSheet: View {
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer(minLength: 6)
-                                Image(systemName: "plus.circle.fill")
-                                    .foregroundColor(Theme.accent)
+                                Image(systemName: selectedFolder?.id == folder.id
+                                      ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(selectedFolder?.id == folder.id
+                                                     ? Theme.accent : Color(uiColor: .tertiaryLabel))
                             }
                         }
                         .buttonStyle(.plain)
@@ -97,8 +106,10 @@ struct RouteInsertSheet: View {
                     Text("Папки с атрибутами")
                 } footer: {
                     if !folders.isEmpty {
-                        Text("«" + prefill.value + "» попадёт в выбранную папку атрибутом «"
-                             + prefill.attr + "», порядок папок не меняется.")
+                        Text(selectedFolder.map {
+                            "«" + prefill.value + "» попадёт в «" + $0.name + "» атрибутом «"
+                            + prefill.attr + "». Нажмите «Сохранить»."
+                        } ?? "Отметьте папку — атрибут «" + prefill.attr + "» ляжет в неё.")
                     }
                 }
             }
@@ -109,13 +120,18 @@ struct RouteInsertSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { presentation.wrappedValue.dismiss() }
                 }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Сохранить") { save() }
+                        .disabled(selectedFolder == nil)
+                }
             }
         }
         .navigationViewStyle(.stack)
     }
 
-    private func add(_ folder: RoutePlanRule) {
-        guard let plan = current else { return }
+    /// Сохраняем только по кнопке: папку можно перевыбрать, ничего не добавив по ошибке.
+    private func save() {
+        guard let plan = current, let folder = selectedFolder else { return }
         guard rules.addValue(prefill.value, attr: prefill.attr, to: plan.id,
                              ruleID: folder.id) else { return }
         LogStore.shared.append("маршрут: «" + prefill.value + "» → " + folder.name)

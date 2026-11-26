@@ -361,7 +361,7 @@ struct ConnectionsView: View {
         } header: {
             Text("Соединения · " + String(activeIDs.count) + " активных")
         } footer: {
-            Text("Остановленные висят минуту и гаснут, если трафик не возобновился; возобновился — снова активны.")
+            Text("Остановленные висят десять секунд и гаснут, если трафик не возобновился; возобновился — снова активны.")
         }
     }
 
@@ -595,7 +595,7 @@ struct ConnectionsView: View {
                 }
                 recentlyClosed.removeAll { item in
                     guard let closed = closedAt[item.id] else { return true }
-                    return now.timeIntervalSince(closed) > 60
+                    return now.timeIntervalSince(closed) > 10
                 }
                 if recentlyClosed.count > 80 {
                     recentlyClosed = Array(recentlyClosed.suffix(80))
