@@ -25,6 +25,8 @@ final class DevEngine: ObservableObject {
     private(set) var activeProfileID: UUID?
     /// Профиль маршрутизации: его папки компилируются в правила при сборке живого конфига.
     private var routePlan: RoutePlan?
+    /// Скачанные наборы правил (имя → путь): на них ссылаются папки с атрибутом `rule_set`.
+    private var routeRuleSetPaths: [String: String] = [:]
     private lazy var turnable = TurnableEngine { [weak self] line in
         Task { @MainActor in self?.append(line) }
     }
@@ -174,8 +176,10 @@ final class DevEngine: ObservableObject {
     /// Запуск профиля. `pool` — остальные серверы: они добавляются в тот же конфиг,
     /// чтобы пинги не требовали перезапуска ядра. `plan` — профиль маршрутизации: его папки
     /// становятся правилами в том же конфиге.
-    func start(profile: Profile, pool: [Profile] = [], plan: RoutePlan? = nil) {
+    func start(profile: Profile, pool: [Profile] = [], plan: RoutePlan? = nil,
+               ruleSetPaths: [String: String] = [:]) {
         if let plan { routePlan = plan }
+        if !ruleSetPaths.isEmpty { routeRuleSetPaths = ruleSetPaths }
         stop()
         // Профиль VLESS + XHTTP: sing-box такой транспорт не умеет, поднимаем Xray.
         if profile.kind == .xray {
@@ -199,7 +203,8 @@ final class DevEngine: ObservableObject {
             let candidates = pool.filter { Self.singboxKinds.contains($0.kind) }
             let config: String
             if !Self.needsTransport(profile), candidates.count > 1,
-               let built = try? ConfigBuilder.buildLive(profiles: candidates, selected: profile, plan: routePlan) {
+               let built = try? ConfigBuilder.buildLive(profiles: candidates, selected: profile,
+                                                        plan: routePlan, ruleSetPaths: routeRuleSetPaths) {
                 config = built.json
                 liveTags = built.tags
                 probePorts = built.probePorts
@@ -209,7 +214,8 @@ final class DevEngine: ObservableObject {
                 if !Self.needsTransport(profile), candidates.count > 1 {
                     append("общий конфиг не собрался — поднимаю один сервер")
                 }
-                config = try ConfigBuilder.build(profile: profile)
+                config = try ConfigBuilder.build(profile: profile, plan: routePlan,
+                                                 ruleSetPaths: routeRuleSetPaths)
                 liveTags = [:]
                 probePorts = [:]
             }

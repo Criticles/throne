@@ -92,7 +92,7 @@ struct RuleSet: Codable, Identifiable, Hashable {
     var intervalHours = 24
 
     static let presets: [RuleSet] = [
-        RuleSet(name: "geosite-ru", url: "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-ru.srs"),
+        RuleSet(name: "geosite-ru", url: "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs"),
         RuleSet(name: "geosite-ads", url: "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"),
         RuleSet(name: "geoip-ru", url: "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"),
     ]
@@ -1042,6 +1042,18 @@ final class RuleStore: ObservableObject {
     func fileURL(for set: RuleSet) -> URL? {
         let tail = URL(string: set.url)?.lastPathComponent ?? (set.name + ".srs")
         return Self.rulesDirectory?.appendingPathComponent(set.name + "-" + tail)
+    }
+
+    /// Имена скачанных наборов → локальный путь. Ядро читает файл само, поэтому в конфиг
+    /// попадают только те наборы, чей файл уже лежит на диске.
+    func ruleSetPaths() -> [String: String] {
+        var paths: [String: String] = [:]
+        for set in ruleSets {
+            guard let url = fileURL(for: set),
+                  FileManager.default.fileExists(atPath: url.path) else { continue }
+            paths[set.name] = url.path
+        }
+        return paths
     }
 
     /// Скачивает список и запоминает размер с датой. Сами списки читает ядро, не приложение.

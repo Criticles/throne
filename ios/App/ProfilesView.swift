@@ -741,7 +741,8 @@ struct ProfilesView: View {
 
     private func connect(_ profile: Profile) async {
         store.select(profile.id)
-        engine.start(profile: profile, pool: store.profiles, plan: rules.plan)
+        engine.start(profile: profile, pool: store.profiles, plan: rules.plan,
+                     ruleSetPaths: rules.ruleSetPaths())
         if engine.running, !engine.transportOnly {
             traffic.start(profile: profile.name)
             probeLine = "определяю выход…"

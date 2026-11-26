@@ -11,6 +11,9 @@ enum RouteCompiler {
         let tagsByName: [String: String]
         /// Тег выбранного сервера: имя «proxy» означает именно его.
         let selectedTag: String?
+        /// Скачанные наборы правил: имя → локальный путь. Незнакомые имена в `rule_set`
+        /// не компилируем — ядро падает `rule-set not found`.
+        var ruleSetPaths: [String: String] = [:]
     }
 
     enum Target {
@@ -49,6 +52,23 @@ enum RouteCompiler {
         }
     }
 
+    /// Теги наборов правил, на которые ссылаются скомпилированные правила.
+    static func usedRuleSets(in rules: [[String: Any]]) -> Set<String> {
+        var used: Set<String> = []
+        for rule in rules {
+            if let tags = rule["rule_set"] as? [String] { used.formUnion(tags) }
+        }
+        return used
+    }
+
+    /// Объявления наборов для `route.rule_set`: локальный файл, который уже лежит на диске.
+    static func ruleSetDefinitions(_ used: Set<String>, context: Context) -> [[String: Any]] {
+        used.sorted().compactMap { tag in
+            guard let path = context.ruleSetPaths[tag] else { return nil }
+            return ["type": "local", "tag": tag, "format": "binary", "path": path]
+        }
+    }
+
     static func destination(_ name: String, context: Context) -> Target? {
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines)
         switch key.lowercased() {
@@ -66,6 +86,12 @@ enum RouteCompiler {
     private static func rule(for folder: RoutePlanRule, context: Context) -> [String: Any]? {
         var body: [String: Any] = [:]
         for attr in folder.attrs where !RouteAttribute.unavailable.contains(attr.attr) {
+            if attr.attr == "rule_set" {
+                // Берём только наборы, чьи файлы уже скачаны: ядро читает их с диска.
+                let known = attr.values.filter { context.ruleSetPaths[$0] != nil }
+                if !known.isEmpty { body["rule_set"] = known }
+                continue
+            }
             guard let value = payload(attr.attr, attr.values) else { continue }
             body[attr.attr] = value
         }

@@ -125,7 +125,8 @@ struct ServerDetailsView: View {
                 Section {
                     Button {
                         store.select(profile.id)
-                        engine.start(profile: profile, pool: store.profiles, plan: rules.plan)
+                        engine.start(profile: profile, pool: store.profiles, plan: rules.plan,
+                                     ruleSetPaths: rules.ruleSetPaths())
                         presentation.wrappedValue.dismiss()
                     } label: {
                         Label("Подключиться к этому серверу", systemImage: "power")
