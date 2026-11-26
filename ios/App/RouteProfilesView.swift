@@ -4,6 +4,7 @@ import SwiftUI
 /// Импорт сам понимает, что лежит в буфере — JSON профиля или ссылка `throne://route`.
 struct RouteProfilesView: View {
     @EnvironmentObject private var rules: RuleStore
+    @EnvironmentObject private var router: AppRouter
 
     /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки.
     private enum Sheet: Identifiable {
@@ -19,12 +20,52 @@ struct RouteProfilesView: View {
         }
     }
 
+    /// Заявка из «Соединений»: значение уже есть, остаётся выбрать профиль и папку.
+    /// Меню вложенное — профиль, внутри папки: ни листов, ни переходов.
+    @ViewBuilder
+    private var insertSection: some View {
+        if let pending = router.pendingInsert {
+            Section {
+                Text(pending.value)
+                    .font(.system(.footnote, design: .monospaced))
+                Menu {
+                    ForEach(rules.plans) { plan in
+                        Menu(plan.name) {
+                            ForEach(plan.rules) { folder in
+                                Button(folder.name + " · " + folder.subtitle) {
+                                    add(pending, plan: plan.id, folder: folder)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Выбрать профиль и папку", systemImage: "folder.badge.plus")
+                }
+                .disabled(rules.plans.isEmpty)
+                Button("Отменить") { router.pendingInsert = nil }
+            } header: {
+                Text(pending.title.isEmpty ? "Из соединения" : pending.title)
+            } footer: {
+                Text("Профиль → папка с атрибутами: «" + pending.value + "» ляжет туда атрибутом «"
+                     + pending.attr + "».")
+            }
+        }
+    }
+
+    private func add(_ pending: RouteInsertPrefill, plan: UUID, folder: RoutePlanRule) {
+        guard rules.addValue(pending.value, attr: pending.attr, to: plan,
+                             ruleID: folder.id) else { return }
+        LogStore.shared.append("маршрут: «" + pending.value + "» → " + folder.name)
+        router.pendingInsert = nil
+    }
+
     @State private var sheet: Sheet?
     @State private var importText = ""
     @State private var newName = ""
 
     var body: some View {
         List {
+            insertSection
             Section {
                 if rules.plans.isEmpty {
                     Text("профилей нет — создайте новый или импортируйте")

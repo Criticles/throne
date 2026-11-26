@@ -5,6 +5,7 @@ import SwiftUI
 struct RoutingView: View {
     @EnvironmentObject private var prefs: Prefs
     @EnvironmentObject private var rules: RuleStore
+    @EnvironmentObject private var router: AppRouter
 
     @State private var showGeoSheet = false
     @State private var geoName = ""
@@ -36,9 +37,10 @@ struct RoutingView: View {
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Профили маршрутизации").font(.subheadline.weight(.medium))
-                        Text("активно: " + rules.plan.name + " · профилей: " + String(rules.plans.count))
+                        Text(router.pendingInsert.map { "ждёт: «" + $0.value + "» → выберите профиль" }
+                             ?? "активно: " + rules.plan.name + " · профилей: " + String(rules.plans.count))
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(router.pendingInsert == nil ? .secondary : Theme.accent)
                     }
                 }
             }

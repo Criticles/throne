@@ -44,9 +44,6 @@ struct RootView: View {
         .environmentObject(updater)
         .environmentObject(router)
         .accentColor(Theme.accent)
-        .sheet(item: $router.insert) { prefill in
-            RouteInsertView(prefill: prefill)
-        }
         .onOpenURL { url in
             // throne://import?url=<ссылка> — так профиль приходит из QR или другого приложения.
             guard url.scheme?.lowercased() == "throne" else { return }
