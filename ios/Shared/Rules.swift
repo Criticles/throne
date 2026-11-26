@@ -228,32 +228,10 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
             // Типы — как ждёт ядро: числа числами, булевы true/false, остальное строкой
             // или массивом, как в документе Throne. Строки вида "443"/"true" ядро
             // отвергает: `cannot unmarshal string into Go value of type uint16`.
-            if let value = Self.jsonValue(item.attr, item.values) {
+            if let value = RouteAttribute.jsonValue(item.attr, item.values) {
                 try Self.encode(value, into: &container, key: item.attr)
             }
         }
-    }
-
-    /// Значение атрибута в JSON нужного типа.
-    static func jsonValue(_ attr: String, _ values: [String]) -> Any? {
-        let cleaned = values
-            .flatMap { $0.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) } }
-            .filter { !$0.isEmpty }
-        guard !cleaned.isEmpty else { return nil }
-
-        if attr == "ip_version" { return Int(cleaned[0]) }
-        if Self.integerAttributes.contains(attr) {
-            let numbers = cleaned.compactMap { Int($0) }
-            return numbers.isEmpty ? nil : numbers
-        }
-        if Self.booleanAttributes.contains(attr) {
-            let lower = cleaned[0].lowercased()
-            if lower == "true" || lower == "1" { return true }
-            if lower == "false" || lower == "0" { return false }
-            return nil
-        }
-        if Self.scalarAttributes.contains(attr) { return cleaned[0] }
-        return cleaned
     }
 
     private static func encode(_ value: Any,
@@ -274,20 +252,6 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
             break
         }
     }
-
-    /// Числа в JSON: ядро ждёт `uint16`/`int`, а не строку.
-    static let integerAttributes: Set<String> = ["port", "source_port", "override_port"]
-
-    /// Булевы в JSON.
-    static let booleanAttributes: Set<String> = [
-        "invert", "no_drop", "ip_is_private", "source_ip_is_private",
-    ]
-
-    /// Одиночная строка, а не список (так пишет и настольный Throne).
-    static let scalarAttributes: Set<String> = [
-        "protocol", "network", "inbound", "method", "tls_spoof",
-        "tls_spoof_method", "override_address",
-    ]
 }
 
 /// Запись старого формата (профиль → плоский список записей). Читается только для миграции.
@@ -414,6 +378,42 @@ enum RouteAttribute {
         let conditions = rule.attrs.filter { $0.attr != "outbound" }
         return conditions.isEmpty ? nil : rule
     }
+
+    /// Значение атрибута в JSON нужного типа.
+    static func jsonValue(_ attr: String, _ values: [String]) -> Any? {
+        let cleaned = values
+            .flatMap { $0.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) } }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return nil }
+
+        if attr == "ip_version" { return Int(cleaned[0]) }
+        if Self.integerAttributes.contains(attr) {
+            let numbers = cleaned.compactMap { Int($0) }
+            return numbers.isEmpty ? nil : numbers
+        }
+        if Self.booleanAttributes.contains(attr) {
+            let lower = cleaned[0].lowercased()
+            if lower == "true" || lower == "1" { return true }
+            if lower == "false" || lower == "0" { return false }
+            return nil
+        }
+        if Self.scalarAttributes.contains(attr) { return cleaned[0] }
+        return cleaned
+    }
+
+    /// Числа в JSON: ядро ждёт `uint16`/`int`, а не строку.
+    static let integerAttributes: Set<String> = ["port", "source_port", "override_port"]
+
+    /// Булевы в JSON.
+    static let booleanAttributes: Set<String> = [
+        "invert", "no_drop", "ip_is_private", "source_ip_is_private",
+    ]
+
+    /// Одиночная строка, а не список (так пишет и настольный Throne).
+    static let scalarAttributes: Set<String> = [
+        "protocol", "network", "inbound", "method", "tls_spoof",
+        "tls_spoof_method", "override_address",
+    ]
 
     /// Варианты для кнопки «Выбрать». Пусто — значит атрибут пишется текстом.
     static func options(_ attr: String) -> [String] {
