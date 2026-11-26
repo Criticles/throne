@@ -276,33 +276,12 @@ struct ConnectionsView: View {
                 }
                 .font(.caption.weight(.medium))
 
-                if !outboundRows.isEmpty {
-                    VStack(spacing: 3) {
-                        ForEach(outboundRows, id: \.name) { row in
-                            HStack {
-                                Text(row.name).lineLimit(1)
-                                Spacer()
-                                Text(Self.rate(row.down))
-                                    .foregroundColor(Theme.accent)
-                                    .frame(width: 88, alignment: .trailing)
-                                Text(Self.rate(row.up))
-                                    .foregroundColor(.secondary)
-                                    .frame(width: 88, alignment: .trailing)
-                            }
-                            .font(.caption2)
-                        }
-                    }
-                }
-
                 TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
                              start: windowStart, end: windowEnd,
                              peakLabel: Self.rate(max(lastDown, lastUp)))
 
             }
             .padding(.vertical, 2)
-        } footer: {
-            Text("Окно " + window.rawValue + " · точек " + String(windowSamples.count)
-                 + ". Входящий — цвет акцента, исходящий — серый. Сводка целиком — в меню «⋯»: «Скопировать» и «Экспорт в txt» (трафик, выходы, правила, все соединения).")
         }
     }
 
@@ -485,15 +464,6 @@ struct ConnectionsView: View {
             .sorted { $0.down + $0.up > $1.down + $1.up }
     }
 
-    /// Скорости по выходам за последний сэмпл — то, что видно строками под шапкой.
-    private var outboundRows: [(name: String, down: Double, up: Double)] {
-        guard let last = samples.last else { return [] }
-        return last.byOutbound.map { (name: $0.key, down: $0.value.down, up: $0.value.up) }
-            .sorted { $0.down + $0.up > $1.down + $1.up }
-            .prefix(5)
-            .map { $0 }
-    }
-
     /// Сводка по правилам: сколько соединений и сколько байт прошло через каждое.
     private func ruleTotals(_ list: [ClashApi.Connection])
         -> [(name: String, count: Int, down: Int64, up: Int64)] {
@@ -555,8 +525,7 @@ struct ConnectionsView: View {
     }
 
     static func rate(_ value: Double) -> String {
-        let bytes = max(Int64(value.rounded()), 0)
-        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) + "/с"
+        amount(max(value, 0), units: ["Б/с", "КБ/с", "МБ/с", "ГБ/с"])
     }
 
     private func startPolling() {
@@ -668,8 +637,22 @@ struct ConnectionsView: View {
         }
     }
 
+    /// Единый формат размера: 0 Б, 12 КБ, 1,4 МБ. ByteCountFormatter на нуле
+    /// выдаёт «Zero KB», поэтому считаем сами.
     static func size(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        amount(Double(bytes), units: ["Б", "КБ", "МБ", "ГБ", "ТБ"])
+    }
+
+    private static func amount(_ bytes: Double, units: [String]) -> String {
+        guard bytes > 0 else { return "0 " + units[0] }
+        var value = bytes
+        var index = 0
+        while value >= 1024, index < units.count - 1 {
+            value /= 1024
+            index += 1
+        }
+        let digits = (index == 0 || value >= 10) ? 0 : 1
+        return String(format: "%.\(digits)f", value) + " " + units[index]
     }
 
     static func duration(_ start: Date?) -> String {
@@ -986,8 +969,8 @@ struct TrafficSample: Identifiable {
     let bytesByOutbound: [String: TrafficCounters]
 }
 
-/// График за выбранное окно: X — реальное время, Y — общая шкала,
-/// входящий — акцентом, исходящий — серым.
+/// График за выбранное окно: X — реальное время (четыре деления),
+/// Y — максимум, середина и ноль. Входящий — акцентом, исходящий — серым.
 struct TrafficGraph: View {
     let points: [(at: Date, down: Double, up: Double)]
     let start: Date
@@ -1003,22 +986,20 @@ struct TrafficGraph: View {
                     grid(size: geometry.size)
                     line(incoming: true, peak: peak, size: geometry.size, color: Theme.accent)
                     line(incoming: false, peak: peak, size: geometry.size, color: .gray)
-                    Text("пик " + peakLabel)
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-                        .padding(4)
+                    axisLabels(size: geometry.size)
                 }
             }
             .frame(height: 96)
-            HStack {
-                Text(agoLabel(start))
-                Spacer()
-                Text(agoLabel(start.addingTimeInterval(end.timeIntervalSince(start) / 2)))
-                Spacer()
-                Text("сейчас")
+            HStack(spacing: 0) {
+                ForEach(0..<4, id: \.self) { index in
+                    Text(tickLabel(index))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity,
+                               alignment: index == 0 ? .leading
+                                   : (index == 3 ? .trailing : .center))
+                }
             }
-            .font(.system(size: 9))
-            .foregroundColor(.secondary)
         }
     }
 
@@ -1027,7 +1008,36 @@ struct TrafficGraph: View {
         return maximum > 0 ? maximum : 1
     }
 
-    /// Три горизонтальные линии — чтобы видеть масштаб.
+    /// Подпись деления по X: слева — всё окно назад, справа — «сейчас».
+    private func tickLabel(_ index: Int) -> String {
+        if index == 3 { return "сейчас" }
+        let span = end.timeIntervalSince(start)
+        return agoLabel(end.addingTimeInterval(-span * Double(3 - index) / 3))
+    }
+
+    /// Максимум, середина и ноль — по левому краю графика.
+    private func axisLabels(size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            Text(peakLabel)
+                .offset(x: 4, y: 2)
+            Text(Self.half(peak))
+                .offset(x: 4, y: size.height / 2 - 6)
+            Text("0")
+                .offset(x: 4, y: size.height - 14)
+        }
+        .font(.system(size: 9))
+        .foregroundColor(.secondary)
+    }
+
+    /// Середина шкалы — половина максимума.
+    static func half(_ peak: Double) -> String {
+        let value = peak / 2
+        if value >= 1024 * 1024 { return String(format: "%.1f МБ/с", value / 1024 / 1024) }
+        if value >= 1024 { return String(format: "%.0f КБ/с", value / 1024) }
+        return String(format: "%.0f Б/с", value)
+    }
+
+    /// Три горизонтальные линии — четверть, половина и три четверти.
     private func grid(size: CGSize) -> some View {
         Path { path in
             for step in 1...3 {
@@ -1039,7 +1049,7 @@ struct TrafficGraph: View {
         .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
     }
 
-    /// X считается по времени: иначе смена окна не видна — линии просто растягивались.
+    /// X считается по времени: смена окна видна, а не просто растягивает линию.
     private func line(incoming: Bool, peak: Double, size: CGSize, color: Color) -> some View {
         let span = max(end.timeIntervalSince(start), 1)
         return Path { path in
@@ -1059,7 +1069,7 @@ struct TrafficGraph: View {
         .stroke(color, style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
     }
 
-    /// Не абсолютное время, а «сколько назад»: −2 мин, −30 с, сейчас.
+    /// Не абсолютное время, а «сколько назад»: −2 мин, −30 с.
     private func agoLabel(_ date: Date) -> String {
         let seconds = Int(end.timeIntervalSince(date).rounded())
         if seconds <= 5 { return "сейчас" }
