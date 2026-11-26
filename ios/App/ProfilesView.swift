@@ -5,6 +5,7 @@ struct ProfilesView: View {
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var engine: DevEngine
     @EnvironmentObject private var prefs: Prefs
+    @EnvironmentObject private var rules: RuleStore
     @EnvironmentObject private var traffic: TrafficMonitor
 
     @State private var folderID: UUID? = nil
@@ -740,7 +741,7 @@ struct ProfilesView: View {
 
     private func connect(_ profile: Profile) async {
         store.select(profile.id)
-        engine.start(profile: profile, pool: store.profiles)
+        engine.start(profile: profile, pool: store.profiles, plan: rules.plan)
         if engine.running, !engine.transportOnly {
             traffic.start(profile: profile.name)
             probeLine = "определяю выход…"

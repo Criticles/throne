@@ -102,7 +102,7 @@ enum ConfigBuilder {
     /// Зачем: тогда пинг любого сервера не требует перезапуска ядра и не рвёт текущее
     /// соединение — Clash API спрашивает задержку у конкретного outbound, а трафик идёт
     /// через `final`.
-    static func buildLive(profiles: [Profile], selected: Profile?) throws -> (json: String, tags: [UUID: String], probePorts: [UUID: Int]) {
+    static func buildLive(profiles: [Profile], selected: Profile?, plan: RoutePlan? = nil) throws -> (json: String, tags: [UUID: String], probePorts: [UUID: Int]) {
         var outbounds: [[String: Any]] = []
         var endpoints: [[String: Any]] = []
         var tags: [UUID: String] = [:]
@@ -208,6 +208,23 @@ enum ConfigBuilder {
             "experimental": clashAPI(),
         ]
         if !endpoints.isEmpty { config["endpoints"] = endpoints }
+
+        // Маршрутизация профиля: папки становятся правилами. Служебные `probe-*` стоят
+        // ПЕРВЫМИ — иначе правило по домену перехватило бы пинг и сломало замеры.
+        if let plan {
+            var tagsByName: [String: String] = [:]
+            for profile in profiles {
+                if let tag = tags[profile.id] { tagsByName[profile.name] = tag }
+            }
+            let context = RouteCompiler.Context(tagsByName: tagsByName, selectedTag: selectedTag)
+            let planRules = RouteCompiler.rules(plan: plan, context: context)
+            var route = (config["route"] as? [String: Any]) ?? [:]
+            route["rules"] = rules + planRules
+            if let final = RouteCompiler.finalTag(plan: plan, context: context) {
+                route["final"] = final
+            }
+            config["route"] = route
+        }
 
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8)

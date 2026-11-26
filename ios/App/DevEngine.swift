@@ -23,6 +23,8 @@ final class DevEngine: ObservableObject {
     private var probePorts: [UUID: Int] = [:]
     /// Активный профиль: по нему восстанавливаем `final` после перезапуска конфига.
     private(set) var activeProfileID: UUID?
+    /// Профиль маршрутизации: его папки компилируются в правила при сборке живого конфига.
+    private var routePlan: RoutePlan?
     private lazy var turnable = TurnableEngine { [weak self] line in
         Task { @MainActor in self?.append(line) }
     }
@@ -170,8 +172,10 @@ final class DevEngine: ObservableObject {
     static let singboxKinds: Set<ProfileKind> = [.vless, .hysteria2, .mieru, .wireguard, .amneziawg, .custom]
 
     /// Запуск профиля. `pool` — остальные серверы: они добавляются в тот же конфиг,
-    /// чтобы пинги не требовали перезапуска ядра.
-    func start(profile: Profile, pool: [Profile] = []) {
+    /// чтобы пинги не требовали перезапуска ядра. `plan` — профиль маршрутизации: его папки
+    /// становятся правилами в том же конфиге.
+    func start(profile: Profile, pool: [Profile] = [], plan: RoutePlan? = nil) {
+        if let plan { routePlan = plan }
         stop()
         // Профиль VLESS + XHTTP: sing-box такой транспорт не умеет, поднимаем Xray.
         if profile.kind == .xray {
@@ -195,11 +199,12 @@ final class DevEngine: ObservableObject {
             let candidates = pool.filter { Self.singboxKinds.contains($0.kind) }
             let config: String
             if !Self.needsTransport(profile), candidates.count > 1,
-               let built = try? ConfigBuilder.buildLive(profiles: candidates, selected: profile) {
+               let built = try? ConfigBuilder.buildLive(profiles: candidates, selected: profile, plan: routePlan) {
                 config = built.json
                 liveTags = built.tags
                 probePorts = built.probePorts
                 append("ядро: \(candidates.count) серверов в одном конфиге, активен \(profile.name)")
+                append("маршрут: \(routePlan?.name ?? "—"), папок \(routePlan?.rules.count ?? 0)")
             } else {
                 if !Self.needsTransport(profile), candidates.count > 1 {
                     append("общий конфиг не собрался — поднимаю один сервер")

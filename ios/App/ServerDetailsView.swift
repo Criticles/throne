@@ -5,6 +5,7 @@ import SwiftUI
 struct ServerDetailsView: View {
     @EnvironmentObject private var engine: DevEngine
     @EnvironmentObject private var store: ProfileStore
+    @EnvironmentObject private var rules: RuleStore
     @Environment(\.presentationMode) private var presentation
 
     @StateObject private var stats = TrafficStatsStore.shared
@@ -124,7 +125,7 @@ struct ServerDetailsView: View {
                 Section {
                     Button {
                         store.select(profile.id)
-                        engine.start(profile: profile, pool: store.profiles)
+                        engine.start(profile: profile, pool: store.profiles, plan: rules.plan)
                         presentation.wrappedValue.dismiss()
                     } label: {
                         Label("Подключиться к этому серверу", systemImage: "power")
