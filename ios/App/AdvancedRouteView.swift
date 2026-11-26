@@ -100,6 +100,18 @@ struct AdvancedRouteView: View {
             }
         }
         .onAppear(perform: load)
+        // Пишем в хранилище сразу: «Куда добавить» и «Соединения» читают store,
+        // а не состояние этого экрана — иначе папки видны только здесь.
+        .onChange(of: folders) { _ in persist() }
+        .onChange(of: name) { _ in persist() }
+        .onChange(of: finalTarget) { _ in persist() }
+        .onDisappear { persist() }
+    }
+
+    /// Сохранение без выхода с экрана.
+    private func persist() {
+        guard loaded else { return }
+        rules.savePlan(plan)
     }
 
     // MARK: - Секции

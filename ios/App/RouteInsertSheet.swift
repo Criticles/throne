@@ -115,7 +115,7 @@ struct RouteInsertSheet: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("Куда добавить")
+            .navigationTitle("В правило")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
