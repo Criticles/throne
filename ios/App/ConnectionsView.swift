@@ -110,8 +110,8 @@ struct ConnectionsView: View {
                 case .detail(let item):
                     ConnectionDetailView(connection: item) { attr, value, title in
                         activeSheet = nil
-                        // Даём шторке закрыться, иначе переход не виден.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        // Даём шторке закрыться, иначе iOS 15 проглатывает следующий лист.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                             router.openRouting(with: RouteInsertPrefill(title: title, attr: attr, value: value))
                         }
                     }
@@ -252,10 +252,27 @@ struct ConnectionsView: View {
                     connectionRow(index: index + 1, item: item)
                 }
                 .buttonStyle(.plain)
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button {
+                        insertFromRow(item)
+                    } label: {
+                        Label("В правило", systemImage: "arrow.triangle.branch")
+                    }
+                    .tint(Theme.accent)
+                }
             }
         } header: {
             Text("Соединения")
         }
+    }
+
+    /// Свайп по строке: сразу в «добавить правило», без открытия подробностей.
+    private func insertFromRow(_ item: ClashApi.Connection) {
+        let host = item.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        router.openRouting(with: RouteInsertPrefill(
+            title: host.isEmpty ? "IP → правило" : "домен → правило",
+            attr: host.isEmpty ? "ip_cidr" : "domain",
+            value: host.isEmpty ? item.ip : host))
     }
 
     private func connectionRow(index: Int, item: ClashApi.Connection) -> some View {

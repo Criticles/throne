@@ -16,7 +16,8 @@ final class AppRouter: ObservableObject {
     @Published var insert: RouteInsertPrefill?
 
     func openRouting(with prefill: RouteInsertPrefill) {
-        tab = 1
+        // Вкладку не переключаем сразу: смена таба и лист в одном кадре на iOS 15
+        // проглатывают презентацию. На «Маршрут» уйдём после сохранения.
         insert = prefill
     }
 }
@@ -27,6 +28,7 @@ final class AppRouter: ObservableObject {
 /// Если папок в профиле ещё нет, её можно создать прямо здесь.
 struct RouteInsertView: View {
     @EnvironmentObject private var rules: RuleStore
+    @EnvironmentObject private var router: AppRouter
     @Environment(\.presentationMode) private var presentation
 
     let prefill: RouteInsertPrefill
@@ -174,6 +176,8 @@ struct RouteInsertView: View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let plan = planID, let folderID = ruleID ?? folders.first?.id else { return }
         guard rules.addValue(trimmed, attr: attr, to: plan, ruleID: folderID) else { return }
+        // Правило добавлено — теперь показываем вкладку «Маршрут», где его видно.
+        router.tab = 1
         presentation.wrappedValue.dismiss()
     }
 }
