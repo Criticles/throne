@@ -105,7 +105,6 @@ struct ConnectionsView: View {
             List {
                 if paused || !notice.isEmpty { statusSection }
                 trafficSection
-                sessionSection
                 if filterActive { activeFilterSection }
                 listSection
             }
@@ -242,17 +241,6 @@ struct ConnectionsView: View {
 
     /// Карточка как «Live graphs»: окно 1/2/5/10 минут, пауза справа от него,
     /// текущие скорости по выходам и график за выбранное окно.
-    /// Сколько прошло с запуска ядра — отдельной строкой между графиком и списком.
-    private var sessionSection: some View {
-        Section {
-            Text("С включения ядра: ↓ " + Self.size(sampler.sessionDown)
-                 + " · ↑ " + Self.size(sampler.sessionUp))
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .listRowBackground(Color.clear)
-        }
-    }
-
     private var trafficSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
@@ -297,6 +285,14 @@ struct ConnectionsView: View {
 
                 TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
                              start: windowStart, end: windowEnd)
+
+                // Итог с запуска ядра — сразу под графиком, без отдельной секции:
+                // раньше он висел между карточками и давал двойной отступ.
+                Text("С включения ядра: ↓ " + Self.size(sampler.sessionDown)
+                     + " · ↑ " + Self.size(sampler.sessionUp))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 2)
 
             }
             .padding(.vertical, 2)
@@ -976,12 +972,13 @@ struct TrafficGraph: View {
         }
     }
 
-    /// Точки для отрисовки: последний сэмпл дотягиваем до «сейчас» его же
-    /// значением — график всегда доходит до правого края и плавно уезжает влево.
+    /// Точки для отрисовки. Последнюю точку до «сейчас» не дотягиваем:
+    /// из-за этого на правом краю появлялась ровная «полка», а сглаживание
+    /// загибало кривую вверх — график и коверкался на конце.
+    /// Точки позже правой границы отбрасываем, иначе они схлопываются в один x.
     private var display: [(at: Date, down: Double, up: Double)] {
-        guard let last = points.last else { return points }
-        if last.at >= end.addingTimeInterval(-0.5) { return points }
-        return points + [(end, last.down, last.up)]
+        let limit = end.addingTimeInterval(0.5)
+        return points.filter { $0.at <= limit }
     }
 
     private var peak: Double {
@@ -1027,8 +1024,12 @@ struct TrafficGraph: View {
     /// через середины отрезков — так график не выглядит «пилой».
     private func line(incoming: Bool, peak: Double, size: CGSize, color: Color) -> some View {
         let span = max(end.timeIntervalSince(start), 1)
+        // Полотно чуть уже карточки: линии не упираются в скруглённую рамку.
+        let inset: CGFloat = 3
+        let width = max(size.width - inset * 2, 1)
         let points: [CGPoint] = display.map { point in
-            let x = CGFloat(max(min(point.at.timeIntervalSince(start) / span, 1), 0)) * size.width
+            let ratioX = point.at.timeIntervalSince(start) / span
+            let x = inset + CGFloat(max(min(ratioX, 1), 0)) * width
             let value = incoming ? point.down : point.up
             let ratio = CGFloat(max(min(value / peak, 1), 0))
             let y = size.height - ratio * (size.height - 8) - 4
