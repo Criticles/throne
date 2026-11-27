@@ -806,11 +806,19 @@ enum ConfigBuilder {
             var result: [String: Any] = [:]
             for (key, item) in dict {
                 if key == "amnezia_wg", let amnezia = item as? [String: Any] {
-                    // Ядро знает не все поля AWG 3.x: random_trailers и disable_cookies ему неизвестны,
-                    // а на неизвестном поле парсер отказывается читать весь конфиг.
+                    // Неизвестное поле ядро не примет и отвергнет конфиг целиком, поэтому
+                    // оставляем только известные. Флаги AWG 3.1 повторяют поведение Throne PC:
+                    // в конфиг попадает только включённый флаг, `false` не отправляем.
                     var filtered: [String: Any] = [:]
                     for (field, fieldValue) in amnezia
                     where WireGuardConfig.knownAmneziaFields.contains(field) {
+                        if field == "random_trailers" || field == "disable_cookies" {
+                            let on = (fieldValue as? Bool) == true
+                                || (fieldValue as? Int) == 1
+                                || (fieldValue as? String).map { WireGuardConfig.amneziaFlag($0) } == true
+                            if on { filtered[field] = true }
+                            continue
+                        }
                         filtered[field] = fieldValue
                     }
                     result[key] = filtered

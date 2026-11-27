@@ -33,6 +33,22 @@ struct WireGuardConfig {
         "random_trailers", "disable_cookies",
     ]
 
+    /// Как `ParseAmneziaBool` в Throne PC: «включено» — только true/1/on/yes,
+    /// всё остальное (в том числе «false» и «0») считается выключенным.
+    static func amneziaFlag(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespaces).lowercased()
+        return trimmed == "true" || trimmed == "1" || trimmed == "on" || trimmed == "yes"
+    }
+
+    /// Диапазонные поля AWG 3.x ядро принимает и строкой, и числом —
+    /// в PC это `AmneziaRangeFromJson`.
+    private static func amneziaRange(_ value: String) -> Any? {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return nil }
+        if let number = Int(trimmed) { return number }
+        return trimmed
+    }
+
     static func parse(_ raw: String) -> WireGuardConfig? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.lowercased().hasPrefix("amneziawg://") {
@@ -98,10 +114,24 @@ struct WireGuardConfig {
                 if let number = Int(value), number != 0 { amnezia[key] = number }
             case "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5":
                 if !value.isEmpty { amnezia[key] = value }
-            case "randomtrailers":
-                if value != "0" && !value.isEmpty { amnezia["random_trailers"] = true }
-            case "disablecookies":
-                if value != "0" && !value.isEmpty { amnezia["disable_cookies"] = true }
+            case "randomtrailers", "random_trailers":
+                if amneziaFlag(value) { amnezia["random_trailers"] = true }
+            case "disablecookies", "disable_cookies":
+                if amneziaFlag(value) { amnezia["disable_cookies"] = true }
+            case "headerprotectionkey", "header_protection_key":
+                if !value.isEmpty { amnezia["header_protection_key"] = value }
+            case "contentpaddingaddition", "content_padding_addition":
+                if let range = amneziaRange(value) { amnezia["content_padding_addition"] = range }
+            case "rekeyaftertime", "rekey_after_time":
+                if let range = amneziaRange(value) { amnezia["rekey_after_time"] = range }
+            case "rekeytimeout", "rekey_timeout":
+                if let range = amneziaRange(value) { amnezia["rekey_timeout"] = range }
+            case "rejectaftertime", "reject_after_time":
+                if let range = amneziaRange(value) { amnezia["reject_after_time"] = range }
+            case "keepalivetimeout", "keepalive_timeout":
+                if let range = amneziaRange(value) { amnezia["keepalive_timeout"] = range }
+            case "maxhandshakeattempts", "max_handshake_attempts":
+                if let range = amneziaRange(value) { amnezia["max_handshake_attempts"] = range }
             default:
                 break
             }
@@ -149,6 +179,15 @@ struct WireGuardConfig {
                 if let number = Int(value), number != 0 { amnezia[key] = number }
             case "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5":
                 if !value.isEmpty { amnezia[key] = value }
+            case "random_trailers":
+                if amneziaFlag(value) { amnezia["random_trailers"] = true }
+            case "disable_cookies":
+                if amneziaFlag(value) { amnezia["disable_cookies"] = true }
+            case "header_protection_key":
+                if !value.isEmpty { amnezia["header_protection_key"] = value }
+            case "content_padding_addition", "rekey_after_time", "rekey_timeout",
+                 "reject_after_time", "keepalive_timeout", "max_handshake_attempts":
+                if let range = amneziaRange(value) { amnezia[key] = range }
             default:
                 break
             }
