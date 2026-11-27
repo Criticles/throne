@@ -126,7 +126,7 @@ struct SettingsView: View {
                         ))
                     }
                 } footer: {
-                    Text("sing-box держит VLESS, Hysteria2, Mieru, WireGuard и AmneziaWG. Xray — VLESS + XHTTP. WireTurn — TURN/SRTP с ключами WireGuard.")
+                    Text("sing-box держит VLESS, VMess, Trojan, Shadowsocks, TUIC, Hysteria2, Mieru, MasterDNS, WireGuard, AmneziaWG и JSON-конфиг. Xray — VLESS + XHTTP. WireTurn/Turnable — TURN/SRTP с ключами WireGuard.")
                 }
             }
             .navigationTitle("Протоколы")
