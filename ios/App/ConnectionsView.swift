@@ -495,6 +495,113 @@ struct ConnectionsView: View {
             .sorted { $0.count > $1.count }
     }
 
+    private func startPolling() {
+        polling?.cancel()
+        polling = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if Task.isCancelled { return }
+                refresh()
+            }
+        }
+    }
+
+    private func refresh() {
+        // На паузе список не трогаем: он показывает соединения на момент нажатия.
+        guard !paused else { return }
+        Task {
+            // Ядро выключено — опроса нет, но сэмплы продолжаем писать: график
+            // должен идти по времени, а не замирать на последней точке.
+            let snapshot = engine.running
+                ? await ClashApi.snapshot()
+                : (list: [ClashApi.Connection](), totals: ClashApi.Totals())
+            let list = snapshot.list
+            await MainActor.run {
+                guard !paused else { return }
+                // Соединения, закрывшиеся с прошлого опроса, держим ещё пять секунд: на паузе
+                // видно и то, что только что оборвалось, — иначе строка исчезает до нажатия.
+                let now = Date()
+                let currentIDs = Set(list.map { $0.id })
+                // Соединение из списка закрытых снова в опросе — трафик возобновился.
+                recentlyClosed.removeAll { currentIDs.contains($0.id) }
+                for item in connections where !currentIDs.contains(item.id) {
+                    if !recentlyClosed.contains(where: { $0.id == item.id }) {
+                        recentlyClosed.append(item)
+                        closedAt[item.id] = now
+                    }
+                }
+                recentlyClosed.removeAll { item in
+                    guard let closed = closedAt[item.id] else { return true }
+                    return now.timeIntervalSince(closed) > 10
+                }
+                if recentlyClosed.count > 80 {
+                    recentlyClosed = Array(recentlyClosed.suffix(80))
+                }
+
+                connections = list.count > 400 ? Array(list.prefix(400)) : list
+                refreshed = Date()
+                if !ruleFilter.isEmpty, !list.contains(where: { $0.rule == ruleFilter }) {
+                    ruleFilter = ""
+                }
+                if !outboundFilter.isEmpty, !list.contains(where: { $0.outbound == outboundFilter }) {
+                    outboundFilter = ""
+                }
+            }
+        }
+    }
+
+    /// Таблица в текст: одна строка на соединение, читается и в чате, и в файле.
+    private func plainText(_ list: [ClashApi.Connection]) -> String {
+        var lines: [String] = []
+        lines.append("Соединения · \(Self.fileStamp.string(from: Date())) · окно \(window.rawValue) · всего \(list.count)")
+        let bytes = windowBytes
+        lines.append("Трафик за \(window.rawValue): ↓ \(Self.size(bytes.down)) ↑ \(Self.size(bytes.up))")
+        let rulesSummary = ruleTotals(list)
+        if !rulesSummary.isEmpty {
+            lines.append("Правила:")
+            for row in rulesSummary {
+                lines.append("  " + row.name + " → " + String(row.count) + " соединений, ↓ "
+                             + Self.size(row.down) + " ↑ " + Self.size(row.up))
+            }
+        }
+        lines.append("Соединения:")
+        for (index, item) in list.enumerated() {
+            var parts: [String] = []
+            parts.append(item.destination)
+            if !item.source.isEmpty { parts.append("из " + item.source) }
+            if !item.proto.isEmpty { parts.append(item.proto) }
+            parts.append(networkText(item))
+            parts.append("↑ " + Self.size(Int64(item.upload)) + " ↓ " + Self.size(Int64(item.download)))
+            parts.append(folderName(item))
+            parts.append(exitName(item))
+            lines.append(String(index + 1) + ". " + parts.joined(separator: " · "))
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Сводка в буфер: трафик за окно, выходы, правила и все соединения.
+    private func copySummary() {
+        UIPasteboard.general.string = plainText(visible)
+        notice = "скопировано: " + String(visible.count) + " соединений"
+    }
+
+    private func export() {
+        let text = plainText(visible)
+        let name = "throne-connections-" + Self.fileStamp.string(from: Date()) + ".txt"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            activeSheet = .export(url)
+        } catch {
+            notice = "экспорт не удался: " + error.localizedDescription
+        }
+    }
+
+    /// Размер строкой: единицу подбирает общий формат приложения.
+    static func size(_ bytes: Int64) -> String {
+        Format.size(bytes)
+    }
+
     static func rate(_ value: Double) -> String {
         Format.rate(value)
     }
