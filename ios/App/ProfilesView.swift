@@ -130,9 +130,16 @@ struct ProfilesView: View {
         return rowsByID[id]
     }
 
-    private var selectedTraffic: (up: Int64, down: Int64) {
-        guard let selected = store.selected else { return (0, 0) }
-        return stats.total(profile: selected.name)
+    /// Трафик выбранной папки: сумма по всем её серверам («Все» — по всем серверам).
+    private var folderTraffic: (up: Int64, down: Int64) {
+        var up: Int64 = 0
+        var down: Int64 = 0
+        for profile in store.profiles where folderID == nil || profile.folderID == folderID {
+            let total = stats.total(profile: profile.name)
+            up += total.up
+            down += total.down
+        }
+        return (up, down)
     }
 
     var body: some View {
@@ -187,7 +194,8 @@ struct ProfilesView: View {
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
-                    Text("↑ " + Self.size(selectedTraffic.up) + " · ↓ " + Self.size(selectedTraffic.down)
+                    // Здесь — что происходит сейчас, а не накопленное: рядом кнопка питания.
+                    Text("↓ " + Format.rate(traffic.speedDown) + " · ↑ " + Format.rate(traffic.speedUp)
                          + (engine.running ? " · " + Self.duration(engine.uptime) : ""))
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -387,7 +395,8 @@ struct ProfilesView: View {
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
-                Text("Трафик за всё время: ↑ " + Self.size(selectedTraffic.up) + " · ↓ " + Self.size(selectedTraffic.down))
+                Text("Трафик за всё время: ↑ " + Self.size(folderTraffic.up)
+                     + " · ↓ " + Self.size(folderTraffic.down))
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }

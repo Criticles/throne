@@ -26,9 +26,15 @@ struct ConnectionsView: View {
     /// Счётчики соединений с прошлого опроса — по ним считаются скорости.
     @State private var counters: [String: TrafficCounters] = [:]
     @State private var lastSampleAt: Date?
-    /// Трафик с момента включения ядра — как его считает сам sing-box.
+    /// Трафик с момента включения ядра. Итоги ядра при перезапуске (замеры пинга
+    /// пересобирают конфиг) начинаются с нуля — прежний расход копим в базе,
+    /// иначе «сессия» выглядела обнулившейся.
     @State private var sessionDown: Int64 = 0
     @State private var sessionUp: Int64 = 0
+    @State private var baseDown: Int64 = 0
+    @State private var baseUp: Int64 = 0
+    @State private var coreDown: Int64 = 0
+    @State private var coreUp: Int64 = 0
     @State private var paused = false
     @State private var recentlyClosed: [ClashApi.Connection] = []
     @State private var closedAt: [String: Date] = [:]
@@ -395,10 +401,19 @@ struct ConnectionsView: View {
     /// в конфиг ядра имя папки не попадает, ищем по значению правила.
     private func folderName(_ item: ClashApi.Connection) -> String {
         if item.isService { return "Служебное подключение" }
-        let payload = item.rulePayload
-        if !payload.isEmpty {
+        // Ядро отдаёт правило строкой вида «domain_suffix=cloudflare.com => route(s0)»,
+        // а rulePayload всегда пустой — поэтому папку ищем по разобранному правилу.
+        if let parsed = parsedRule(item) {
             for folder in rules.plan.rules {
-                for attribute in folder.attrs where attribute.values.contains(payload) {
+                for attribute in folder.attrs
+                where attribute.attr == parsed.attr && attribute.values.contains(parsed.value) {
+                    return folder.name
+                }
+            }
+        }
+        if !item.rulePayload.isEmpty {
+            for folder in rules.plan.rules {
+                for attribute in folder.attrs where attribute.values.contains(item.rulePayload) {
                     return folder.name
                 }
             }
@@ -408,7 +423,22 @@ struct ConnectionsView: View {
             || item.rule.lowercased() == "match" {
             return "по умолчанию"
         }
+        if let parsed = parsedRule(item) {
+            return parsed.attr + " " + parsed.value
+        }
         return item.rule
+    }
+
+    /// Разбор правила ядра: «domain_suffix=cloudflare.com => route(s0)» → («domain_suffix», «cloudflare.com»).
+    private func parsedRule(_ item: ClashApi.Connection) -> (attr: String, value: String)? {
+        let text = item.rule
+        guard let arrow = text.range(of: " => ") else { return nil }
+        let condition = String(text[text.startIndex..<arrow.lowerBound])
+        guard let equals = condition.firstIndex(of: "=") else { return nil }
+        let attr = String(condition[condition.startIndex..<equals]).trimmingCharacters(in: .whitespaces)
+        let value = String(condition[condition.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
+        guard !attr.isEmpty, !value.isEmpty else { return nil }
+        return (attr, value)
     }
 
     /// Выход: активный сервер — proxy, напрямую — direct, конкретный сервер — его имя.
@@ -441,8 +471,18 @@ struct ConnectionsView: View {
     private var lastDown: Double { samples.last?.down ?? 0 }
     private var lastUp: Double { samples.last?.up ?? 0 }
 
+    /// Трафик за окно — разница итогов ядра между границами окна.
+    /// Раньше суммировались дельты по соединениям, но короткие соединения (в том числе
+    /// служебные пробы) успевают закрыться между опросами, и окно показывало нули.
     private var windowBytes: (down: Int64, up: Int64) {
-        windowSamples.reduce((0, 0)) { ($0.0 + $1.bytesDown, $0.1 + $1.bytesUp) }
+        guard let last = samples.last else { return (0, 0) }
+        guard let firstIndex = samples.firstIndex(where: { $0.at >= windowStart }) else {
+            return (0, 0)
+        }
+        // База — сэмпл до окна: иначе теряется первый интервал.
+        let base = firstIndex > 0 ? samples[firstIndex - 1] : samples[firstIndex]
+        return (max(last.totalDown - base.totalDown, 0),
+                max(last.totalUp - base.totalUp, 0))
     }
 
     private var windowBytesByOutbound: [(name: String, down: Int64, up: Int64)] {
@@ -477,7 +517,8 @@ struct ConnectionsView: View {
     }
 
     /// Один сэмпл на опрос: дельты счётчиков делим на прошедшее время.
-    private func recordSample(_ list: [ClashApi.Connection], at now: Date) {
+    private func recordSample(_ list: [ClashApi.Connection], at now: Date,
+                             totalDown: Int64, totalUp: Int64) {
         var next: [String: TrafficCounters] = [:]
         var byOutbound: [String: TrafficCounters] = [:]
         var bytesDown: Int64 = 0
@@ -510,6 +551,8 @@ struct ConnectionsView: View {
             up: Double(bytesUp) / elapsed,
             bytesDown: bytesDown,
             bytesUp: bytesUp,
+            totalDown: totalDown,
+            totalUp: totalUp,
             byOutbound: byOutbound.mapValues {
                 TrafficRates(down: Double($0.down) / elapsed, up: Double($0.up) / elapsed)
             },
@@ -564,9 +607,18 @@ struct ConnectionsView: View {
                 }
 
                 connections = list.count > 400 ? Array(list.prefix(400)) : list
-                sessionDown = snapshot.totals.download
-                sessionUp = snapshot.totals.upload
-                recordSample(list, at: now)
+                let totals = snapshot.totals
+                if totals.download < coreDown || totals.upload < coreUp {
+                    // Ядро перезапустилось: старое накопленное не теряем.
+                    baseDown += coreDown
+                    baseUp += coreUp
+                }
+                coreDown = totals.download
+                coreUp = totals.upload
+                sessionDown = baseDown + coreDown
+                sessionUp = baseUp + coreUp
+                recordSample(list, at: now,
+                             totalDown: sessionDown, totalUp: sessionUp)
                 refreshed = Date()
                 if !ruleFilter.isEmpty, !list.contains(where: { $0.rule == ruleFilter }) {
                     ruleFilter = ""
@@ -953,6 +1005,9 @@ struct TrafficSample: Identifiable {
     let up: Double
     let bytesDown: Int64
     let bytesUp: Int64
+    /// Накопленный итог ядра на момент сэмпла — по нему считается окно.
+    let totalDown: Int64
+    let totalUp: Int64
     let byOutbound: [String: TrafficRates]
     let bytesByOutbound: [String: TrafficCounters]
 }

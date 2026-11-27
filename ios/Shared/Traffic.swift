@@ -103,13 +103,19 @@ final class TrafficMonitor: ObservableObject {
     private var session: URLSession?
     private var lastUpTotal: Int64 = 0
     private var lastDownTotal: Int64 = 0
+    private static let lastUpKey = "traffic.lastUpTotal"
+    private static let lastDownKey = "traffic.lastDownTotal"
+
     private var profile = ""
 
     func start(profile: String) {
         stop()
         self.profile = profile
-        self.lastUpTotal = 0
-        self.lastDownTotal = 0
+        // Базу берём из прошлого запуска: иначе при перезапуске монитора первый же
+        // срез записывал весь объём сессии заново (двойной учёт).
+        let saved = UserDefaults.standard
+        self.lastUpTotal = Int64(saved.double(forKey: Self.lastUpKey))
+        self.lastDownTotal = Int64(saved.double(forKey: Self.lastDownKey))
         guard let url = URL(string: "ws://127.0.0.1:\(ClashApi.port)/traffic") else { return }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.connectionProxyDictionary = [:]
@@ -169,10 +175,19 @@ final class TrafficMonitor: ObservableObject {
            let totalDown = object["downTotal"] as? Double {
             let upInt = Int64(totalUp)
             let downInt = Int64(totalDown)
-            let deltaUp = max(0, upInt - lastUpTotal)
-            let deltaDown = max(0, downInt - lastDownTotal)
+            // Ядро начали заново — счётчики начинаются с нуля: берём их за базу,
+            // а не считаем отрицательным приростом.
+            if upInt < lastUpTotal || downInt < lastDownTotal {
+                lastUpTotal = upInt
+                lastDownTotal = downInt
+                return
+            }
+            let deltaUp = upInt - lastUpTotal
+            let deltaDown = downInt - lastDownTotal
             lastUpTotal = upInt
             lastDownTotal = downInt
+            UserDefaults.standard.set(Double(upInt), forKey: Self.lastUpKey)
+            UserDefaults.standard.set(Double(downInt), forKey: Self.lastDownKey)
             TrafficStatsStore.shared.record(profile: profile, up: deltaUp, down: deltaDown)
         }
     }
