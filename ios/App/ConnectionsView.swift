@@ -105,6 +105,7 @@ struct ConnectionsView: View {
             List {
                 if paused || !notice.isEmpty { statusSection }
                 trafficSection
+                sessionSection
                 if filterActive { activeFilterSection }
                 listSection
             }
@@ -241,6 +242,17 @@ struct ConnectionsView: View {
 
     /// Карточка как «Live graphs»: окно 1/2/5/10 минут, пауза справа от него,
     /// текущие скорости по выходам и график за выбранное окно.
+    /// Сколько прошло с запуска ядра — отдельной строкой между графиком и списком.
+    private var sessionSection: some View {
+        Section {
+            Text("С включения ядра: ↓ " + Self.size(sampler.sessionDown)
+                 + " · ↑ " + Self.size(sampler.sessionUp))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .listRowBackground(Color.clear)
+        }
+    }
+
     private var trafficSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
@@ -285,11 +297,6 @@ struct ConnectionsView: View {
 
                 TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
                              start: windowStart, end: windowEnd)
-
-                Text("С включения ядра: ↓ " + Self.size(sampler.sessionDown)
-                     + " · ↑ " + Self.size(sampler.sessionUp))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
 
             }
             .padding(.vertical, 2)
