@@ -304,3 +304,144 @@ struct TUICLink {
         )
     }
 }
+
+// MARK: - MasterDNS
+
+/// DNS-туннель MasterDNS. В Throne PC он принимает четыре формата; здесь — два,
+/// которые встречаются в подписках: `masterdns://v1?…` (query) и
+/// `masterdns://<base64 JSON>` (schema `masterdns.profile` / `whitedns.profile`).
+struct MasterDNSLink {
+    let name: String
+    let domains: [String]
+    let encryptionKey: String
+    let encryptionMethod: String
+    let mode: String
+    let resolvers: [String]
+    let balancing: String?
+    let duplication: Int?
+
+    /// Индексы совпадают с `masterDnsEncryptionMethods` в форке.
+    static let methods = ["none", "xor", "chacha20", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"]
+    /// `balancing_strategy`: ноль означает «как в ядре по умолчанию».
+    static let balancingNames = ["round_robin", "random", "round_robin", "least_loss",
+                                 "lowest_latency", "hybrid", "loss_then_latency",
+                                 "least_loss_top_random", "least_loss_top_round_robin"]
+
+    static func parse(_ raw: String) -> MasterDNSLink? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("masterdns://") else { return nil }
+        var body = String(trimmed.dropFirst("masterdns://".count))
+
+        var name = ""
+        if let hash = body.firstIndex(of: "#") {
+            name = String(body[body.index(after: hash)...]).removingPercentEncoding ?? ""
+            body = String(body[..<hash])
+        }
+
+        // `v1?…` — формат yptun: домены, ключ, метод шифрования, резолверы в query.
+        if body.lowercased().hasPrefix("v1") {
+            var query = body
+            if query.lowercased().hasPrefix("v1") {
+                query = String(query.dropFirst(2))
+            }
+            if query.hasPrefix("?") { query.removeFirst() }
+            var values: [String: String] = [:]
+            for pair in query.split(separator: "&") {
+                let item = pair.split(separator: "=", maxSplits: 1)
+                let key = String(item[0]).removingPercentEncoding?.lowercased()
+                    ?? String(item[0]).lowercased()
+                guard !key.isEmpty, values[key] == nil else { continue }
+                let value = item.count == 2
+                    ? (String(item[1]).removingPercentEncoding ?? String(item[1]))
+                    : ""
+                values[key] = value
+            }
+            let domains = splitList(values["domains"] ?? "")
+            guard !domains.isEmpty else { return nil }
+            return MasterDNSLink(
+                name: name.isEmpty ? domains[0] : name,
+                domains: domains,
+                encryptionKey: values["key"] ?? "",
+                encryptionMethod: method(from: values["enc"]),
+                mode: "socks5",
+                resolvers: splitList(values["resolvers"] ?? ""),
+                balancing: balancing(from: values["bal"]),
+                duplication: count(from: values["dup"])
+            )
+        }
+
+        // `v1/<base64 TOML>` — клиентский конфиг в TOML; его разбор оставлен PC-версии.
+        if body.lowercased().hasPrefix("v1/") { return nil }
+
+        // Иначе — base64 от JSON-профиля.
+        guard let decoded = LinkBase64.decode(body),
+              let data = decoded.data(using: .utf8),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+
+        let schema = (root["schema"] as? String ?? "").lowercased()
+        let known = ["whitedns.profile", "masterdns.profile", "stormdns.profile"]
+        guard known.contains(schema) else { return nil }
+        guard (root["version"].map { String(describing: $0) } ?? "") == "1" else { return nil }
+
+        let profile = root["profile"] as? [String: Any] ?? [:]
+        let server = profile["server"] as? [String: Any] ?? [:]
+        func pick(_ snake: String, _ camel: String) -> Any? {
+            server[snake] ?? server[camel]
+        }
+
+        var domains: [String] = []
+        if let domain = server["domain"] as? String, !domain.isEmpty { domains.append(domain) }
+        domains += splitList(((server["domains"] as? [String]) ?? []).joined(separator: ","))
+        guard !domains.isEmpty else { return nil }
+
+        let methodValue = pick("encryption_method", "encryptionMethod")
+        let methodText: String
+        if let number = methodValue as? Int {
+            methodText = String(number)
+        } else if let number = methodValue as? Double {
+            methodText = String(Int(number))
+        } else {
+            methodText = methodValue as? String ?? ""
+        }
+
+        return MasterDNSLink(
+            name: (profile["name"] as? String) ?? (name.isEmpty ? domains[0] : name),
+            domains: domains,
+            encryptionKey: (pick("encryption_key", "encryptionKey") as? String) ?? "",
+            encryptionMethod: method(from: methodText),
+            mode: "socks5",
+            resolvers: [],
+            balancing: nil,
+            duplication: nil
+        )
+    }
+
+    /// Списки в ссылке разделяются запятой, точкой с запятой или пробелом.
+    private static func splitList(_ raw: String) -> [String] {
+        raw.split(whereSeparator: { $0 == "," || $0 == ";" || $0 == " " })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func method(from text: String) -> String {
+        let value = text.trimmingCharacters(in: .whitespaces)
+        if value.isEmpty { return "xor" }
+        if let index = Int(value), index >= 0, index < methods.count { return methods[index] }
+        return methods.contains(value) ? value : "xor"
+    }
+
+    private static func balancing(from text: String?) -> String? {
+        guard let value = text?.trimmingCharacters(in: .whitespaces), !value.isEmpty,
+              let index = Int(value), index >= 0, index < balancingNames.count, index != 0
+        else { return nil }
+        return balancingNames[index]
+    }
+
+    private static func count(from text: String?) -> Int? {
+        guard let value = text?.trimmingCharacters(in: .whitespaces),
+              let number = Int(value), number > 0
+        else { return nil }
+        return number
+    }
+}

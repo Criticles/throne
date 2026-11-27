@@ -100,6 +100,10 @@ enum ProfileParser {
             guard let parsed = ShadowsocksLink.parse(link) else { return nil }
             return Profile(name: parsed.name, kind: .shadowsocks, payload: link, note: nil)
         }
+        if lower.hasPrefix("masterdns://") {
+            guard let parsed = MasterDNSLink.parse(link) else { return nil }
+            return Profile(name: parsed.name, kind: .masterdns, payload: link, note: nil)
+        }
         if lower.hasPrefix("tuic://") {
             guard let parsed = TUICLink.parse(link) else { return nil }
             return Profile(name: parsed.name, kind: .tuic, payload: link, note: nil)

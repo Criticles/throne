@@ -23,6 +23,7 @@ enum ServerInfo {
         case "trojan": return trojanRows(trimmed)
         case "ss": return shadowsocksRows(trimmed)
         case "tuic": return tuicRows(trimmed)
+        case "masterdns": return masterdnsRows(trimmed)
         case "hysteria2", "hy2": return hysteriaRows(trimmed)
         case "mieru", "mierus": return mieruRows(trimmed)
         case "amneziawg", "wg": return wireguardRows(trimmed)
@@ -133,6 +134,29 @@ enum ServerInfo {
         if let sni = parsed.serverName, !sni.isEmpty { rows.append(("SNI", sni)) }
         rows.append(("ALPN", parsed.alpn.joined(separator: ", ")))
         rows.append(("Проверка сертификата", parsed.insecure ? "отключена" : "включена"))
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
+
+    private static func masterdnsRows(_ link: String) -> [(String, String)] {
+        guard let parsed = MasterDNSLink.parse(link) else {
+            return genericRows(link, scheme: "masterdns")
+        }
+        var rows: [(String, String)] = []
+        rows.append(("Протокол", "MasterDNS"))
+        rows.append(("Домены", parsed.domains.joined(separator: ", ")))
+        rows.append(("Шифрование", parsed.encryptionMethod))
+        if !parsed.encryptionKey.isEmpty {
+            rows.append(("Ключ", mask(parsed.encryptionKey)))
+        }
+        rows.append(("Режим", parsed.mode))
+        if !parsed.resolvers.isEmpty {
+            rows.append(("Резолверы", parsed.resolvers.joined(separator: ", ")))
+        }
+        if let balancing = parsed.balancing { rows.append(("Балансировка", balancing)) }
+        if let duplication = parsed.duplication {
+            rows.append(("Дублирование пакетов", String(duplication)))
+        }
         rows.append(("Имя в ссылке", parsed.name))
         return rows
     }

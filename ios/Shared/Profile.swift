@@ -6,6 +6,7 @@ enum ProfileKind: String, Codable, CaseIterable {
     case trojan
     case shadowsocks
     case tuic
+    case masterdns
     case xray
     case hysteria2
     case mieru
@@ -29,6 +30,7 @@ enum ProfileKind: String, Codable, CaseIterable {
         case .trojan: return "Trojan"
         case .shadowsocks: return "Shadowsocks"
         case .tuic: return "TUIC"
+        case .masterdns: return "MasterDNS"
         case .custom: return "JSON подписки"
         }
     }

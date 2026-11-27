@@ -39,7 +39,7 @@ final class ProfileStore: ObservableObject {
         // новые протоколы (VMess/Trojan/SS/TUIC) у них молча не импортировались бы.
         allowedKinds = kinds.isEmpty
             ? Set(ProfileKind.allCases)
-            : Set(kinds).union([.vmess, .trojan, .shadowsocks, .tuic])
+            : Set(kinds).union([.vmess, .trojan, .shadowsocks, .tuic, .masterdns])
         load()
     }
 

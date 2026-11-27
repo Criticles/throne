@@ -179,7 +179,8 @@ final class DevEngine: ObservableObject {
 
     /// Профили, которые sing-box умеет держать в одном конфиге.
     static let singboxKinds: Set<ProfileKind> = [.vless, .vmess, .trojan, .shadowsocks, .tuic,
-                                                 .hysteria2, .mieru, .wireguard, .amneziawg, .custom]
+                                                 .hysteria2, .mieru, .masterdns,
+                                                 .wireguard, .amneziawg, .custom]
 
     /// Запуск профиля. `pool` — остальные серверы: они добавляются в тот же конфиг,
     /// чтобы пинги не требовали перезапуска ядра. `plan` — профиль маршрутизации: его папки

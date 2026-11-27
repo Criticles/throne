@@ -60,6 +60,11 @@ enum ConfigBuilder {
                 throw BuildError.badPayload("tuic://")
             }
             config = try directConfig(outbound: tuicOutbound(link))
+        case .masterdns:
+            guard let link = MasterDNSLink.parse(profile.payload) else {
+                throw BuildError.badPayload("masterdns://")
+            }
+            config = try directConfig(outbound: masterdnsOutbound(link))
         case .hysteria2:
             guard let link = Hysteria2Link.parse(profile.payload) else {
                 throw BuildError.badPayload("hysteria2://")
@@ -196,6 +201,12 @@ enum ConfigBuilder {
             case .tuic:
                 guard let link = TUICLink.parse(profile.payload) else { continue }
                 var outbound = tuicOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                probeable.append((profile.id, tag))
+            case .masterdns:
+                guard let link = MasterDNSLink.parse(profile.payload) else { continue }
+                var outbound = masterdnsOutbound(link)
                 outbound["tag"] = tag
                 outbounds.append(outbound)
                 probeable.append((profile.id, tag))
@@ -365,6 +376,12 @@ enum ConfigBuilder {
             case .tuic:
                 guard let link = TUICLink.parse(profile.payload) else { continue }
                 var outbound = tuicOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                tags[profile.id] = tag
+            case .masterdns:
+                guard let link = MasterDNSLink.parse(profile.payload) else { continue }
+                var outbound = masterdnsOutbound(link)
                 outbound["tag"] = tag
                 outbounds.append(outbound)
                 tags[profile.id] = tag
@@ -629,6 +646,22 @@ enum ConfigBuilder {
             "tls": LinkTransport.tls(serverName: link.serverName, alpn: link.alpn,
                                      insecure: link.insecure, fingerprint: nil),
         ]
+    }
+
+    /// DNS-туннель: у выхода нет `server`/`server_port`, он ходит по резолверам.
+    private static func masterdnsOutbound(_ link: MasterDNSLink) -> [String: Any] {
+        var outbound: [String: Any] = [
+            "type": "masterdns",
+            "tag": "proxy",
+            "domain": link.domains,
+            "mode": link.mode,
+            "encryption_method": link.encryptionMethod,
+        ]
+        if !link.encryptionKey.isEmpty { outbound["encryption_key"] = link.encryptionKey }
+        if !link.resolvers.isEmpty { outbound["resolvers"] = link.resolvers }
+        if let balancing = link.balancing { outbound["balancing_strategy"] = balancing }
+        if let duplication = link.duplication { outbound["packet_duplication"] = duplication }
+        return outbound
     }
 
     private static func hysteria2Outbound(_ link: Hysteria2Link) -> [String: Any] {
