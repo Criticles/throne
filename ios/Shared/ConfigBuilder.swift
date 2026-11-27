@@ -33,6 +33,7 @@ enum ConfigBuilder {
     static var wireturnMTU: Int?
 
     static func build(profile: Profile, plan: RoutePlan? = nil,
+                      quickPlan: RoutePlan? = nil,
                       ruleSetPaths: [String: String] = [:]) throws -> String {
         var config: [String: Any]
         switch profile.kind {
@@ -105,12 +106,14 @@ enum ConfigBuilder {
             let context = RouteCompiler.Context(tagsByName: [profile.name: tag],
                                                 selectedTag: tag,
                                                 ruleSetPaths: ruleSetPaths)
+            let quickRules = quickPlan.map { RouteCompiler.rules(plan: $0, context: context) } ?? []
             let planRules = RouteCompiler.rules(plan: plan, context: context)
-            if !planRules.isEmpty { route["rules"] = planRules }
+            let allRules = quickRules + planRules
+            if !allRules.isEmpty { route["rules"] = allRules }
             if let final = RouteCompiler.finalTag(plan: plan, context: context) {
                 route["final"] = final
             }
-            let used = RouteCompiler.usedRuleSets(in: planRules)
+            let used = RouteCompiler.usedRuleSets(in: quickRules + planRules)
             if !used.isEmpty {
                 let defs = RouteCompiler.ruleSetDefinitions(used, context: context)
                 if !defs.isEmpty { route["rule_set"] = defs }
@@ -130,6 +133,7 @@ enum ConfigBuilder {
     /// соединение — Clash API спрашивает задержку у конкретного outbound, а трафик идёт
     /// через `final`.
     static func buildLive(profiles: [Profile], selected: Profile?, plan: RoutePlan? = nil,
+                          quickPlan: RoutePlan? = nil,
                           ruleSetPaths: [String: String] = [:]) throws -> (json: String, tags: [UUID: String], probePorts: [UUID: Int]) {
         var outbounds: [[String: Any]] = []
         var endpoints: [[String: Any]] = []
@@ -250,15 +254,18 @@ enum ConfigBuilder {
             }
             let context = RouteCompiler.Context(tagsByName: tagsByName, selectedTag: selectedTag,
                                                 ruleSetPaths: ruleSetPaths)
+            // Служебные папки «Быстрых правил» идут ПЕРВЫМИ: они приоритетнее
+            // выбранного профиля, но своего final не задают.
+            let quickRules = quickPlan.map { RouteCompiler.rules(plan: $0, context: context) } ?? []
             let planRules = RouteCompiler.rules(plan: plan, context: context)
             var route = (config["route"] as? [String: Any]) ?? [:]
-            route["rules"] = rules + planRules
+            route["rules"] = rules + quickRules + planRules
             if let final = RouteCompiler.finalTag(plan: plan, context: context) {
                 route["final"] = final
             }
             // Наборы правил объявляем только для тех тегов, на которые сослались правила,
             // и только если файл уже скачан.
-            let used = RouteCompiler.usedRuleSets(in: planRules)
+            let used = RouteCompiler.usedRuleSets(in: quickRules + planRules)
             if !used.isEmpty {
                 let defs = RouteCompiler.ruleSetDefinitions(used, context: context)
                 if !defs.isEmpty { route["rule_set"] = defs }

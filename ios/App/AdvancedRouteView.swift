@@ -174,7 +174,9 @@ struct AdvancedRouteView: View {
                 folders.move(fromOffsets: source, toOffset: destination)
             }
             .onDelete { offsets in
-                folders.remove(atOffsets: offsets)
+                // Служебные папки «Быстрых правил» не удаляются.
+                let removable = offsets.filter { !folders[$0].locked }
+                folders.remove(atOffsets: IndexSet(removable))
             }
 
             Button {

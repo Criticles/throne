@@ -52,7 +52,7 @@ struct RouteProfilesView: View {
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
-                            rules.deletePlan(plan.id)
+                            if !plan.isSystem { rules.deletePlan(plan.id) }
                         } label: {
                             Label("Удалить", systemImage: "trash")
                         }
@@ -81,7 +81,7 @@ struct RouteProfilesView: View {
                         }
                         Divider()
                         Button(role: .destructive) {
-                            rules.deletePlan(plan.id)
+                            if !plan.isSystem { rules.deletePlan(plan.id) }
                         } label: {
                             Label("Удалить", systemImage: "trash")
                         }

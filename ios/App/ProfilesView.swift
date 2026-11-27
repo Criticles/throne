@@ -752,6 +752,7 @@ struct ProfilesView: View {
     private func connect(_ profile: Profile) async {
         store.select(profile.id)
         engine.start(profile: profile, pool: store.profiles, plan: rules.plan,
+                     quickPlan: rules.quickPlan,
                      ruleSetPaths: rules.ruleSetPaths())
         if engine.running, !engine.transportOnly {
             probeLine = "определяю выход…"

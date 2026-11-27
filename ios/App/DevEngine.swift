@@ -29,6 +29,8 @@ final class DevEngine: ObservableObject {
     private(set) var activeProfileID: UUID?
     /// Профиль маршрутизации: его папки компилируются в правила при сборке живого конфига.
     private var routePlan: RoutePlan?
+    /// Служебные папки «Быстрых правил»: вклеиваются выше выбранного профиля.
+    private var routeQuickPlan: RoutePlan?
     /// Скачанные наборы правил (имя → путь): на них ссылаются папки с атрибутом `rule_set`.
     private var routeRuleSetPaths: [String: String] = [:]
     private lazy var turnable = TurnableEngine { [weak self] line in
@@ -198,8 +200,10 @@ final class DevEngine: ObservableObject {
     }
 
     func start(profile: Profile, pool: [Profile] = [], plan: RoutePlan? = nil,
+               quickPlan: RoutePlan? = nil,
                ruleSetPaths: [String: String] = [:]) {
         if let plan { routePlan = plan }
+        routeQuickPlan = quickPlan
         if !ruleSetPaths.isEmpty { routeRuleSetPaths = ruleSetPaths }
         stop()
         // Профиль VLESS + XHTTP: sing-box такой транспорт не умеет, поднимаем Xray.
@@ -225,7 +229,8 @@ final class DevEngine: ObservableObject {
             let config: String
             if !Self.needsTransport(profile), candidates.count > 1,
                let built = try? ConfigBuilder.buildLive(profiles: candidates, selected: profile,
-                                                        plan: routePlan, ruleSetPaths: routeRuleSetPaths) {
+                                                        plan: routePlan, quickPlan: routeQuickPlan,
+                                                        ruleSetPaths: routeRuleSetPaths) {
                 config = built.json
                 liveTags = built.tags
                 selectedTag = built.tags[profile.id]
@@ -238,6 +243,7 @@ final class DevEngine: ObservableObject {
                     append("общий конфиг не собрался — поднимаю один сервер")
                 }
                 config = try ConfigBuilder.build(profile: profile, plan: routePlan,
+                                                 quickPlan: routeQuickPlan,
                                                  ruleSetPaths: routeRuleSetPaths)
                 liveTags = [:]
                 // Тег выхода в одиночном конфиге — из route.final: для WireGuard это

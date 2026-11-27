@@ -140,13 +140,16 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
     /// Куда пускать: proxy / direct / reject / имя сервера.
     var outbound: String = "proxy"
     var attrs: [RoutePlanAttr] = []
+    /// Служебная папка «Быстрых правил»: удалить нельзя, выход фиксирован.
+    var locked = false
 
     init(id: UUID = UUID(), name: String = "Правило", action: String = "route",
-         outbound: String = "proxy", attrs: [RoutePlanAttr] = []) {
+         outbound: String = "proxy", attrs: [RoutePlanAttr] = [], locked: Bool = false) {
         self.id = id
         self.name = name
         self.action = action
         self.outbound = outbound
+        self.locked = locked
         // `outbound` — такой же атрибут папки, как остальные: держим его в списке сразу,
         // иначе новая папка показывала «0 атрибутов», хотя выход у неё уже задан.
         var list = attrs
@@ -389,6 +392,9 @@ enum RouteAttribute {
                               at: 0)
         }
         let conditions = rule.attrs.filter { $0.attr != "outbound" }
+        // Служебные папки «Быстрых правил» живут всегда: пустые они просто
+        // не попадают в конфиг (ядро не получает правило без условий).
+        if rule.locked { return rule }
         return conditions.isEmpty ? nil : rule
     }
 
@@ -498,6 +504,9 @@ enum RouteAttribute {
 struct RoutePlan: Codable, Identifiable {
     var id = UUID()
     var name = "Маршрут"
+    /// Служебный профиль «Быстрые правила»: всегда активен, удалить нельзя,
+    /// своего final не имеет — непойманное уходит в выбранный профиль.
+    var isSystem = false
     var finalTarget = "proxy"
     /// Папки с атрибутами. Порядок = порядок применения, первая сверху срабатывает первой.
     var rules: [RoutePlanRule] = []
@@ -508,12 +517,13 @@ struct RoutePlan: Codable, Identifiable {
     var warpList = ""
     var updated: Date?
 
-    init(id: UUID = UUID(), name: String = "Маршрут", finalTarget: String = "proxy",
+    init(id: UUID = UUID(), name: String = "Маршрут", isSystem: Bool = false, finalTarget: String = "proxy",
          rules: [RoutePlanRule] = [], directList: String = "",
          proxyList: String = "", blockList: String = "", warpList: String = "",
          updated: Date? = nil) {
         self.id = id
         self.name = name
+        self.isSystem = isSystem
         self.finalTarget = finalTarget
         self.rules = rules
         self.directList = directList
@@ -667,6 +677,11 @@ final class RuleStore: ObservableObject {
     @Published private(set) var status = ""
 
     /// Активный профиль: к нему обращаются список маршрутов и редактор.
+    /// Служебный профиль «Быстрые правила»: всегда активен, стоит первым.
+    var quickPlan: RoutePlan? {
+        plans.first { $0.isSystem }
+    }
+
     var plan: RoutePlan {
         plans.first { $0.id == activePlanID } ?? plans.first ?? RoutePlan()
     }
@@ -836,9 +851,39 @@ final class RuleStore: ObservableObject {
         return copy
     }
 
+    /// Эталон «Быстрых правил»: три папки-выхода, которые нельзя удалить.
+    static func serviceFolders() -> [RoutePlanRule] {
+        [RoutePlanRule(name: "Reject", outbound: "reject", locked: true),
+         RoutePlanRule(name: "Direct", outbound: "direct", locked: true),
+         RoutePlanRule(name: "Proxy", outbound: "proxy", locked: true)]
+    }
+
+    static func withServiceFolders(_ plan: RoutePlan) -> RoutePlan {
+        var result = plan
+        for folder in serviceFolders() where !result.rules.contains(where: { $0.id == folder.id }) {
+            // Восстанавливаем по имени: id у эталона каждый раз новый.
+            if !result.rules.contains(where: { $0.locked && $0.name == folder.name }) {
+                result.rules.insert(folder, at: 0)
+            }
+        }
+        return result
+    }
+
+    /// Создаёт служебный профиль при первом запуске и чинит его, если он потерялся.
+    private func ensureQuickPlan() {
+        if let index = plans.firstIndex(where: { $0.isSystem }) {
+            plans[index] = Self.withServiceFolders(plans[index])
+            return
+        }
+        let quick = Self.withServiceFolders(
+            RoutePlan(name: "Быстрые правила", isSystem: true, finalTarget: "proxy"))
+        plans.insert(quick, at: 0)
+    }
+
     func savePlan(_ plan: RoutePlan) {
         var updated = plan
         updated.updated = Date()
+        if updated.isSystem { updated = Self.withServiceFolders(updated) }
         if let index = plans.firstIndex(where: { $0.id == updated.id }) {
             plans[index] = updated
         } else {
@@ -857,6 +902,10 @@ final class RuleStore: ObservableObject {
     }
 
     func deletePlan(_ id: UUID) {
+        guard plans.first(where: { $0.id == id })?.isSystem != true else {
+            status = "служебный профиль удалить нельзя"
+            return
+        }
         plans.removeAll { $0.id == id }
         if plans.isEmpty { plans = [RoutePlan(name: "Default")] }
         if activePlanID == id { activePlanID = plans.first?.id }
@@ -1177,6 +1226,7 @@ final class RuleStore: ObservableObject {
         if plans.count == 1, plans[0].name == "По правилам" {
             plans[0].name = "Default"
         }
+        ensureQuickPlan()
         if let raw = defaults.string(forKey: activePlanKey), let id = UUID(uuidString: raw),
            plans.contains(where: { $0.id == id }) {
             activePlanID = id
