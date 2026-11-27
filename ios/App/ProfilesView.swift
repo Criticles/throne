@@ -175,6 +175,15 @@ struct ProfilesView: View {
                 }
             }
         }
+        // Учёт «за всё время» включаем по факту работы ядра, а не только по кнопке
+        // подключения: иначе трафик, потраченный на пинг, нигде не оседал.
+        .onChange(of: engine.activeName) { name in
+            if let name, engine.running {
+                traffic.start(profile: name)
+            } else {
+                traffic.stop()
+            }
+        }
         .navigationViewStyle(.stack)
     }
 

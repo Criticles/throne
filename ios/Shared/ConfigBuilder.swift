@@ -223,7 +223,11 @@ enum ConfigBuilder {
                 "listen": "127.0.0.1",
                 "listen_port": port,
             ])
-            rules.append(["inbound": ["probe-\(entry.tag)"], "outbound": entry.tag])
+            // Обёртка над выходом: без неё ядро «схлопывает» правило пробы в final,
+            // и в «Соединениях» её нельзя отличить от обычного трафика.
+            let wrapper = "probe-\(entry.tag)-out"
+            outbounds.append(["type": "selector", "tag": wrapper, "outbounds": [entry.tag]])
+            rules.append(["inbound": ["probe-\(entry.tag)"], "outbound": wrapper])
             probePorts[entry.id] = port
         }
 

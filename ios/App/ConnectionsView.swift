@@ -577,12 +577,12 @@ struct ConnectionsView: View {
     private func refresh() {
         // На паузе список не трогаем: он показывает соединения на момент нажатия.
         guard !paused else { return }
-        guard engine.running else {
-            connections = []
-            return
-        }
         Task {
-            let snapshot = await ClashApi.snapshot()
+            // Ядро выключено — опроса нет, но сэмплы продолжаем писать: график
+            // должен идти по времени, а не замирать на последней точке.
+            let snapshot = engine.running
+                ? await ClashApi.snapshot()
+                : (list: [ClashApi.Connection](), totals: ClashApi.Totals())
             let list = snapshot.list
             await MainActor.run {
                 guard !paused else { return }
@@ -607,16 +607,18 @@ struct ConnectionsView: View {
                 }
 
                 connections = list.count > 400 ? Array(list.prefix(400)) : list
-                let totals = snapshot.totals
-                if totals.download < coreDown || totals.upload < coreUp {
-                    // Ядро перезапустилось: старое накопленное не теряем.
-                    baseDown += coreDown
-                    baseUp += coreUp
+                if engine.running {
+                    let totals = snapshot.totals
+                    if totals.download < coreDown || totals.upload < coreUp {
+                        // Ядро перезапустилось: старое накопленное не теряем.
+                        baseDown += coreDown
+                        baseUp += coreUp
+                    }
+                    coreDown = totals.download
+                    coreUp = totals.upload
+                    sessionDown = baseDown + coreDown
+                    sessionUp = baseUp + coreUp
                 }
-                coreDown = totals.download
-                coreUp = totals.upload
-                sessionDown = baseDown + coreDown
-                sessionUp = baseUp + coreUp
                 recordSample(list, at: now,
                              totalDown: sessionDown, totalUp: sessionUp)
                 refreshed = Date()

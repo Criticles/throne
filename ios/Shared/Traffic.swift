@@ -103,6 +103,9 @@ final class TrafficMonitor: ObservableObject {
     private var session: URLSession?
     private var lastUpTotal: Int64 = 0
     private var lastDownTotal: Int64 = 0
+    /// Намерение держать поток: если сокет отвалился (ядро перезапустили
+    /// замеры пинга), переподключаемся, а не умираем до следующего подключения.
+    private var shouldRun = false
     private static let lastUpKey = "traffic.lastUpTotal"
     private static let lastDownKey = "traffic.lastDownTotal"
 
@@ -111,6 +114,7 @@ final class TrafficMonitor: ObservableObject {
     func start(profile: String) {
         stop()
         self.profile = profile
+        self.shouldRun = true
         // Базу берём из прошлого запуска: иначе при перезапуске монитора первый же
         // срез записывал весь объём сессии заново (двойной учёт).
         let saved = UserDefaults.standard
@@ -129,6 +133,7 @@ final class TrafficMonitor: ObservableObject {
     }
 
     func stop() {
+        shouldRun = false
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         session?.invalidateAndCancel()
@@ -148,8 +153,19 @@ final class TrafficMonitor: ObservableObject {
                     self.listen(task)
                 case .failure:
                     self.live = false
+                    self.reconnect()
                 }
             }
+        }
+    }
+
+    /// Переподключение через две секунды, пока поток нужен.
+    private func reconnect() {
+        guard shouldRun else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self, self.shouldRun, !self.live, !self.profile.isEmpty else { return }
+            self.start(profile: self.profile)
         }
     }
 

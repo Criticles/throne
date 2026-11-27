@@ -8,6 +8,8 @@ struct SettingsView: View {
     @EnvironmentObject private var prefs: Prefs
     @EnvironmentObject private var updater: UpdateChecker
     @State private var showProtocols = false
+    /// Тест живёт вне экрана: показываем его ход в строке «Диагностики».
+    @ObservedObject private var tester = TrafficTester.shared
 
     var body: some View {
         NavigationView {
@@ -344,9 +346,11 @@ struct SettingsView: View {
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Тест трафика").font(.subheadline.weight(.medium))
-                        Text("прокачать объём через сервер и сверить счётчики")
+                        Text(tester.running
+                             ? "идёт: " + Format.size(tester.downloaded) + " из " + Format.size(tester.total)
+                             : "прокачать объём через сервер и сверить счётчики")
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(tester.running ? Theme.accent : .secondary)
                     }
                 }
             }
