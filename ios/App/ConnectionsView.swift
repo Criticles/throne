@@ -274,6 +274,9 @@ struct ConnectionsView: View {
                 }
 
                 // Крупно — что происходит сейчас, мелко — сколько всего с запуска ядра.
+                Text("Сейчас")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
                 HStack(spacing: 16) {
                     Label(Self.rate(lastDown), systemImage: "arrow.down")
                         .font(.title3.weight(.semibold))
@@ -289,8 +292,7 @@ struct ConnectionsView: View {
                     .foregroundColor(.secondary)
 
                 TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
-                             start: windowStart, end: windowEnd,
-                             peakLabel: Self.rate(max(lastDown, lastUp)))
+                             start: windowStart, end: windowEnd)
 
             }
             .padding(.vertical, 2)
@@ -460,7 +462,9 @@ struct ConnectionsView: View {
     // MARK: - Сбор статистики
 
     /// Правый край окна — последний сэмпл, чтобы график не «уезжал» между опросами.
-    private var windowEnd: Date { samples.last?.at ?? Date() }
+    /// Правый край окна — «сейчас»: при обрыве опроса график не должен «застывать»
+    /// в прошлом и показывать пустоту при переключении на короткое окно.
+    private var windowEnd: Date { paused ? (samples.last?.at ?? Date()) : Date() }
 
     private var windowStart: Date { windowEnd.addingTimeInterval(-window.seconds) }
 
@@ -1020,7 +1024,6 @@ struct TrafficGraph: View {
     let points: [(at: Date, down: Double, up: Double)]
     let start: Date
     let end: Date
-    let peakLabel: String
 
     var body: some View {
         VStack(spacing: 3) {
@@ -1032,6 +1035,12 @@ struct TrafficGraph: View {
                     line(incoming: true, peak: peak, size: geometry.size, color: Theme.accent)
                     line(incoming: false, peak: peak, size: geometry.size, color: .gray)
                     axisLabels(size: geometry.size)
+                    if points.count < 2 {
+                        Text("нет данных за это окно")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
             .frame(height: 96)
@@ -1063,23 +1072,16 @@ struct TrafficGraph: View {
     /// Максимум, середина и ноль — по левому краю графика.
     private func axisLabels(size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
-            Text(peakLabel)
+            // Верх шкалы — максимум за окно, середина — его половина.
+            Text(Format.rate(peak))
                 .offset(x: 4, y: 2)
-            Text(Self.half(peak))
+            Text(Format.rate(peak / 2))
                 .offset(x: 4, y: size.height / 2 - 6)
             Text("0")
                 .offset(x: 4, y: size.height - 14)
         }
         .font(.system(size: 9))
         .foregroundColor(.secondary)
-    }
-
-    /// Середина шкалы — половина максимума.
-    static func half(_ peak: Double) -> String {
-        let value = peak / 2
-        if value >= 1024 * 1024 { return String(format: "%.1f МБ/с", value / 1024 / 1024) }
-        if value >= 1024 { return String(format: "%.0f КБ/с", value / 1024) }
-        return String(format: "%.0f Б/с", value)
     }
 
     /// Три горизонтальные линии — четверть, половина и три четверти.
