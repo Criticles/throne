@@ -19,6 +19,7 @@ struct SettingsView: View {
                 measurementSection
                 alertsSection
                 journalSection
+                diagnosticsSection
                 vpnSection
                 aboutSection
             }
@@ -326,6 +327,33 @@ struct SettingsView: View {
             Text("Системный VPN")
         } footer: {
             Text("В LiveContainer без entitlement расширение не запускается: для проверки используйте dev-режим на экране «Серверы».")
+        }
+    }
+
+    // MARK: - Диагностика
+
+    /// Прогон трафика через сервер: нужен, чтобы сверить счётчики приложения с ядром.
+    private var diagnosticsSection: some View {
+        Section {
+            NavigationLink {
+                TrafficTestView()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "speedometer")
+                        .foregroundColor(Theme.accent)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Тест трафика").font(.subheadline.weight(.medium))
+                        Text("прокачать объём через сервер и сверить счётчики")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        } header: {
+            Text("Диагностика")
+        } footer: {
+            Text("Тест расходует трафик сервера — как обычная загрузка.")
         }
     }
 

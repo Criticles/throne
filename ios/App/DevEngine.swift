@@ -772,6 +772,28 @@ final class DevEngine: ObservableObject {
     /// WireGuard теми же 12 секундами, что и VLESS, и всегда показывал «Недоступен».
 
     /// Ждём, пока ядро откроет локальный порт (до 10 с), не блокируя интерфейс.
+    /// Порт локального входа для сервера: у активного — основной, у остальных —
+    /// пробный (он существует, только когда ядро держит пул серверов).
+    func trafficPort(for id: UUID?) -> Int? {
+        guard let id else { return proxyPort }
+        if id == activeProfileID { return proxyPort }
+        return probePorts[id]
+    }
+
+    /// Пересобирает ядро с пулом серверов, чтобы у каждого появился свой пробный вход.
+    /// Нужно тесту трафика через конкретный сервер; счётчики сессии при этом не теряются.
+    @discardableResult
+    func prepareTrafficPool(profiles: [Profile]) async -> Bool {
+        let pool = profiles.filter { Self.singboxKinds.contains($0.kind) }
+        guard pool.count > 1, running else { return false }
+        guard let anchor = pool.first(where: { $0.id == activeProfileID }) ?? pool.first else {
+            return false
+        }
+        start(profile: anchor, pool: pool)
+        guard running else { return false }
+        return await waitListening()
+    }
+
     private func waitListening() async -> Bool {
         for _ in 0..<20 {
             if running, isListening() { return true }
