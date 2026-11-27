@@ -561,7 +561,8 @@ struct ConnectionsView: View {
                 TrafficRates(down: Double($0.down) / elapsed, up: Double($0.up) / elapsed)
             },
             bytesByOutbound: byOutbound))
-        let horizon = now.addingTimeInterval(-610)
+        // Окна до 10 минут: держим 600 с плюс запас, чтобы левый край не обрывался.
+        let horizon = now.addingTimeInterval(-615)
         if let first = samples.first, first.at < horizon {
             samples.removeAll { $0.at < horizon }
         }
@@ -1035,7 +1036,7 @@ struct TrafficGraph: View {
                     line(incoming: true, peak: peak, size: geometry.size, color: Theme.accent)
                     line(incoming: false, peak: peak, size: geometry.size, color: .gray)
                     axisLabels(size: geometry.size)
-                    if points.count < 2 {
+                    if display.count < 2 {
                         Text("нет данных за это окно")
                             .font(.system(size: 9))
                             .foregroundColor(.secondary)
@@ -1057,8 +1058,16 @@ struct TrafficGraph: View {
         }
     }
 
+    /// Точки для отрисовки: последний сэмпл дотягиваем до «сейчас» его же
+    /// значением — график всегда доходит до правого края и плавно уезжает влево.
+    private var display: [(at: Date, down: Double, up: Double)] {
+        guard let last = points.last else { return points }
+        if last.at >= end.addingTimeInterval(-0.5) { return points }
+        return points + [(end, last.down, last.up)]
+    }
+
     private var peak: Double {
-        let maximum = points.map { max($0.down, $0.up) }.max() ?? 0
+        let maximum = display.map { max($0.down, $0.up) }.max() ?? 0
         return maximum > 0 ? maximum : 1
     }
 
@@ -1100,8 +1109,9 @@ struct TrafficGraph: View {
     private func line(incoming: Bool, peak: Double, size: CGSize, color: Color) -> some View {
         let span = max(end.timeIntervalSince(start), 1)
         return Path { path in
-            guard points.count > 1 else { return }
-            for (index, point) in points.enumerated() {
+            let list = display
+            guard list.count > 1 else { return }
+            for (index, point) in list.enumerated() {
                 let x = CGFloat(max(min(point.at.timeIntervalSince(start) / span, 1), 0)) * size.width
                 let value = incoming ? point.down : point.up
                 let ratio = CGFloat(value / peak)
