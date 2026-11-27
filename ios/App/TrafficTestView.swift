@@ -142,6 +142,7 @@ struct TrafficTestView: View {
         running = false
     }
 
+    @MainActor
     private func run() async {
         // Куда качать: активный сервер — основной вход, конкретный — его пробный вход.
         let wanted = serverID ?? engine.activeProfileID
