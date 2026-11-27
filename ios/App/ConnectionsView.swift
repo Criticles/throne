@@ -268,38 +268,28 @@ struct ConnectionsView: View {
                     .buttonStyle(.borderless)
                 }
 
-                // Крупно — что происходит сейчас, мелко — сколько всего с запуска ядра.
-                Text("Сейчас")
+                // Крупно — сколько прошло за выбранный промежуток: окно графика
+                // и это значение относятся к одному и тому же времени.
+                Text("За " + window.rawValue)
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 HStack(spacing: 16) {
-                    Label(Self.rate(lastDown), systemImage: "arrow.down")
+                    Label(Self.size(windowBytes.down), systemImage: "arrow.down")
                         .font(.title3.weight(.semibold))
                         .foregroundColor(Theme.accent)
-                    Label(Self.rate(lastUp), systemImage: "arrow.up")
+                    Label(Self.size(windowBytes.up), systemImage: "arrow.up")
                         .font(.title3.weight(.semibold))
                         .foregroundColor(.secondary)
                     Spacer(minLength: 4)
                 }
-                VStack(spacing: 3) {
-                    HStack {
-                        Text("За " + window.rawValue)
-                        Spacer()
-                        Text("↓ " + Self.size(windowBytes.down)
-                             + " · ↑ " + Self.size(windowBytes.up))
-                    }
-                    HStack {
-                        Text("С включения ядра")
-                        Spacer()
-                        Text("↓ " + Self.size(sampler.sessionDown)
-                             + " · ↑ " + Self.size(sampler.sessionUp))
-                    }
-                }
-                .font(.caption2)
-                .foregroundColor(.secondary)
 
                 TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
                              start: windowStart, end: windowEnd)
+
+                Text("С включения ядра: ↓ " + Self.size(sampler.sessionDown)
+                     + " · ↑ " + Self.size(sampler.sessionUp))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
 
             }
             .padding(.vertical, 2)
