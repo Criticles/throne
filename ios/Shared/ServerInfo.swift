@@ -11,56 +11,144 @@ enum ServerInfo {
         return linkRows(payload)
     }
 
+    /// Ссылки разбираем теми же парсерами, что и импорт: тогда «Сведения»
+    /// показывают ровно то, с чем пойдёт ядро, а не догадки по строке.
     private static func linkRows(_ payload: String) -> [(String, String)] {
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let schemeEnd = trimmed.range(of: "://") else { return [] }
+        let scheme = String(trimmed[..<schemeEnd.lowerBound]).lowercased()
+        switch scheme {
+        case "vless": return vlessRows(trimmed)
+        case "hysteria2", "hy2": return hysteriaRows(trimmed)
+        case "mieru", "mierus": return mieruRows(trimmed)
+        case "amneziawg", "wg": return wireguardRows(trimmed)
+        default: return genericRows(trimmed, scheme: scheme)
+        }
+    }
+
+    private static func vlessRows(_ link: String) -> [(String, String)] {
+        guard let parsed = try? VLESSLink.parse(link) else { return genericRows(link, scheme: "vless") }
         var rows: [(String, String)] = []
-        guard let schemeEnd = payload.range(of: "://") else { return rows }
-        let scheme = String(payload[..<schemeEnd.lowerBound]).lowercased()
-        rows.append(("Протокол", scheme.uppercased()))
+        rows.append(("Протокол", parsed.transport == "xhttp" ? "VLESS XHTTP (Xray)" : "VLESS"))
+        rows.append(("Хост", parsed.host))
+        rows.append(("Порт", String(parsed.port)))
+        rows.append(("UUID", mask(parsed.uuid)))
+        if let flow = parsed.flow, !flow.isEmpty { rows.append(("Flow", flow)) }
+        rows.append(("Безопасность", parsed.security.uppercased()))
+        if let sni = parsed.serverName, !sni.isEmpty { rows.append(("SNI", sni)) }
+        if let fingerprint = parsed.fingerprint, !fingerprint.isEmpty {
+            rows.append(("uTLS", fingerprint))
+        }
+        if let key = parsed.publicKey, !key.isEmpty {
+            rows.append(("Reality public key", mask(key)))
+        }
+        if let short = parsed.shortID, !short.isEmpty { rows.append(("Reality short id", short)) }
+        rows.append(("Транспорт", parsed.transport))
+        if let path = parsed.path, !path.isEmpty { rows.append(("Путь", path)) }
+        if let host = parsed.hostHeader, !host.isEmpty { rows.append(("Заголовок Host", host)) }
+        if let mode = parsed.mode, !mode.isEmpty { rows.append(("Режим", mode)) }
+        if !parsed.alpn.isEmpty { rows.append(("ALPN", parsed.alpn.joined(separator: ", "))) }
+        if let encoding = parsed.packetEncoding, !encoding.isEmpty {
+            rows.append(("Packet encoding", encoding))
+        }
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
 
-        var rest = String(payload[schemeEnd.upperBound...])
-        var fragment = ""
-        if let hash = rest.firstIndex(of: "#") {
-            fragment = String(rest[rest.index(after: hash)...])
-            rest = String(rest[..<hash])
+    private static func hysteriaRows(_ link: String) -> [(String, String)] {
+        guard let parsed = Hysteria2Link.parse(link) else {
+            return genericRows(link, scheme: "hysteria2")
         }
-        var query = ""
-        if let mark = rest.firstIndex(of: "?") {
-            query = String(rest[rest.index(after: mark)...])
-            rest = String(rest[..<mark])
+        var rows: [(String, String)] = []
+        rows.append(("Протокол", "Hysteria2"))
+        rows.append(("Хост", parsed.host))
+        rows.append(("Порт", String(parsed.port)))
+        if let range = parsed.portRange { rows.append(("Диапазон портов", range)) }
+        rows.append(("Пароль", mask(parsed.password)))
+        if let sni = parsed.serverName, !sni.isEmpty { rows.append(("SNI", sni)) }
+        if !parsed.alpn.isEmpty { rows.append(("ALPN", parsed.alpn.joined(separator: ", "))) }
+        if let obfs = parsed.obfsType, !obfs.isEmpty { rows.append(("Obfs", obfs)) }
+        if let password = parsed.obfsPassword, !password.isEmpty {
+            rows.append(("Obfs-пароль", mask(password)))
         }
-        if let at = rest.lastIndex(of: "@") {
-            rest = String(rest[rest.index(after: at)...])
-        }
-        if let slash = rest.firstIndex(of: "/") {
-            rest = String(rest[..<slash])
-        }
-        let parts = rest.split(separator: ":")
-        if parts.count >= 2 {
-            rows.append(("Хост", String(parts[0])))
-            rows.append(("Порт", String(parts[1])))
-        } else if let first = parts.first {
-            rows.append(("Хост", String(first)))
-        }
-        if !fragment.isEmpty {
-            rows.append(("Имя в ссылке", fragment.removingPercentEncoding ?? fragment))
-        }
+        if let hop = parsed.hopInterval, !hop.isEmpty { rows.append(("Смена портов", hop)) }
+        rows.append(("Проверка сертификата", parsed.insecure ? "отключена" : "включена"))
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
 
-        for pair in query.split(separator: "&") {
-            let item = pair.split(separator: "=", maxSplits: 1)
-            guard item.count == 2 else { continue }
-            let key = String(item[0]).lowercased()
-            let value = String(item[1]).removingPercentEncoding ?? String(item[1])
-            switch key {
-            case "security": rows.append(("Безопасность", value.uppercased()))
-            case "sni": rows.append(("SNI", value))
-            case "type": rows.append(("Транспорт", value))
-            case "flow": rows.append(("Flow", value))
-            case "alpn": rows.append(("ALPN", value))
-            case "path": rows.append(("Путь", value))
-            case "host": rows.append(("Заголовок Host", value))
-            case "obfs": rows.append(("Obfs", value))
-            case "mode": rows.append(("Режим", value))
-            default: break
+    private static func mieruRows(_ link: String) -> [(String, String)] {
+        guard let parsed = MieruLink.parse(link) else { return genericRows(link, scheme: "mieru") }
+        var rows: [(String, String)] = []
+        rows.append(("Протокол", "Mieru"))
+        rows.append(("Хост", parsed.host))
+        rows.append(("Порт", String(parsed.port)))
+        if let range = parsed.portRange { rows.append(("Диапазон портов", range)) }
+        rows.append(("Пользователь", parsed.userName))
+        rows.append(("Пароль", mask(parsed.password)))
+        rows.append(("Транспорт", parsed.transport))
+        if let multiplexing = parsed.multiplexing, !multiplexing.isEmpty {
+            rows.append(("Мультиплексирование", multiplexing.uppercased()))
+        }
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
+
+    private static func wireguardRows(_ link: String) -> [(String, String)] {
+        guard let parsed = WireGuardConfig.parse(link) else {
+            return genericRows(link, scheme: "wireguard")
+        }
+        var rows: [(String, String)] = []
+        rows.append(("Протокол", parsed.amnezia == nil ? "WireGuard" : "AmneziaWG"))
+        rows.append(("Хост", parsed.host))
+        rows.append(("Порт", String(parsed.port)))
+        if !parsed.addresses.isEmpty {
+            rows.append(("Адрес", parsed.addresses.joined(separator: ", ")))
+        }
+        rows.append(("MTU", String(parsed.mtu)))
+        rows.append(("Keepalive", String(parsed.keepAlive)))
+        rows.append(("Публичный ключ", mask(parsed.publicKey)))
+        rows.append(("Приватный ключ", mask(parsed.privateKey)))
+        if let amnezia = parsed.amnezia {
+            for key in ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4"] {
+                if let value = amnezia[key] { rows.append((key.uppercased(), String(describing: value))) }
+            }
+            for key in ["h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5"] {
+                if let value = amnezia[key] { rows.append((key.uppercased(), String(describing: value))) }
+            }
+            if let key = amnezia["header_protection_key"] as? String {
+                rows.append(("Header protection", mask(key)))
+            }
+            for (field, title) in [("content_padding_addition", "Content padding"),
+                                   ("rekey_after_time", "Rekey after"),
+                                   ("rekey_timeout", "Rekey timeout"),
+                                   ("reject_after_time", "Reject after"),
+                                   ("keepalive_timeout", "Keepalive timeout"),
+                                   ("max_handshake_attempts", "Max handshake attempts")] {
+                if let value = amnezia[field] { rows.append((title, String(describing: value))) }
+            }
+            if (amnezia["random_trailers"] as? Bool) == true { rows.append(("Random trailers", "вкл")) }
+            if (amnezia["disable_cookies"] as? Bool) == true { rows.append(("Disable cookies", "вкл")) }
+        }
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
+
+    /// Неизвестная ссылка: показываем то, что видно без парсера.
+    private static func genericRows(_ payload: String, scheme: String) -> [(String, String)] {
+        var rows: [(String, String)] = [("Протокол", scheme.uppercased())]
+        guard let parts = LinkParts.parse(payload) else { return rows }
+        rows.append(("Хост", parts.host))
+        if !parts.portText.isEmpty { rows.append(("Порт", parts.portText)) }
+        if !parts.user.isEmpty { rows.append(("Пользователь", mask(parts.user))) }
+        if !parts.password.isEmpty { rows.append(("Пароль", mask(parts.password))) }
+        if let fragment = parts.fragment, !fragment.isEmpty {
+            rows.append(("Имя в ссылке", fragment))
+        }
+        for key in ["sni", "security", "type", "flow", "alpn", "path", "host",
+                    "obfs", "mode", "serviceName", "servicename"] {
+            if let value = parts.query[key.lowercased()], !value.isEmpty {
+                rows.append((key, value))
             }
         }
         return rows
