@@ -19,6 +19,10 @@ enum ServerInfo {
         let scheme = String(trimmed[..<schemeEnd.lowerBound]).lowercased()
         switch scheme {
         case "vless": return vlessRows(trimmed)
+        case "vmess": return vmessRows(trimmed)
+        case "trojan": return trojanRows(trimmed)
+        case "ss": return shadowsocksRows(trimmed)
+        case "tuic": return tuicRows(trimmed)
         case "hysteria2", "hy2": return hysteriaRows(trimmed)
         case "mieru", "mierus": return mieruRows(trimmed)
         case "amneziawg", "wg": return wireguardRows(trimmed)
@@ -51,6 +55,84 @@ enum ServerInfo {
         if let encoding = parsed.packetEncoding, !encoding.isEmpty {
             rows.append(("Packet encoding", encoding))
         }
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
+
+    private static func vmessRows(_ link: String) -> [(String, String)] {
+        guard let parsed = VMessLink.parse(link) else { return genericRows(link, scheme: "vmess") }
+        var rows: [(String, String)] = []
+        rows.append(("Протокол", "VMess"))
+        rows.append(("Хост", parsed.host))
+        rows.append(("Порт", String(parsed.port)))
+        rows.append(("UUID", mask(parsed.uuid)))
+        rows.append(("Шифрование", parsed.security))
+        rows.append(("Alter ID", String(parsed.alterID)))
+        rows.append(("Транспорт", parsed.network ?? "tcp"))
+        if let path = parsed.path, !path.isEmpty { rows.append(("Путь", path)) }
+        if let host = parsed.hostHeader, !host.isEmpty { rows.append(("Заголовок Host", host)) }
+        rows.append(("TLS", parsed.tlsEnabled ? "вкл" : "выкл"))
+        if let sni = parsed.serverName, !sni.isEmpty { rows.append(("SNI", sni)) }
+        if !parsed.alpn.isEmpty { rows.append(("ALPN", parsed.alpn.joined(separator: ", "))) }
+        if let fp = parsed.fingerprint, !fp.isEmpty { rows.append(("uTLS", fp)) }
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
+
+    private static func trojanRows(_ link: String) -> [(String, String)] {
+        guard let parsed = TrojanLink.parse(link) else { return genericRows(link, scheme: "trojan") }
+        var rows: [(String, String)] = []
+        rows.append(("Протокол", "Trojan"))
+        rows.append(("Хост", parsed.host))
+        rows.append(("Порт", String(parsed.port)))
+        rows.append(("Пароль", mask(parsed.password)))
+        if let sni = parsed.serverName, !sni.isEmpty { rows.append(("SNI", sni)) }
+        if !parsed.alpn.isEmpty { rows.append(("ALPN", parsed.alpn.joined(separator: ", "))) }
+        if let fp = parsed.fingerprint, !fp.isEmpty { rows.append(("uTLS", fp)) }
+        rows.append(("Проверка сертификата", parsed.insecure ? "отключена" : "включена"))
+        rows.append(("Транспорт", parsed.transport ?? "tcp"))
+        if let path = parsed.path, !path.isEmpty { rows.append(("Путь", path)) }
+        if let host = parsed.hostHeader, !host.isEmpty { rows.append(("Заголовок Host", host)) }
+        if let service = parsed.serviceName, !service.isEmpty {
+            rows.append(("Service name", service))
+        }
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
+
+    private static func shadowsocksRows(_ link: String) -> [(String, String)] {
+        guard let parsed = ShadowsocksLink.parse(link) else {
+            return genericRows(link, scheme: "ss")
+        }
+        var rows: [(String, String)] = []
+        rows.append(("Протокол", "Shadowsocks"))
+        rows.append(("Хост", parsed.host))
+        rows.append(("Порт", String(parsed.port)))
+        rows.append(("Метод", parsed.method))
+        rows.append(("Пароль", mask(parsed.password)))
+        if let plugin = parsed.plugin, !plugin.isEmpty {
+            rows.append(("Плагин", plugin))
+            if let options = parsed.pluginOpts, !options.isEmpty {
+                rows.append(("Опции плагина", options))
+            }
+        }
+        rows.append(("Имя в ссылке", parsed.name))
+        return rows
+    }
+
+    private static func tuicRows(_ link: String) -> [(String, String)] {
+        guard let parsed = TUICLink.parse(link) else { return genericRows(link, scheme: "tuic") }
+        var rows: [(String, String)] = []
+        rows.append(("Протокол", "TUIC"))
+        rows.append(("Хост", parsed.host))
+        rows.append(("Порт", String(parsed.port)))
+        rows.append(("UUID", mask(parsed.uuid)))
+        rows.append(("Пароль", mask(parsed.password)))
+        rows.append(("Контроль перегрузки", parsed.congestionControl))
+        rows.append(("Режим UDP", parsed.udpRelayMode))
+        if let sni = parsed.serverName, !sni.isEmpty { rows.append(("SNI", sni)) }
+        rows.append(("ALPN", parsed.alpn.joined(separator: ", ")))
+        rows.append(("Проверка сертификата", parsed.insecure ? "отключена" : "включена"))
         rows.append(("Имя в ссылке", parsed.name))
         return rows
     }

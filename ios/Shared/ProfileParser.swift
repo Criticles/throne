@@ -88,6 +88,22 @@ enum ProfileParser {
             return Profile(name: parsed.name, kind: kind, payload: link, note: nil,
                            badge: Self.vlessBadge(parsed))
         }
+        if lower.hasPrefix("vmess://") {
+            guard let parsed = VMessLink.parse(link) else { return nil }
+            return Profile(name: parsed.name, kind: .vmess, payload: link, note: nil)
+        }
+        if lower.hasPrefix("trojan://") {
+            guard let parsed = TrojanLink.parse(link) else { return nil }
+            return Profile(name: parsed.name, kind: .trojan, payload: link, note: nil)
+        }
+        if lower.hasPrefix("ss://") {
+            guard let parsed = ShadowsocksLink.parse(link) else { return nil }
+            return Profile(name: parsed.name, kind: .shadowsocks, payload: link, note: nil)
+        }
+        if lower.hasPrefix("tuic://") {
+            guard let parsed = TUICLink.parse(link) else { return nil }
+            return Profile(name: parsed.name, kind: .tuic, payload: link, note: nil)
+        }
         if lower.hasPrefix("hysteria2://") || lower.hasPrefix("hy2://") {
             guard let parsed = Hysteria2Link.parse(link) else { return nil }
             return Profile(name: parsed.name, kind: .hysteria2, payload: link, note: nil)

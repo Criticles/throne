@@ -40,6 +40,26 @@ enum ConfigBuilder {
         case .vless:
             let link = try VLESSLink.parse(profile.payload)
             config = try directConfig(outbound: vlessOutbound(link))
+        case .vmess:
+            guard let link = VMessLink.parse(profile.payload) else {
+                throw BuildError.badPayload("vmess://")
+            }
+            config = try directConfig(outbound: vmessOutbound(link))
+        case .trojan:
+            guard let link = TrojanLink.parse(profile.payload) else {
+                throw BuildError.badPayload("trojan://")
+            }
+            config = try directConfig(outbound: trojanOutbound(link))
+        case .shadowsocks:
+            guard let link = ShadowsocksLink.parse(profile.payload) else {
+                throw BuildError.badPayload("ss://")
+            }
+            config = try directConfig(outbound: shadowsocksOutbound(link))
+        case .tuic:
+            guard let link = TUICLink.parse(profile.payload) else {
+                throw BuildError.badPayload("tuic://")
+            }
+            config = try directConfig(outbound: tuicOutbound(link))
         case .hysteria2:
             guard let link = Hysteria2Link.parse(profile.payload) else {
                 throw BuildError.badPayload("hysteria2://")
@@ -152,6 +172,30 @@ enum ConfigBuilder {
             case .vless:
                 guard let link = try? VLESSLink.parse(profile.payload) else { continue }
                 var outbound = vlessOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                probeable.append((profile.id, tag))
+            case .vmess:
+                guard let link = VMessLink.parse(profile.payload) else { continue }
+                var outbound = vmessOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                probeable.append((profile.id, tag))
+            case .trojan:
+                guard let link = TrojanLink.parse(profile.payload) else { continue }
+                var outbound = trojanOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                probeable.append((profile.id, tag))
+            case .shadowsocks:
+                guard let link = ShadowsocksLink.parse(profile.payload) else { continue }
+                var outbound = shadowsocksOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                probeable.append((profile.id, tag))
+            case .tuic:
+                guard let link = TUICLink.parse(profile.payload) else { continue }
+                var outbound = tuicOutbound(link)
                 outbound["tag"] = tag
                 outbounds.append(outbound)
                 probeable.append((profile.id, tag))
@@ -297,6 +341,30 @@ enum ConfigBuilder {
             case .vless:
                 guard let link = try? VLESSLink.parse(profile.payload) else { continue }
                 var outbound = vlessOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                tags[profile.id] = tag
+            case .vmess:
+                guard let link = VMessLink.parse(profile.payload) else { continue }
+                var outbound = vmessOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                tags[profile.id] = tag
+            case .trojan:
+                guard let link = TrojanLink.parse(profile.payload) else { continue }
+                var outbound = trojanOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                tags[profile.id] = tag
+            case .shadowsocks:
+                guard let link = ShadowsocksLink.parse(profile.payload) else { continue }
+                var outbound = shadowsocksOutbound(link)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+                tags[profile.id] = tag
+            case .tuic:
+                guard let link = TUICLink.parse(profile.payload) else { continue }
+                var outbound = tuicOutbound(link)
                 outbound["tag"] = tag
                 outbounds.append(outbound)
                 tags[profile.id] = tag
@@ -485,6 +553,82 @@ enum ConfigBuilder {
             break
         }
         return outbound
+    }
+
+    // MARK: - Общие протоколы подписок
+
+    private static func shadowsocksOutbound(_ link: ShadowsocksLink) -> [String: Any] {
+        var outbound: [String: Any] = [
+            "type": "shadowsocks",
+            "tag": "proxy",
+            "server": link.host,
+            "server_port": link.port,
+            "method": link.method,
+            "password": link.password,
+        ]
+        // obfs-local / v2ray-plugin — ядро понимает их как plugin + plugin_opts.
+        if let plugin = link.plugin, !plugin.isEmpty {
+            outbound["plugin"] = plugin
+            if let options = link.pluginOpts, !options.isEmpty {
+                outbound["plugin_opts"] = options
+            }
+        }
+        return outbound
+    }
+
+    private static func vmessOutbound(_ link: VMessLink) -> [String: Any] {
+        var outbound: [String: Any] = [
+            "type": "vmess",
+            "tag": "proxy",
+            "server": link.host,
+            "server_port": link.port,
+            "uuid": link.uuid,
+            "security": link.security,
+            "alter_id": link.alterID,
+        ]
+        if let transport = LinkTransport.make(link.network, path: link.path,
+                                             host: link.hostHeader, serviceName: link.serviceName,
+                                             mode: nil) {
+            outbound["transport"] = transport
+        }
+        if link.tlsEnabled {
+            outbound["tls"] = LinkTransport.tls(serverName: link.serverName, alpn: link.alpn,
+                                                insecure: false, fingerprint: link.fingerprint)
+        }
+        return outbound
+    }
+
+    private static func trojanOutbound(_ link: TrojanLink) -> [String: Any] {
+        var outbound: [String: Any] = [
+            "type": "trojan",
+            "tag": "proxy",
+            "server": link.host,
+            "server_port": link.port,
+            "password": link.password,
+            "tls": LinkTransport.tls(serverName: link.serverName, alpn: link.alpn,
+                                     insecure: link.insecure, fingerprint: link.fingerprint),
+        ]
+        if let transport = LinkTransport.make(link.transport, path: link.path,
+                                             host: link.hostHeader, serviceName: link.serviceName,
+                                             mode: nil) {
+            outbound["transport"] = transport
+        }
+        return outbound
+    }
+
+    private static func tuicOutbound(_ link: TUICLink) -> [String: Any] {
+        [
+            "type": "tuic",
+            "tag": "proxy",
+            "server": link.host,
+            "server_port": link.port,
+            "uuid": link.uuid,
+            "password": link.password,
+            "congestion_control": link.congestionControl,
+            "udp_relay_mode": link.udpRelayMode,
+            "tls": LinkTransport.tls(serverName: link.serverName, alpn: link.alpn,
+                                     insecure: link.insecure, fingerprint: nil),
+        ]
     }
 
     private static func hysteria2Outbound(_ link: Hysteria2Link) -> [String: Any] {

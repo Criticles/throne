@@ -2,6 +2,10 @@ import Foundation
 
 enum ProfileKind: String, Codable, CaseIterable {
     case vless
+    case vmess
+    case trojan
+    case shadowsocks
+    case tuic
     case xray
     case hysteria2
     case mieru
@@ -21,6 +25,10 @@ enum ProfileKind: String, Codable, CaseIterable {
         case .amneziawg: return "AmneziaWG"
         case .wireturn: return "WireTurn"
         case .turnable: return "Turnable"
+        case .vmess: return "VMess"
+        case .trojan: return "Trojan"
+        case .shadowsocks: return "Shadowsocks"
+        case .tuic: return "TUIC"
         case .custom: return "JSON подписки"
         }
     }

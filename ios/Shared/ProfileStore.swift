@@ -35,7 +35,11 @@ final class ProfileStore: ObservableObject {
     init() {
         let stored = UserDefaults.standard.stringArray(forKey: "dev.allowedKinds") ?? []
         let kinds = stored.compactMap { ProfileKind(rawValue: $0) }
-        allowedKinds = kinds.isEmpty ? Set(ProfileKind.allCases) : Set(kinds)
+        // Список уже сохранён у тех, кто когда-то трогал настройку: без объединения
+        // новые протоколы (VMess/Trojan/SS/TUIC) у них молча не импортировались бы.
+        allowedKinds = kinds.isEmpty
+            ? Set(ProfileKind.allCases)
+            : Set(kinds).union([.vmess, .trojan, .shadowsocks, .tuic])
         load()
     }
 
@@ -579,6 +583,13 @@ final class ProfileStore: ObservableObject {
         // `amneziawg://<base64 от wg-quick>`: узла в authority нет, host и port лежат внутри INI.
         if scheme == "amneziawg", let config = WireGuardConfig.parse(trimmed) {
             return "wireguard|\(config.host)|\(config.port)"
+        }
+        // У этих протоколов узел спрятан внутри base64, поэтому authority не разобрать.
+        if scheme == "ss", let link = ShadowsocksLink.parse(trimmed) {
+            return "shadowsocks|\(link.host)|\(link.port)"
+        }
+        if scheme == "vmess", let link = VMessLink.parse(trimmed) {
+            return "vmess|\(link.host)|\(link.port)"
         }
         if let hash = rest.firstIndex(of: "#") { rest = String(rest[..<hash]) }
         if let query = rest.firstIndex(of: "?") { rest = String(rest[..<query]) }
