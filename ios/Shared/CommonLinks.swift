@@ -362,7 +362,7 @@ struct MasterDNSLink {
                 name: name.isEmpty ? domains[0] : name,
                 domains: domains,
                 encryptionKey: values["key"] ?? "",
-                encryptionMethod: method(from: values["enc"]),
+                encryptionMethod: method(from: values["enc"] ?? ""),
                 mode: "socks5",
                 resolvers: splitList(values["resolvers"] ?? ""),
                 balancing: balancing(from: values["bal"]),
