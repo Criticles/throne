@@ -180,6 +180,13 @@ struct ConnectionsView: View {
                 } label: {
                     Label("Экспорт в txt", systemImage: "square.and.arrow.up")
                 }
+                Divider()
+                Button {
+                    sampler.clearHistory()
+                    notice = "история графика очищена"
+                } label: {
+                    Label("Очистить график", systemImage: "trash")
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -253,7 +260,6 @@ struct ConnectionsView: View {
                     Button {
                         paused.toggle()
                         notice = paused ? "пауза: список и график замерли" : ""
-                        if !paused { lastSampleAt = nil; counters.removeAll() }
                     } label: {
                         Image(systemName: paused ? "play.fill" : "pause.fill")
                             .font(.caption.weight(.semibold))

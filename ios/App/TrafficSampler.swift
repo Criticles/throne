@@ -89,6 +89,14 @@ final class TrafficSampler: ObservableObject {
         prevUp = sessionUp
     }
 
+    /// Очистить историю графика: счётчики «с включения» и «за всё время» не трогаем.
+    func clearHistory() {
+        samples.removeAll()
+        prevAt = nil
+        currentDown = 0
+        currentUp = 0
+    }
+
     private func append(at date: Date, down: Double, up: Double,
                         bytesDown: Int64, bytesUp: Int64) {
         samples.append(TrafficSample(at: date, down: down, up: up,
