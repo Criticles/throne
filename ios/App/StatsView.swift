@@ -5,7 +5,8 @@ struct StatsView: View {
     @EnvironmentObject private var engine: DevEngine
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var rules: RuleStore
-    @EnvironmentObject private var traffic: TrafficMonitor
+    /// Те же цифры, что в «Соединениях» и «Серверах»: один источник — общий сборщик.
+    @ObservedObject private var sampler = TrafficSampler.shared
 
     @StateObject private var stats = TrafficStatsStore.shared
     @State private var period = 7
@@ -50,14 +51,15 @@ struct StatsView: View {
 
     private var speedSection: some View {
         Section {
-            SpeedGraph(down: traffic.down, up: traffic.up)
+            SpeedGraph(down: sampler.samples.suffix(60).map { $0.down },
+                       up: sampler.samples.suffix(60).map { $0.up })
                 .frame(height: 110)
                 .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
             HStack {
-                Label(Self.rate(traffic.speedDown), systemImage: "arrow.down")
+                Label(Self.rate(sampler.currentDown), systemImage: "arrow.down")
                     .foregroundColor(.green)
                 Spacer()
-                Label(Self.rate(traffic.speedUp), systemImage: "arrow.up")
+                Label(Self.rate(sampler.currentUp), systemImage: "arrow.up")
                     .foregroundColor(.orange)
             }
             .font(.footnote.weight(.medium))
@@ -65,7 +67,7 @@ struct StatsView: View {
             HStack {
                 Text("Скорость сейчас")
                 Spacer()
-                Text(traffic.live ? "live" : "нет данных")
+                Text(engine.running ? "live" : "нет данных")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }

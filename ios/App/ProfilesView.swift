@@ -6,7 +6,8 @@ struct ProfilesView: View {
     @EnvironmentObject private var engine: DevEngine
     @EnvironmentObject private var prefs: Prefs
     @EnvironmentObject private var rules: RuleStore
-    @EnvironmentObject private var traffic: TrafficMonitor
+    /// Скорости «на данный момент» — из общего сборщика, те же, что в «Соединениях».
+    @ObservedObject private var sampler = TrafficSampler.shared
 
     @State private var folderID: UUID? = nil
     @State private var query = ""
@@ -175,15 +176,6 @@ struct ProfilesView: View {
                 }
             }
         }
-        // Учёт «за всё время» включаем по факту работы ядра, а не только по кнопке
-        // подключения: иначе трафик, потраченный на пинг, нигде не оседал.
-        .onChange(of: engine.activeName) { name in
-            if let name, engine.running {
-                traffic.start(profile: name)
-            } else {
-                traffic.stop()
-            }
-        }
         .navigationViewStyle(.stack)
     }
 
@@ -204,7 +196,7 @@ struct ProfilesView: View {
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                     // Здесь — что происходит сейчас, а не накопленное: рядом кнопка питания.
-                    Text("↓ " + Format.rate(traffic.speedDown) + " · ↑ " + Format.rate(traffic.speedUp)
+                    Text("↓ " + Format.rate(sampler.currentDown) + " · ↑ " + Format.rate(sampler.currentUp)
                          + (engine.running ? " · " + Self.duration(engine.uptime) : ""))
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -369,7 +361,6 @@ struct ProfilesView: View {
                     if engine.bulkRunning || engine.speedRunning != nil {
                         HeaderButton(icon: "xmark", tint: .red) {
                             engine.cancelMeasurements()
-                            traffic.stop()
                             probeLine = ""
                         }
                     } else {
@@ -763,7 +754,6 @@ struct ProfilesView: View {
         engine.start(profile: profile, pool: store.profiles, plan: rules.plan,
                      ruleSetPaths: rules.ruleSetPaths())
         if engine.running, !engine.transportOnly {
-            traffic.start(profile: profile.name)
             probeLine = "определяю выход…"
             await engine.probeActive(profile: profile)
             probeLine = ""
@@ -775,7 +765,6 @@ struct ProfilesView: View {
     private func toggle() async {
         if engine.running {
             engine.stop()
-            traffic.stop()
             probeLine = ""
             return
         }

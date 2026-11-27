@@ -21,20 +21,9 @@ struct ConnectionsView: View {
     /// вместе с теми соединениями, что закрылись в последние пять секунд.
     /// Окно графика: 1/2/5/10 минут. Пауза — справа от кнопок окна.
     @State private var window: TrafficWindow = .two
-    /// Сэмплы трафика: раз в опрос, хранится десять минут.
-    @State private var samples: [TrafficSample] = []
-    /// Счётчики соединений с прошлого опроса — по ним считаются скорости.
-    @State private var counters: [String: TrafficCounters] = [:]
-    @State private var lastSampleAt: Date?
-    /// Трафик с момента включения ядра. Итоги ядра при перезапуске (замеры пинга
-    /// пересобирают конфиг) начинаются с нуля — прежний расход копим в базе,
-    /// иначе «сессия» выглядела обнулившейся.
-    @State private var sessionDown: Int64 = 0
-    @State private var sessionUp: Int64 = 0
-    @State private var baseDown: Int64 = 0
-    @State private var baseUp: Int64 = 0
-    @State private var coreDown: Int64 = 0
-    @State private var coreUp: Int64 = 0
+    /// Статистику ведёт общий сборщик: он тикает всегда, а не только при открытой
+    /// вкладке, и отдаёт одинаковые цифры и «Серверам», и «Соединениям».
+    @ObservedObject private var sampler = TrafficSampler.shared
     @State private var paused = false
     @State private var recentlyClosed: [ClashApi.Connection] = []
     @State private var closedAt: [String: Date] = [:]
@@ -286,10 +275,22 @@ struct ConnectionsView: View {
                         .foregroundColor(.secondary)
                     Spacer(minLength: 4)
                 }
-                Text("С включения ядра: ↓ " + Self.size(sessionDown)
-                     + " · ↑ " + Self.size(sessionUp))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                VStack(spacing: 3) {
+                    HStack {
+                        Text("За " + window.rawValue)
+                        Spacer()
+                        Text("↓ " + Self.size(windowBytes.down)
+                             + " · ↑ " + Self.size(windowBytes.up))
+                    }
+                    HStack {
+                        Text("С включения ядра")
+                        Spacer()
+                        Text("↓ " + Self.size(sampler.sessionDown)
+                             + " · ↑ " + Self.size(sampler.sessionUp))
+                    }
+                }
+                .font(.caption2)
+                .foregroundColor(.secondary)
 
                 TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
                              start: windowStart, end: windowEnd)
@@ -461,47 +462,21 @@ struct ConnectionsView: View {
 
     // MARK: - Сбор статистики
 
-    /// Правый край окна — последний сэмпл, чтобы график не «уезжал» между опросами.
-    /// Правый край окна — «сейчас»: при обрыве опроса график не должен «застывать»
-    /// в прошлом и показывать пустоту при переключении на короткое окно.
-    private var windowEnd: Date { paused ? (samples.last?.at ?? Date()) : Date() }
+    /// Правый край окна — «сейчас»; на паузе замирает на последней точке.
+    private var windowEnd: Date { paused ? (sampler.samples.last?.at ?? Date()) : Date() }
 
     private var windowStart: Date { windowEnd.addingTimeInterval(-window.seconds) }
 
     private var windowSamples: [TrafficSample] {
-        samples.filter { $0.at >= windowStart }
+        sampler.samples(in: window.seconds, until: windowEnd)
     }
 
-    private var lastDown: Double { samples.last?.down ?? 0 }
-    private var lastUp: Double { samples.last?.up ?? 0 }
+    private var lastDown: Double { sampler.currentDown }
+    private var lastUp: Double { sampler.currentUp }
 
-    /// Трафик за окно — разница итогов ядра между границами окна.
-    /// Раньше суммировались дельты по соединениям, но короткие соединения (в том числе
-    /// служебные пробы) успевают закрыться между опросами, и окно показывало нули.
+    /// Весь трафик за выбранный промежуток — разница итогов ядра на его границах.
     private var windowBytes: (down: Int64, up: Int64) {
-        guard let last = samples.last else { return (0, 0) }
-        guard let firstIndex = samples.firstIndex(where: { $0.at >= windowStart }) else {
-            return (0, 0)
-        }
-        // База — сэмпл до окна: иначе теряется первый интервал.
-        let base = firstIndex > 0 ? samples[firstIndex - 1] : samples[firstIndex]
-        return (max(last.totalDown - base.totalDown, 0),
-                max(last.totalUp - base.totalUp, 0))
-    }
-
-    private var windowBytesByOutbound: [(name: String, down: Int64, up: Int64)] {
-        var totals: [String: TrafficCounters] = [:]
-        for sample in windowSamples {
-            for (name, bytes) in sample.bytesByOutbound {
-                var row = totals[name] ?? TrafficCounters(up: 0, down: 0)
-                row.up += bytes.up
-                row.down += bytes.down
-                totals[name] = row
-            }
-        }
-        return totals.map { (name: $0.key, down: $0.value.down, up: $0.value.up) }
-            .filter { $0.down + $0.up > 0 }
-            .sorted { $0.down + $0.up > $1.down + $1.up }
+        sampler.bytes(in: window.seconds, until: windowEnd)
     }
 
     /// Сводка по правилам: сколько соединений и сколько байт прошло через каждое.
@@ -518,182 +493,6 @@ struct ConnectionsView: View {
         }
         return totals.map { (name: $0.key, count: $0.value.count, down: $0.value.down, up: $0.value.up) }
             .sorted { $0.count > $1.count }
-    }
-
-    /// Один сэмпл на опрос: дельты счётчиков делим на прошедшее время.
-    private func recordSample(_ list: [ClashApi.Connection], at now: Date,
-                             totalDown: Int64, totalUp: Int64) {
-        var next: [String: TrafficCounters] = [:]
-        var byOutbound: [String: TrafficCounters] = [:]
-        var bytesDown: Int64 = 0
-        var bytesUp: Int64 = 0
-        for item in list {
-            let down = Int64(item.download)
-            let up = Int64(item.upload)
-            next[item.id] = TrafficCounters(up: up, down: down)
-            // Считаем только тех, кого видели в прошлом опросе: счётчики закрытых
-            // соединений исчезают, и разница «минус всё» дала бы ложный всплеск.
-            guard let previous = counters[item.id] else { continue }
-            let deltaDown = max(down - previous.down, 0)
-            let deltaUp = max(up - previous.up, 0)
-            bytesDown += deltaDown
-            bytesUp += deltaUp
-            var row = byOutbound[item.outbound] ?? TrafficCounters(up: 0, down: 0)
-            row.down += deltaDown
-            row.up += deltaUp
-            byOutbound[item.outbound] = row
-        }
-        counters = next
-        let elapsed = now.timeIntervalSince(lastSampleAt ?? now)
-        lastSampleAt = now
-        // После паузы или возврата на вкладку разница накопилась за минуты —
-        // такой сэмпл только испортил бы график.
-        guard elapsed > 0, elapsed < 10 else { return }
-        samples.append(TrafficSample(
-            at: now,
-            down: Double(bytesDown) / elapsed,
-            up: Double(bytesUp) / elapsed,
-            bytesDown: bytesDown,
-            bytesUp: bytesUp,
-            totalDown: totalDown,
-            totalUp: totalUp,
-            byOutbound: byOutbound.mapValues {
-                TrafficRates(down: Double($0.down) / elapsed, up: Double($0.up) / elapsed)
-            },
-            bytesByOutbound: byOutbound))
-        // Окна до 10 минут: держим 600 с плюс запас, чтобы левый край не обрывался.
-        let horizon = now.addingTimeInterval(-615)
-        if let first = samples.first, first.at < horizon {
-            samples.removeAll { $0.at < horizon }
-        }
-    }
-
-    private func startPolling() {
-        polling?.cancel()
-        polling = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if Task.isCancelled { return }
-                refresh()
-            }
-        }
-    }
-
-    private func refresh() {
-        // На паузе список не трогаем: он показывает соединения на момент нажатия.
-        guard !paused else { return }
-        Task {
-            // Ядро выключено — опроса нет, но сэмплы продолжаем писать: график
-            // должен идти по времени, а не замирать на последней точке.
-            let snapshot = engine.running
-                ? await ClashApi.snapshot()
-                : (list: [ClashApi.Connection](), totals: ClashApi.Totals())
-            let list = snapshot.list
-            await MainActor.run {
-                guard !paused else { return }
-                // Соединения, закрывшиеся с прошлого опроса, держим ещё пять секунд: на паузе
-                // видно и то, что только что оборвалось, — иначе строка исчезает до нажатия.
-                let now = Date()
-                let currentIDs = Set(list.map { $0.id })
-                // Соединение из списка закрытых снова в опросе — трафик возобновился.
-                recentlyClosed.removeAll { currentIDs.contains($0.id) }
-                for item in connections where !currentIDs.contains(item.id) {
-                    if !recentlyClosed.contains(where: { $0.id == item.id }) {
-                        recentlyClosed.append(item)
-                        closedAt[item.id] = now
-                    }
-                }
-                recentlyClosed.removeAll { item in
-                    guard let closed = closedAt[item.id] else { return true }
-                    return now.timeIntervalSince(closed) > 10
-                }
-                if recentlyClosed.count > 80 {
-                    recentlyClosed = Array(recentlyClosed.suffix(80))
-                }
-
-                connections = list.count > 400 ? Array(list.prefix(400)) : list
-                if engine.running {
-                    let totals = snapshot.totals
-                    if totals.download < coreDown || totals.upload < coreUp {
-                        // Ядро перезапустилось: старое накопленное не теряем.
-                        baseDown += coreDown
-                        baseUp += coreUp
-                    }
-                    coreDown = totals.download
-                    coreUp = totals.upload
-                    sessionDown = baseDown + coreDown
-                    sessionUp = baseUp + coreUp
-                }
-                recordSample(list, at: now,
-                             totalDown: sessionDown, totalUp: sessionUp)
-                refreshed = Date()
-                if !ruleFilter.isEmpty, !list.contains(where: { $0.rule == ruleFilter }) {
-                    ruleFilter = ""
-                }
-                if !outboundFilter.isEmpty, !list.contains(where: { $0.outbound == outboundFilter }) {
-                    outboundFilter = ""
-                }
-            }
-        }
-    }
-
-    /// Таблица в текст: одна строка на соединение, читается и в чате, и в файле.
-    private func plainText(_ list: [ClashApi.Connection]) -> String {
-        var lines: [String] = []
-        lines.append("Соединения · \(Self.fileStamp.string(from: Date())) · окно \(window.rawValue) · всего \(list.count)")
-        let bytes = windowBytes
-        lines.append("Трафик за \(window.rawValue): ↓ \(Self.size(bytes.down)) ↑ \(Self.size(bytes.up))")
-        let byOutbound = windowBytesByOutbound
-        if !byOutbound.isEmpty {
-            lines.append("По выходам:")
-            for row in byOutbound {
-                lines.append("  " + row.name + ": ↓ " + Self.size(row.down) + " ↑ " + Self.size(row.up))
-            }
-        }
-        let rulesSummary = ruleTotals(list)
-        if !rulesSummary.isEmpty {
-            lines.append("Правила:")
-            for row in rulesSummary {
-                lines.append("  " + row.name + " → " + String(row.count) + " соединений, ↓ "
-                             + Self.size(row.down) + " ↑ " + Self.size(row.up))
-            }
-        }
-        lines.append("Соединения:")
-        for (index, item) in list.enumerated() {
-            var parts: [String] = []
-            parts.append(item.destination)
-            if !item.source.isEmpty { parts.append("из " + item.source) }
-            if !item.proto.isEmpty { parts.append(item.proto) }
-            parts.append(networkText(item))
-            parts.append("↑ " + Self.size(Int64(item.upload)) + " ↓ " + Self.size(Int64(item.download)))
-            parts.append(folderName(item))
-            parts.append(exitName(item))
-            lines.append(String(index + 1) + ". " + parts.joined(separator: " · "))
-        }
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    /// Сводка в буфер: трафик за окно, выходы, правила и все соединения.
-    private func copySummary() {
-        UIPasteboard.general.string = plainText(visible)
-        notice = "скопировано: " + String(visible.count) + " соединений"
-    }
-
-    private func export() {
-        let text = plainText(visible)
-        let name = "throne-connections-" + Self.fileStamp.string(from: Date()) + ".txt"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        do {
-            try text.write(to: url, atomically: true, encoding: .utf8)
-            activeSheet = .export(url)
-        } catch {
-            notice = "экспорт не удался: " + error.localizedDescription
-        }
-    }
-
-    /// Размер строкой: единицу подбирает общий формат приложения.
-    static func size(_ bytes: Int64) -> String {
-        Format.size(bytes)
     }
 
     static func rate(_ value: Double) -> String {

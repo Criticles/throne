@@ -43,6 +43,11 @@ struct RootView: View {
         .environmentObject(traffic)
         .environmentObject(updater)
         .environmentObject(router)
+        .task {
+            // Сбор статистики трафика стартует вместе с приложением: иначе при
+            // закрытой вкладке «Соединения» ничего не копилось.
+            TrafficSampler.shared.attach(engine: engine)
+        }
         .accentColor(Theme.accent)
         .onOpenURL { url in
             // throne://import?url=<ссылка> — так профиль приходит из QR или другого приложения.
