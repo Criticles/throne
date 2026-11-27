@@ -1017,25 +1017,33 @@ struct TrafficGraph: View {
         .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
     }
 
-    /// X считается по времени: смена окна видна, а не просто растягивает линию.
+    /// X считается по времени, а линия сглаживается квадратичными кривыми
+    /// через середины отрезков — так график не выглядит «пилой».
     private func line(incoming: Bool, peak: Double, size: CGSize, color: Color) -> some View {
         let span = max(end.timeIntervalSince(start), 1)
+        let points: [CGPoint] = display.map { point in
+            let x = CGFloat(max(min(point.at.timeIntervalSince(start) / span, 1), 0)) * size.width
+            let value = incoming ? point.down : point.up
+            let ratio = CGFloat(max(min(value / peak, 1), 0))
+            let y = size.height - ratio * (size.height - 8) - 4
+            return CGPoint(x: x, y: y)
+        }
         return Path { path in
-            let list = display
-            guard list.count > 1 else { return }
-            for (index, point) in list.enumerated() {
-                let x = CGFloat(max(min(point.at.timeIntervalSince(start) / span, 1), 0)) * size.width
-                let value = incoming ? point.down : point.up
-                let ratio = CGFloat(value / peak)
-                let y = size.height - ratio * (size.height - 8) - 4
-                if index == 0 {
-                    path.move(to: CGPoint(x: x, y: y))
+            guard let first = points.first, points.count > 1 else { return }
+            path.move(to: first)
+            for index in 1..<points.count {
+                let current = points[index]
+                if index == points.count - 1 {
+                    path.addLine(to: current)
                 } else {
-                    path.addLine(to: CGPoint(x: x, y: y))
+                    let next = points[index + 1]
+                    let middle = CGPoint(x: (current.x + next.x) / 2,
+                                         y: (current.y + next.y) / 2)
+                    path.addQuadCurve(to: middle, control: current)
                 }
             }
         }
-        .stroke(color, style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
+        .stroke(color, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
     }
 
     /// Не абсолютное время, а «сколько назад»: −2 мин, −30 с.

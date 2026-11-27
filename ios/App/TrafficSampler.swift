@@ -77,11 +77,11 @@ final class TrafficSampler: ObservableObject {
                 TrafficStatsStore.shared.record(profile: name, up: deltaUp, down: deltaDown)
             }
         } else if elapsed >= 10 {
-            // Долгая пауза (приложение уходило в фон): базу сдвигаем, точку не рисуем.
-            prevAt = now
-            prevDown = sessionDown
-            prevUp = sessionUp
-            return
+            // Был перерыв (фон, сон): вставляем нулевую точку, иначе линия графика
+            // обрывается, и в коротком окне «пропадает» трафик, который был.
+            currentDown = 0
+            currentUp = 0
+            append(at: now, down: 0, up: 0, bytesDown: 0, bytesUp: 0)
         }
 
         prevAt = now
@@ -103,7 +103,7 @@ final class TrafficSampler: ObservableObject {
                                      bytesDown: bytesDown, bytesUp: bytesUp,
                                      totalDown: sessionDown, totalUp: sessionUp,
                                      byOutbound: [:], bytesByOutbound: [:]))
-        let horizon = date.addingTimeInterval(-615)
+        let horizon = date.addingTimeInterval(-620)
         if let first = samples.first, first.at < horizon {
             samples.removeAll { $0.at < horizon }
         }
