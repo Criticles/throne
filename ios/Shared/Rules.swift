@@ -159,18 +159,6 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
         self.attrs = list
     }
 
-    /// Старые сохранения приходят без «locked» — читаем терпимо, иначе весь
-    /// профиль не декодируется и данные теряются.
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Правило"
-        action = try container.decodeIfPresent(String.self, forKey: .action) ?? "route"
-        outbound = try container.decodeIfPresent(String.self, forKey: .outbound) ?? "proxy"
-        attrs = try container.decodeIfPresent([RoutePlanAttr].self, forKey: .attrs) ?? []
-        locked = try container.decodeIfPresent(Bool.self, forKey: .locked) ?? false
-    }
-
     /// Подпись строки папки: «proxy · 3 атрибута» или «блокировать · 1 атрибут».
     var subtitle: String {
         let destination = action == "reject" ? "блокировать" : outbound
@@ -198,6 +186,7 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
             id = uuid
         }
         name = (try container.decodeIfPresent(String.self, forKey: AnyAttributeKey("name"))) ?? "Правило"
+        locked = (try container.decodeIfPresent(Bool.self, forKey: AnyAttributeKey("locked"))) ?? false
         action = (try container.decodeIfPresent(String.self, forKey: AnyAttributeKey("action"))) ?? "route"
         outbound = (try container.decodeIfPresent(String.self, forKey: AnyAttributeKey("outbound")))
             ?? (action == "reject" ? "reject" : "proxy")
@@ -208,7 +197,7 @@ struct RoutePlanRule: Codable, Identifiable, Hashable {
             collected = nested
         }
         // Формат Throne: атрибуты — это остальные ключи объекта (массив, строка или bool).
-        let service = ["id", "name", "action", "outbound", "type", "attrs", "v"]
+        let service = ["id", "name", "action", "outbound", "type", "attrs", "v", "locked"]
         for key in container.allKeys where !service.contains(key.stringValue) {
             if let values = try? container.decode([String].self, forKey: key) {
                 collected.append(RoutePlanAttr(attr: key.stringValue, values: values))
@@ -529,21 +518,6 @@ struct RoutePlan: Codable, Identifiable {
     var warpList = ""
     var updated: Date?
 
-    /// Терпимое декодирование: в старых профилях нет «isSystem» и новых полей.
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Маршрут"
-        isSystem = try container.decodeIfPresent(Bool.self, forKey: .isSystem) ?? false
-        finalTarget = try container.decodeIfPresent(String.self, forKey: .finalTarget) ?? "proxy"
-        rules = try container.decodeIfPresent([RoutePlanRule].self, forKey: .rules) ?? []
-        directList = try container.decodeIfPresent(String.self, forKey: .directList) ?? ""
-        proxyList = try container.decodeIfPresent(String.self, forKey: .proxyList) ?? ""
-        blockList = try container.decodeIfPresent(String.self, forKey: .blockList) ?? ""
-        warpList = try container.decodeIfPresent(String.self, forKey: .warpList) ?? ""
-        updated = try container.decodeIfPresent(Date.self, forKey: .updated)
-    }
-
     init(id: UUID = UUID(), name: String = "Маршрут", isSystem: Bool = false, finalTarget: String = "proxy",
          rules: [RoutePlanRule] = [], directList: String = "",
          proxyList: String = "", blockList: String = "", warpList: String = "",
@@ -561,7 +535,7 @@ struct RoutePlan: Codable, Identifiable {
     }
 
     private enum Keys: String, CodingKey {
-        case id, name, finalTarget, rules, entries, directList, proxyList, blockList, warpList, updated
+        case id, name, isSystem, finalTarget, rules, entries, directList, proxyList, blockList, warpList, updated
         case defaultOutbound = "default_outbound"
         case kind, v
     }
@@ -575,6 +549,7 @@ struct RoutePlan: Codable, Identifiable {
             id = (try container.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
         }
         name = (try container.decodeIfPresent(String.self, forKey: .name)) ?? "Маршрут"
+        isSystem = (try container.decodeIfPresent(Bool.self, forKey: .isSystem)) ?? false
         // Документ Throne зовёт это `default_outbound`, наш прежний вид — `finalTarget`.
         // Отдельные строки: `try` внутри автозамыкания `??` компилятор не пропускает.
         let storedTarget = try container.decodeIfPresent(String.self, forKey: .finalTarget)
