@@ -763,6 +763,15 @@ struct ConnectionDetailView: View {
                             subtitle: "порт → правило")
                     }
                     .disabled(connection.port <= 0)
+
+                    Button {
+                        let proto = connection.proto.split(separator: "/").first.map(String.init) ?? ""
+                        insert(attr: "protocol", value: proto, title: "протокол → правило")
+                    } label: {
+                        row(title: connection.proto.isEmpty ? "—" : connection.proto,
+                            subtitle: "протокол → правило")
+                    }
+                    .disabled(connection.proto.isEmpty)
                 } header: {
                     Text("Перенести в правило")
                 } footer: {
