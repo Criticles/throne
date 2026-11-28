@@ -227,6 +227,7 @@ struct RouteInsertSheet: View {
                 .labelsHidden()
                 .tint(Theme.accent)
                 .scaleEffect(0.8)
+                .frame(width: Theme.tailWidth, alignment: .center)
             } else if planID == plan.id, freshPlans.contains(plan.id) {
                 // Выход профиля меняем только у созданного в этом окне.
                 Button {
@@ -239,7 +240,7 @@ struct RouteInsertSheet: View {
                         .padding(.vertical, 4)
                         .background(Theme.accent.opacity(0.16))
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .frame(width: Self.tailWidth, alignment: .center)
+                        .frame(width: Theme.tailWidth, alignment: .center)
                 }
                 .buttonStyle(.borderless)
             } else if planID == plan.id {
@@ -249,7 +250,7 @@ struct RouteInsertSheet: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color(uiColor: .tertiarySystemFill))
-                    .frame(width: Self.tailWidth, alignment: .center)
+                    .frame(width: Theme.tailWidth, alignment: .center)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
         }
@@ -324,10 +325,6 @@ struct RouteInsertSheet: View {
         }
     }
 
-    /// Ширина колонки выхода. Одна для всех папок, поэтому центры коротких значений
-    /// и плашек с именем сервера лежат на одной вертикальной оси.
-    private static let tailWidth: CGFloat = 190
-
     /// Выход папки справа: и `proxy`, и длинное имя сервера центрируются в своей колонке —
     /// одна ось на весь список. Имя сервера при нехватке места усекается, а не уезжает влево.
     @ViewBuilder
@@ -336,19 +333,19 @@ struct RouteInsertSheet: View {
 
         if folder.locked {
             tailLabel(text, accent: false, boxed: false)
-                .frame(width: Self.tailWidth, alignment: .center)
+                .frame(width: Theme.tailWidth, alignment: .center)
         } else if freshFolders.contains(folder.id) {
             Button {
                 picker = OutboundTarget(planID: planID ?? folder.id, folderID: folder.id)
             } label: {
                 tailLabel(text, accent: true, boxed: true)
-                    .frame(width: Self.tailWidth, alignment: .center)
+                    .frame(width: Theme.tailWidth, alignment: .center)
             }
             .buttonStyle(.borderless)
         } else {
             // Давняя папка: выход зафиксирован, чтобы не перевести разом все её значения.
             tailLabel(text, accent: false, boxed: true)
-                .frame(width: Self.tailWidth, alignment: .center)
+                .frame(width: Theme.tailWidth, alignment: .center)
         }
     }
 

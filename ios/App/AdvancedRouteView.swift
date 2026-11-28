@@ -602,10 +602,12 @@ struct RouteRuleEditorView: View {
                     .font(.caption2.weight(.medium))
                     .foregroundColor(Theme.accent)
                     .buttonStyle(.borderless)
+                    .frame(width: Theme.tailWidth, alignment: .center)
             } else if options.isEmpty || options.count > 5 {
                 Button("Выбрать") { sheet = .value(item) }
                     .font(.caption2.weight(.medium))
                     .buttonStyle(.borderless)
+                    .frame(width: Theme.tailWidth, alignment: .center)
             } else {
                 Menu {
                     ForEach(options, id: \.self) { option in
@@ -619,6 +621,7 @@ struct RouteRuleEditorView: View {
                     Text("Выбрать")
                         .font(.caption2.weight(.medium))
                         .foregroundColor(Theme.accent)
+                        .frame(width: Theme.tailWidth, alignment: .center)
                 }
             }
         }

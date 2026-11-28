@@ -5,6 +5,10 @@ enum Theme {
     /// Фирменный коралл Throne — тот же, что в настольной и Android-версии.
     static let accent = Color(red: 0.94, green: 0.34, blue: 0.36)
 
+    /// Ширина правой колонки в списках маршрутизации. Одна на весь экран,
+    /// поэтому тумблеры, плашки и «Выбрать» стоят на одной вертикальной оси.
+    static let tailWidth: CGFloat = 190
+
     /// Задержка как светофор: зелёный — играть и смотреть, оранжевый — терпимо, красный — нет.
     static func pingColor(_ millis: Int?) -> Color {
         guard let millis else { return Color(uiColor: .tertiaryLabel) }
