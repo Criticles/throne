@@ -24,6 +24,12 @@ struct RouteInsertSheet: View {
     @State private var newProfileName = ""
     @State private var newProfileOutbound = "proxy"
 
+    /// Папки и профили, созданные в этом окне: только у них выход можно поменять.
+    /// У давних папок плашка неактивна — иначе смена выхода молча перевела бы
+    /// туда все уже лежащие в папке значения.
+    @State private var freshFolders = Set<UUID>()
+    @State private var freshPlans = Set<UUID>()
+
     @State private var showNewFolder = false
     /// Почему не удалось добавить — иначе кнопка «молчит».
     @State private var failure = ""
@@ -108,7 +114,7 @@ struct RouteInsertSheet: View {
             } else if !showNewFolder {
                 Button {
                     newProfileName = ""
-                    newProfileOutbound = current?.finalTarget ?? "proxy"
+                    newProfileOutbound = "proxy"
                     showNewProfile = true
                     showNewFolder = false
                 } label: {
@@ -179,8 +185,8 @@ struct RouteInsertSheet: View {
                 .labelsHidden()
                 .tint(Theme.accent)
                 .scaleEffect(0.8)
-            } else if planID == plan.id {
-                // Выход профиля — как у папок: плашка в его же строке, напротив названия.
+            } else if planID == plan.id, freshPlans.contains(plan.id) {
+                // Выход профиля меняем только у созданного в этом окне.
                 Menu {
                     ForEach(targets, id: \.self) { target in
                         Button(target) { setProfileOutbound(target) }
@@ -195,6 +201,14 @@ struct RouteInsertSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(.borderless)
+            } else if planID == plan.id {
+                Text(plan.finalTarget)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(uiColor: .tertiarySystemFill))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
         }
     }
@@ -217,9 +231,8 @@ struct RouteInsertSheet: View {
             } else if !showNewProfile {
                 Button {
                     newFolderName = ""
-                    newFolderOutbound = current?.isSystem == true
-                        ? "proxy"
-                        : (current?.finalTarget ?? "proxy")
+                    // Новая папка всегда начинается с proxy, а не с выхода профиля.
+                    newFolderOutbound = "proxy"
                     showNewFolder = true
                     showNewProfile = false
                 } label: {
@@ -239,7 +252,7 @@ struct RouteInsertSheet: View {
                      ? "Reject, Direct и Proxy менять нельзя — выход задан названием. Свои папки создаются как обычно."
                      : "Профиль выключен: правило добавится в папку, но применится, только когда включишь «Быстрые правила».")
             } else {
-                Text("Выход папки меняется нажатием на плашку справа.")
+                Text("Выход папки меняется только у только что созданной — у остальных он закреплён.")
             }
         }
     }
@@ -269,7 +282,7 @@ struct RouteInsertSheet: View {
                 Text(folder.outbound)
                     .font(.caption2)
                     .foregroundColor(.secondary)
-            } else {
+            } else if freshFolders.contains(folder.id) {
                 Menu {
                     ForEach(targets, id: \.self) { target in
                         Button(target) { setFolderOutbound(target, folder: folder) }
@@ -284,6 +297,15 @@ struct RouteInsertSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(.borderless)
+            } else {
+                // Давняя папка: выход зафиксирован, чтобы не перевести разом все её значения.
+                Text(folder.outbound)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(uiColor: .tertiarySystemFill))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
         }
     }
@@ -421,6 +443,7 @@ struct RouteInsertSheet: View {
         plan.updated = Date()
         rules.savePlan(plan)
         planID = plan.id
+        freshPlans.insert(plan.id)
         folderID = nil
         newProfileName = ""
         showNewProfile = false
@@ -438,6 +461,7 @@ struct RouteInsertSheet: View {
         updated.updated = Date()
         rules.savePlan(updated)
         folderID = folder.id
+        freshFolders.insert(folder.id)
         newFolderName = ""
         showNewFolder = false
     }
