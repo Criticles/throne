@@ -862,11 +862,16 @@ final class RuleStore: ObservableObject {
 
     static func withServiceFolders(_ plan: RoutePlan) -> RoutePlan {
         var result = plan
-        for folder in serviceFolders() where !result.rules.contains(where: { $0.id == folder.id }) {
-            // Восстанавливаем по имени: id у эталона каждый раз новый.
-            if !result.rules.contains(where: { $0.locked && $0.name == folder.name }) {
-                result.rules.insert(folder, at: 0)
+        for folder in serviceFolders() {
+            // Если папка уже есть по имени — принудительно возвращаем ей защиту
+            // и штатный выход: так старые сохранения не остаются «разлоченными».
+            if let index = result.rules.firstIndex(where: { $0.name == folder.name }) {
+                result.rules[index].locked = true
+                result.rules[index].outbound = folder.outbound
+                result.rules[index].action = folder.action
+                continue
             }
+            result.rules.insert(folder, at: 0)
         }
         return result
     }
@@ -904,7 +909,11 @@ final class RuleStore: ObservableObject {
     }
 
     func deletePlan(_ id: UUID) {
-        guard plans.first(where: { $0.id == id })?.isSystem != true else {
+        // «Быстрые правила» удалять нельзя ни из списка, ни из редактора:
+        // на них держится маршрутизация соединений. Проверяем и по флагу,
+        // и по имени — на случай старых сохранений без isSystem.
+        if let plan = plans.first(where: { $0.id == id }),
+           plan.isSystem || plan.name == "Быстрые правила" {
             status = "служебный профиль удалить нельзя"
             return
         }

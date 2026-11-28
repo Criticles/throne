@@ -51,10 +51,14 @@ struct RouteProfilesView: View {
                         }
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            if !plan.isSystem { rules.deletePlan(plan.id) }
-                        } label: {
-                            Label("Удалить", systemImage: "trash")
+                        // У служебного профиля удаления нет вовсе — не показываем
+                        // кнопку, которую всё равно нельзя нажать.
+                        if !plan.isSystem {
+                            Button(role: .destructive) {
+                                rules.deletePlan(plan.id)
+                            } label: {
+                                Label("Удалить", systemImage: "trash")
+                            }
                         }
                         Button {
                             rules.activate(plan.id)
@@ -79,11 +83,13 @@ struct RouteProfilesView: View {
                         } label: {
                             Label("Экспорт", systemImage: "square.and.arrow.up")
                         }
-                        Divider()
-                        Button(role: .destructive) {
-                            if !plan.isSystem { rules.deletePlan(plan.id) }
-                        } label: {
-                            Label("Удалить", systemImage: "trash")
+                        if !plan.isSystem {
+                            Divider()
+                            Button(role: .destructive) {
+                                rules.deletePlan(plan.id)
+                            } label: {
+                                Label("Удалить", systemImage: "trash")
+                            }
                         }
                     }
                 }

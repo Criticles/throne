@@ -14,6 +14,9 @@ struct AdvancedRouteView: View {
     let planID: UUID
 
     @State private var name = ""
+    /// Служебный профиль: у него нет своего final, и флаг нельзя потерять
+    /// при сохранении — иначе «Быстрые правила» станут обычным профилем.
+    @State private var isSystem = false
     @State private var finalTarget = "proxy"
     @State private var directList = ""
     @State private var proxyList = ""
@@ -58,6 +61,7 @@ struct AdvancedRouteView: View {
     private var plan: RoutePlan {
         RoutePlan(id: planID,
                   name: name,
+                  isSystem: isSystem,
                   finalTarget: finalTarget,
                   rules: folders,
                   directList: directList,
@@ -118,27 +122,46 @@ struct AdvancedRouteView: View {
     private var commonSection: some View {
         Section {
             TextField("Название профиля", text: $name)
-            // Тот же вид, что у атрибутов папки: имя, значение и «Выбрать» с окном.
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Outbound по умолчанию")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.primary)
-                    Text(finalTarget)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Button("Выбрать") { sheet = .destination }
-                    .font(.caption2.weight(.medium))
-                    .buttonStyle(.borderless)
+            // У «Быстрых правил» выхода по умолчанию нет: всё, что не поймала
+            // ни одна папка, уходит в активный профиль — там уже его final.
+            if isSystem {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Outbound по умолчанию")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.primary)
+                        Text("нет — уходит в активный профиль")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                // Тот же вид, что у атрибутов папки: имя, значение и «Выбрать» с окном.
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Outbound по умолчанию")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.primary)
+                        Text(finalTarget)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button("Выбрать") { sheet = .destination }
+                        .font(.caption2.weight(.medium))
+                        .buttonStyle(.borderless)
+                }
             }
         } header: {
             Text("Основное")
         } footer: {
-            Text("Сюда идёт всё, что не поймала ни одна папка: proxy — выбранный сервер, direct — напрямую, reject — блокировать.")
+            Text(isSystem
+                 ? "Служебный профиль: его папки проверяются раньше основного, своего выхода у него нет — непойманное уходит в выбранный профиль."
+                 : "Сюда идёт всё, что не поймала ни одна папка: proxy — выбранный сервер, direct — напрямую, reject — блокировать.")
         }
     }
 
@@ -169,14 +192,20 @@ struct AdvancedRouteView: View {
         Section {
             ForEach(folders) { rule in
                 folderRow(rule)
+                    // Свайп на удаление есть только у обычных папок: у служебных
+                    // Reject/Direct/Proxy кнопки нет, а не «есть, но не работает».
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if !rule.locked {
+                            Button(role: .destructive) {
+                                folders.removeAll { $0.id == rule.id }
+                            } label: {
+                                Label("Удалить", systemImage: "trash")
+                            }
+                        }
+                    }
             }
             .onMove { source, destination in
                 folders.move(fromOffsets: source, toOffset: destination)
-            }
-            .onDelete { offsets in
-                // Служебные папки «Быстрых правил» не удаляются.
-                let removable = offsets.filter { !folders[$0].locked }
-                folders.remove(atOffsets: IndexSet(removable))
             }
 
             Button {
@@ -303,6 +332,7 @@ struct AdvancedRouteView: View {
         loaded = true
         guard let stored = rules.plan(with: planID) else { return }
         name = stored.name
+        isSystem = stored.isSystem
         finalTarget = stored.finalTarget
         directList = stored.directList
         proxyList = stored.proxyList
@@ -442,7 +472,10 @@ struct RouteRuleEditorView: View {
         Group {
             Form {
                 Section {
+                    // У служебных папок имя задаёт поведение (Reject/Direct/Proxy),
+                    // поэтому их не переименовываем.
                     TextField("Название папки", text: $rule.name)
+                        .disabled(rule.locked)
                 } header: {
                     Text("Папка")
                 } footer: {
