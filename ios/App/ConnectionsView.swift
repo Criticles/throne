@@ -383,10 +383,6 @@ struct ConnectionsView: View {
                 .monospacedDigit()
                 .foregroundColor(active ? .secondary : Color(uiColor: .tertiaryLabel))
                 .frame(minWidth: 52, alignment: .trailing)
-
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundColor(Color(uiColor: .tertiaryLabel))
         }
         .padding(.vertical, 4)
     }
