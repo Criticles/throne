@@ -86,7 +86,9 @@ struct RouteInsertSheet: View {
         Section {
             ForEach(plans) { plan in
                 profileRow(plan)
-                    .listRowBackground(planID == plan.id ? Theme.accent.opacity(0.07) : nil)
+                    // Подсветка «выбрано» — только у обычных профилей.
+                    .listRowBackground(!plan.isSystem && planID == plan.id
+                                       ? Theme.accent.opacity(0.07) : nil)
             }
 
             // Выход по умолчанию — только у обычного профиля и сразу под списком.
@@ -134,7 +136,16 @@ struct RouteInsertSheet: View {
             newFolderOutbound = plan.isSystem ? "proxy" : plan.finalTarget
         } label: {
             HStack(spacing: 10) {
-                radio(planID == plan.id)
+                // «Быстрые правила» не выбирают — они активны всегда. Кружок
+                // у них не рисуем: выбрать можно только папку внутри.
+                if plan.isSystem {
+                    Image(systemName: "bolt.horizontal.circle")
+                        .font(.system(size: 15))
+                        .foregroundColor(Color(uiColor: .tertiaryLabel))
+                        .frame(width: 18, height: 18)
+                } else {
+                    radio(planID == plan.id)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(plan.name)
                         .font(.subheadline.weight(.medium))
@@ -146,6 +157,11 @@ struct RouteInsertSheet: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer(minLength: 6)
+                if plan.isSystem {
+                    Text("всегда активен")
+                        .font(.caption2)
+                        .foregroundColor(Color(uiColor: .tertiaryLabel))
+                }
             }
             .contentShape(Rectangle())
             .frame(maxWidth: .infinity, alignment: .leading)
