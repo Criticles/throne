@@ -36,7 +36,9 @@ enum WARPCreator {
         let privateKey = Curve25519.KeyAgreement.PrivateKey()
         let publicKey = privateKey.publicKey.rawRepresentation.base64EncodedString()
 
-        var request = URLRequest(url: URL(string: "https://api.cloudflareclient.com/v0i1909051800/reg")!)
+        // Старый адрес api.cloudflareclient.com заблокирован: соединение рвётся на TLS.
+        // Рабочий адрес — из клиента текущей версии WARP.
+        var request = URLRequest(url: URL(string: "https://api.devices.cloudflare.com/v0a4471/reg")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -55,8 +57,11 @@ enum WARPCreator {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let config = root["config"] as? [String: Any],
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw WARPError.registration }
+        // Новый адрес отдаёт объект сразу, старый — завёрнутым в `result`.
+        let root = (json["result"] as? [String: Any]) ?? json
+        guard let config = root["config"] as? [String: Any],
               let peers = config["peers"] as? [[String: Any]],
               let first = peers.first,
               let peerPublic = first["public_key"] as? String

@@ -145,8 +145,8 @@ enum ConfigBuilder {
             }
             // Цепочка: выход по умолчанию зовётся `proxy`, а такого outbound в конфиге нет —
             // трафик должен уходить в первое звено. Иначе ядро падает с «outbound not found».
-            if profile.kind == .chain, Self.chainEntryTag(profile.payload) != nil {
-                let entry = "c0"
+            if profile.kind == .chain, let exit = Self.chainExitTag(profile.payload) {
+                let entry = exit
                 if (route["final"] as? String) == "proxy" { route["final"] = entry }
                 if var rules = route["rules"] as? [[String: Any]] {
                     for index in rules.indices where (rules[index]["outbound"] as? String) == "proxy" {
@@ -261,13 +261,13 @@ enum ConfigBuilder {
         return text
     }
 
-    /// Тег первого звена цепочки — он же точка входа трафика.
-    static func chainEntryTag(_ payload: String) -> String? {
+    /// Тег последнего звена: именно оно выходит в интернет, поэтому на него смотрит `final`.
+    static func chainExitTag(_ payload: String) -> String? {
         guard let data = payload.data(using: .utf8),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let links = root["links"] as? [[String: Any]], links.count >= 2
         else { return nil }
-        return "c0"
+        return "c\(links.count - 1)"
     }
 
     /// Цепочка: звенья собираются в один конфиг, каждое следующее — через `detour`.
@@ -365,13 +365,17 @@ enum ConfigBuilder {
             tags.append(tag)
         }
 
-        // Каждое звено отправляет свой трафик в следующее.
-        for index in 0..<(tags.count - 1) {
-            let next = tags[index + 1]
-            if let slot = outbounds.firstIndex(where: { ($0["tag"] as? String) == tags[index] }) {
-                outbounds[slot]["detour"] = next
-            } else if let slot = endpoints.firstIndex(where: { ($0["tag"] as? String) == tags[index] }) {
-                endpoints[slot]["detour"] = next
+        // `detour` — это «диал через», а не «диал в»: последнее звено соединяется
+        // через предыдущее, предыдущее — через звено до него. Поэтому detour ставится
+        // начиная со второго звена, а `final` указывает на последнее — выход в интернет.
+        if tags.count > 1 {
+            for index in 1..<tags.count {
+                let previous = tags[index - 1]
+                if let slot = outbounds.firstIndex(where: { ($0["tag"] as? String) == tags[index] }) {
+                    outbounds[slot]["detour"] = previous
+                } else if let slot = endpoints.firstIndex(where: { ($0["tag"] as? String) == tags[index] }) {
+                    endpoints[slot]["detour"] = previous
+                }
             }
         }
 
@@ -380,7 +384,7 @@ enum ConfigBuilder {
             "dns": dnsConfig().block,
             "inbounds": [inbound()],
             "outbounds": outbounds + [["type": "direct", "tag": "direct"]],
-            "route": ["final": tags[0], "auto_detect_interface": false],
+            "route": ["final": tags[tags.count - 1], "auto_detect_interface": false],
             "experimental": clashAPI(),
         ]
         if !endpoints.isEmpty { config["endpoints"] = endpoints }

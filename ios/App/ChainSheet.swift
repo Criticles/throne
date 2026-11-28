@@ -125,7 +125,7 @@ struct ChainSheet: View {
                 }
 
                 Button {
-                    picking = true
+                    withAnimation(.easeOut(duration: 0.15)) { picking = true }
                 } label: {
                     Label("Добавить звено", systemImage: "plus")
                         .font(.subheadline)
@@ -176,46 +176,36 @@ struct ChainSheet: View {
                     .disabled(!canSave)
             }
         }
-        .sheet(isPresented: $picking) {
-            linkPicker
-        }
+        .overlay(
+            Group {
+                if picking {
+                    PillChoiceSheet(
+                        title: "Добавить звено",
+                        items: store.profiles.filter { $0.kind != .chain }.map { profile in
+                            PillChoiceSheet.Item(id: profile.id.uuidString,
+                                                 title: profile.name,
+                                                 detail: profile.badge ?? profile.kind.title,
+                                                 accent: false)
+                        },
+                        extraTitle: nil,
+                        onPick: { picked in
+                            if let profile = store.profiles.first(where: { $0.id.uuidString == picked.id }) {
+                                links.append(Link(name: profile.name,
+                                                  payload: profile.payload,
+                                                  badge: profile.badge ?? profile.kind.title))
+                            }
+                            withAnimation(.easeOut(duration: 0.15)) { picking = false }
+                        },
+                        onExtra: {},
+                        onCancel: { withAnimation(.easeOut(duration: 0.15)) { picking = false } }
+                    )
+                }
+            }
+        )
     }
 
     private func closeFolderSheet() {
         withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false }
-    }
-
-    /// Список серверов, из которых собираем цепочку.
-    private var linkPicker: some View {
-        NavigationView {
-            List {
-                ForEach(store.profiles.filter { $0.kind != .chain }) { profile in
-                    Button {
-                        let badge = profile.badge ?? profile.kind.title
-                        links.append(Link(name: profile.name, payload: profile.payload, badge: badge))
-                        picking = false
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(profile.name).font(.subheadline)
-                            Text(profile.badge ?? profile.kind.title)
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .navigationTitle("Добавить звено")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { picking = false }
-                }
-            }
-        }
-        .navigationViewStyle(.stack)
     }
 
     private func save() {

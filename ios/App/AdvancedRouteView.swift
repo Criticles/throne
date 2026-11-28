@@ -417,6 +417,8 @@ struct RouteRuleEditorView: View {
 
     @State private var rule: RoutePlanRule
     @State private var sheet: Sheet?
+    /// Атрибут, для которого открыт выбор значения панелью снизу.
+    @State private var attrPicker: RoutePlanAttr?
 
     init(rule: RoutePlanRule, targets: [String], embedded: Bool = false,
          onSave: @escaping (RoutePlanRule) -> Void) {
@@ -446,15 +448,41 @@ struct RouteRuleEditorView: View {
     var body: some View {
         if embedded {
             // Кнопок нет: изменения уходят в профиль сразу, «назад» ничего не теряет.
-            content
+            contentWithPicker
                 .onChange(of: rule) { updated in onSave(updated) }
                 .onDisappear { onSave(rule) }
         } else {
             NavigationView {
-                content.toolbar { cancelToolbar; confirmToolbar }
+                contentWithPicker.toolbar { cancelToolbar; confirmToolbar }
             }
             .navigationViewStyle(.stack)
         }
+    }
+
+    /// Экран плюс панель выбора значения атрибута.
+    private var contentWithPicker: some View {
+        content.overlay(
+            Group {
+                if let item = attrPicker {
+                    PillChoiceSheet(
+                        title: item.attr,
+                        items: valueOptions(item.attr).map { option in
+                            PillChoiceSheet.Item(id: option,
+                                                 title: option,
+                                                 detail: item.values.contains(option) ? "выбрано" : nil,
+                                                 accent: item.values.contains(option))
+                        },
+                        extraTitle: nil,
+                        onPick: { picked in
+                            choose(picked.title, in: item)
+                            withAnimation(.easeOut(duration: 0.15)) { attrPicker = nil }
+                        },
+                        onExtra: {},
+                        onCancel: { withAnimation(.easeOut(duration: 0.15)) { attrPicker = nil } }
+                    )
+                }
+            }
+        )
     }
 
     /// «Готово» есть всегда: и на экране, и в листе.
@@ -568,7 +596,13 @@ struct RouteRuleEditorView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if options.isEmpty || options.count > 5 {
+            if RouteAttribute.singleChoice(item.attr), options.count > 1 {
+                // Одиночный выбор (protocol, network, ip_version…) — панель, как «Куда направить».
+                Button("Выбрать") { attrPicker = item }
+                    .font(.caption2.weight(.medium))
+                    .foregroundColor(Theme.accent)
+                    .buttonStyle(.borderless)
+            } else if options.isEmpty || options.count > 5 {
                 Button("Выбрать") { sheet = .value(item) }
                     .font(.caption2.weight(.medium))
                     .buttonStyle(.borderless)
