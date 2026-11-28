@@ -88,7 +88,7 @@ struct RouteInsertSheet: View {
                 profileRow(plan)
                     // Подсветка «выбрано» — только у обычных профилей.
                     .listRowBackground(!plan.isSystem && planID == plan.id
-                                       ? Theme.accent.opacity(0.07) : nil)
+                                       ? Theme.accent.opacity(0.14) : nil)
             }
 
             // Выход по умолчанию — только у обычного профиля и сразу под списком.
@@ -146,7 +146,9 @@ struct RouteInsertSheet: View {
                             .foregroundColor(Color(uiColor: .tertiaryLabel))
                             .frame(width: 18, height: 18)
                     } else {
-                        radio(planID == plan.id)
+                        // Кружок убрали, но отступ оставляем: названия профилей
+                        // должны начинаться на одной вертикали со «Быстрыми правилами».
+                        Color.clear.frame(width: 18, height: 18)
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plan.name)
@@ -184,7 +186,7 @@ struct RouteInsertSheet: View {
         Section {
             ForEach(folders) { folder in
                 folderRow(folder)
-                    .listRowBackground(folderID == folder.id ? Theme.accent.opacity(0.07) : nil)
+                    .listRowBackground(folderID == folder.id ? Theme.accent.opacity(0.14) : nil)
             }
 
             if showNewFolder {
@@ -227,7 +229,6 @@ struct RouteInsertSheet: View {
                 folderID = folder.id
             } label: {
                 HStack(spacing: 10) {
-                    radio(folderID == folder.id)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(folder.name)
                             .font(.subheadline)
@@ -345,21 +346,6 @@ struct RouteInsertSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
             .contentShape(Rectangle())
-        }
-    }
-
-    /// Тонкое кольцо; у выбранного — акцентная точка внутри (без заливки строки).
-    private func radio(_ selected: Bool) -> some View {
-        ZStack {
-            Circle()
-                .strokeBorder(selected ? Theme.accent : Color(uiColor: .tertiaryLabel),
-                              lineWidth: 1)
-                .frame(width: 18, height: 18)
-            if selected {
-                Circle()
-                    .fill(Theme.accent)
-                    .frame(width: 8, height: 8)
-            }
         }
     }
 
