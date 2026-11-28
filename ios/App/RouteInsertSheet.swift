@@ -309,32 +309,31 @@ struct RouteInsertSheet: View {
         }
     }
 
-    /// Выход папки справа: короткие значения (proxy/direct/reject) стоят по одной
-    /// вертикальной оси по центру своей колонки, название сервера прижимается к правому краю.
+    /// Ширина колонки выхода. Одна для всех папок, поэтому центры коротких значений
+    /// и плашек с именем сервера лежат на одной вертикальной оси.
+    private static let tailWidth: CGFloat = 190
+
+    /// Выход папки справа: и `proxy`, и длинное имя сервера центрируются в своей колонке —
+    /// одна ось на весь список. Имя сервера при нехватке места усекается, а не уезжает влево.
     @ViewBuilder
     private func outboundTail(_ folder: RoutePlanRule) -> some View {
         let text = folder.outbound
-        let short = isShortTarget(text)
-        let column: CGFloat? = short ? 64 : nil
 
         if folder.locked {
             tailLabel(text, accent: false, boxed: false)
-                .frame(width: column, alignment: .center)
-                .frame(maxWidth: short ? nil : .infinity, alignment: .trailing)
+                .frame(width: Self.tailWidth, alignment: .center)
         } else if freshFolders.contains(folder.id) {
             Button {
                 picker = OutboundTarget(planID: planID ?? folder.id, folderID: folder.id)
             } label: {
                 tailLabel(text, accent: true, boxed: true)
-                    .frame(width: column, alignment: .center)
+                    .frame(width: Self.tailWidth, alignment: .center)
             }
             .buttonStyle(.borderless)
-            .frame(maxWidth: short ? nil : .infinity, alignment: .trailing)
         } else {
             // Давняя папка: выход зафиксирован, чтобы не перевести разом все её значения.
             tailLabel(text, accent: false, boxed: true)
-                .frame(width: column, alignment: .center)
-                .frame(maxWidth: short ? nil : .infinity, alignment: .trailing)
+                .frame(width: Self.tailWidth, alignment: .center)
         }
     }
 
@@ -344,18 +343,13 @@ struct RouteInsertSheet: View {
             .font(accent ? .caption2.weight(.medium) : .caption2)
             .foregroundColor(accent ? Theme.accent : .secondary)
             .lineLimit(1)
+            .truncationMode(.tail)
             .padding(.horizontal, boxed ? 8 : 0)
             .padding(.vertical, boxed ? 4 : 0)
             .background(boxed
                         ? (accent ? Theme.accent.opacity(0.16) : Color(uiColor: .tertiarySystemFill))
                         : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-    }
-
-    /// Короткие выходы — это ключевые слова ядра, а не имя сервера.
-    private func isShortTarget(_ text: String) -> Bool {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return value == "proxy" || value == "direct" || value == "reject"
     }
 
     /// «значений: 3» — коротко, чтобы строка не разрасталась.
