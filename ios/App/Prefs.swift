@@ -93,6 +93,11 @@ final class Prefs: ObservableObject {
     @Published var autoConnect: Bool {
         didSet { defaults.set(autoConnect, forKey: "prefs.autoConnect") }
     }
+    /// «Всегда держать подключение» — как в Karing: on-demand включён, система сама
+    /// поднимает туннель после падения расширения. Выключение — через disconnect в приложении.
+    @Published var keepConnected: Bool {
+        didSet { defaults.set(keepConnected, forKey: "prefs.keepConnected") }
+    }
     @Published var bypassLocalNetwork: Bool {
         didSet { defaults.set(bypassLocalNetwork, forKey: "prefs.bypassLAN") }
     }
@@ -152,6 +157,7 @@ final class Prefs: ObservableObject {
     init() {
         routingMode = RoutingMode(rawValue: defaults.string(forKey: "prefs.routing") ?? "") ?? .rules
         autoConnect = defaults.object(forKey: "prefs.autoConnect") as? Bool ?? true
+        keepConnected = defaults.object(forKey: "prefs.keepConnected") as? Bool ?? true
         bypassLocalNetwork = defaults.object(forKey: "prefs.bypassLAN") as? Bool ?? true
         blockAds = defaults.object(forKey: "prefs.blockAds") as? Bool ?? false
         xrayPreference = XrayPreference(rawValue: defaults.string(forKey: "prefs.xray") ?? "") ?? .xhttpAndReality

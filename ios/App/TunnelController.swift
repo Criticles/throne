@@ -48,6 +48,10 @@ final class TunnelController: ObservableObject {
         busy = true
         defer { busy = false }
         if isConnected || isConnecting {
+            // Как в Karing: ручное отключение снимает «по требованию», иначе iOS
+            // тут же поднимает туннель обратно и выключить VPN невозможно.
+            manager?.isOnDemandEnabled = false
+            try? await manager?.saveToPreferences()
             manager?.connection.stopVPNTunnel()
             return
         }
@@ -91,8 +95,10 @@ final class TunnelController: ObservableObject {
         // `disconnectOnSleep` по умолчанию false, но выставляем явно: иначе iOS
         // может погасить туннель при блокировке экрана.
         proto.disconnectOnSleep = false
-        manager.isOnDemandEnabled = true
-        manager.onDemandRules = [NEOnDemandRuleConnect()]
+        let keep = UserDefaults.standard.object(forKey: "prefs.keepConnected") as? Bool ?? true
+        manager.isOnDemandEnabled = keep
+        manager.onDemandRules = keep ? [NEOnDemandRuleConnect()] : []
+        TunnelLog.write("onDemand: \(keep ? "вкл" : "выкл")")
         do {
             try await manager.saveToPreferences()
             try await manager.loadFromPreferences()

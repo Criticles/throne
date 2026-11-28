@@ -321,6 +321,7 @@ struct SettingsView: View {
     private var vpnSection: some View {
         Section {
             Toggle("Подключаться при запуске", isOn: $prefs.autoConnect)
+            Toggle("Всегда держать подключение", isOn: $prefs.keepConnected)
             NavigationLink {
                 ContentView()
             } label: {
@@ -329,7 +330,7 @@ struct SettingsView: View {
         } header: {
             Text("Системный VPN")
         } footer: {
-            Text("Автоподключение поднимает туннель при запуске приложения, если выбран сервер. В LiveContainer без entitlement расширение не запускается: для проверки используйте dev-режим на экране «Серверы».")
+            Text("«Всегда держать подключение» включает режим «по требованию»: iOS сама поднимает туннель, если расширение упало, — как в Karing. Выключить VPN можно кнопкой в приложении. Автоподключение поднимает туннель при запуске приложения, если выбран сервер. В LiveContainer без entitlement расширение не запускается: для проверки используйте dev-режим на экране «Серверы».")
         }
     }
 
