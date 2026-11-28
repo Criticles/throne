@@ -23,6 +23,7 @@ struct RootView: View {
     /// и автоподключению при запуске.
     @StateObject private var tunnel = TunnelController()
     private let upkeep = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TabView(selection: $router.tab) {
@@ -60,6 +61,11 @@ struct RootView: View {
                let value = components.queryItems?.first(where: { $0.name == "url" })?.value {
                 Task { await store.importAny(value) }
             }
+        }
+        .onChange(of: scenePhase) { phase in
+            // Вернулись в приложение, а туннель не поднят — поднимаем снова.
+            guard phase == .active else { return }
+            Task { await autoConnectIfNeeded() }
         }
         .onReceive(upkeep) { _ in
             Task {

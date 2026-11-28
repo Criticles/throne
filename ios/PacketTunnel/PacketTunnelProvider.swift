@@ -6,6 +6,9 @@ import NetworkExtension
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var platform: PlatformInterface?
     private var commandServer: LibboxCommandServer?
+    /// Пульс расширения: по нему видно, когда туннель «уснул» и убила ли его система.
+    private var heartbeat: DispatchSourceTimer?
+    private var startedAt = Date()
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         TunnelLog.write("startTunnel: begin")
@@ -13,7 +16,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             try setupCore()
             let config = try resolveConfig(options: options)
             try startService(config: config)
-            TunnelLog.write("startTunnel: service started, libbox \(LibboxVersion())")
+            startedAt = Date()
+            startHeartbeat()
+            TunnelLog.write("startTunnel: service started, libbox \(LibboxVersion()), память \(Self.footprintMB) МБ")
             completionHandler(nil)
         } catch {
             TunnelLog.write("startTunnel: failed — \(error.localizedDescription)")
@@ -22,7 +27,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-        TunnelLog.write("stopTunnel: reason \(reason.rawValue)")
+        heartbeat?.cancel()
+        heartbeat = nil
+        let lived = Int(Date().timeIntervalSince(startedAt))
+        TunnelLog.write("stopTunnel: reason \(reason.rawValue), жил \(lived) с, память \(Self.footprintMB) МБ")
         commandServer?.close()
         commandServer = nil
         platform = nil
@@ -38,6 +46,35 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } else {
             completionHandler?(nil)
         }
+    }
+
+    // MARK: - Пульс и память
+
+    /// Раз в минуту пишем в общий лог, что расширение живо и сколько занимает.
+    /// Если запись оборвалась, а stopTunnel не отметился — значит расширение убила система.
+    private func startHeartbeat() {
+        heartbeat?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "throne.heartbeat"))
+        timer.schedule(deadline: .now() + 60, repeating: 60)
+        timer.setEventHandler {
+            let lived = Int(Date().timeIntervalSince(self.startedAt))
+            TunnelLog.write("alive: \(lived) с, память \(Self.footprintMB) МБ")
+        }
+        timer.resume()
+        heartbeat = timer
+    }
+
+    /// phys_footprint — то, что реально считает jetsam. Лимит расширения ~50 МБ.
+    private static var footprintMB: Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return 0 }
+        return Int(info.phys_footprint / 1_048_576)
     }
 
     // MARK: - Ядро
