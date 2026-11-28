@@ -25,6 +25,8 @@ struct RouteInsertSheet: View {
     @State private var newProfileOutbound = "proxy"
 
     @State private var showNewFolder = false
+    /// Почему не удалось добавить — иначе кнопка «молчит».
+    @State private var failure = ""
     @State private var newFolderName = ""
     @State private var newFolderOutbound = "proxy"
 
@@ -75,6 +77,12 @@ struct RouteInsertSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) { confirmButton }
+            .alert(isPresented: Binding(get: { !failure.isEmpty },
+                                       set: { if !$0 { failure = "" } })) {
+                Alert(title: Text("Не добавилось"),
+                      message: Text(failure),
+                      dismissButton: .default(Text("Понятно")))
+            }
             .onAppear(perform: prepare)
         }
         .navigationViewStyle(.stack)
@@ -89,14 +97,6 @@ struct RouteInsertSheet: View {
                     // Подсветка «выбрано» — только у обычных профилей.
                     .listRowBackground(!plan.isSystem && planID == plan.id
                                        ? Theme.accent.opacity(0.14) : nil)
-            }
-
-            // Выход по умолчанию — только у обычного профиля и сразу под списком.
-            if let plan = current, !plan.isSystem {
-                outboundRow(title: "Outbound по умолчанию",
-                            value: plan.finalTarget) { target in
-                    setProfileOutbound(target)
-                }
             }
 
             if showNewProfile {
@@ -165,6 +165,7 @@ struct RouteInsertSheet: View {
                     Spacer(minLength: 6)
                 }
                 .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
 
@@ -176,6 +177,22 @@ struct RouteInsertSheet: View {
                 .labelsHidden()
                 .tint(Theme.accent)
                 .scaleEffect(0.8)
+            } else if planID == plan.id {
+                // Выход профиля — как у папок: плашка в его же строке, напротив названия.
+                Menu {
+                    ForEach(targets, id: \.self) { target in
+                        Button(target) { setProfileOutbound(target) }
+                    }
+                } label: {
+                    Text(plan.finalTarget)
+                        .font(.caption2.weight(.medium))
+                        .foregroundColor(Theme.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Theme.accent.opacity(0.16))
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.borderless)
             }
         }
     }
@@ -240,6 +257,7 @@ struct RouteInsertSheet: View {
                     Spacer(minLength: 6)
                 }
                 .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
 
@@ -317,35 +335,6 @@ struct RouteInsertSheet: View {
             .buttonStyle(.borderless)
             .disabled(name.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .opacity(name.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
-        }
-    }
-
-    private func outboundRow(title: String, value: String,
-                             action: @escaping (String) -> Void) -> some View {
-        Menu {
-            ForEach(targets, id: \.self) { target in
-                Button(target) { action(target) }
-            }
-        } label: {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline)
-                        .foregroundColor(.primary)
-                    Text("нажми, чтобы заменить")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                Spacer(minLength: 6)
-                Text(value)
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(Theme.accent)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Theme.accent.opacity(0.16))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            }
-            .contentShape(Rectangle())
         }
     }
 
@@ -444,10 +433,19 @@ struct RouteInsertSheet: View {
     }
 
     private func save() {
-        guard let plan = current, let folder = selectedFolder else { return }
+        guard let plan = current, let folder = selectedFolder else {
+            failure = "Сначала выбери папку — значение добавляется только в неё."
+            return
+        }
         let value = prefill.value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        guard rules.addValue(value, attr: prefill.attr, to: plan.id, ruleID: folder.id) else { return }
+        guard !value.isEmpty else {
+            failure = "Пустое значение — добавлять нечего."
+            return
+        }
+        guard rules.addValue(value, attr: prefill.attr, to: plan.id, ruleID: folder.id) else {
+            failure = "Папка «" + folder.name + "» не найдена в профиле «" + plan.name + "»."
+            return
+        }
         LogStore.shared.append("маршрут: «" + value + "» → " + plan.name + " / " + folder.name)
         presentation.wrappedValue.dismiss()
     }

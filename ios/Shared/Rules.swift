@@ -921,9 +921,9 @@ final class RuleStore: ObservableObject {
         } else {
             plans.append(updated)
         }
-        activePlanID = updated.id
+        // Раньше здесь активный профиль переключался на сохраняемый: правка папки
+        // или выхода в «Быстрых правилах» делала их активными и меняла маршрут.
         savePlans()
-        status = "профиль сохранён: " + updated.name
     }
 
     func activate(_ id: UUID) {
