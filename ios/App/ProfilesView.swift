@@ -519,6 +519,7 @@ struct ProfilesView: View {
                 } label: {
                     item("Создать WARP", "circle.grid.cross")
                 }
+                // Тот же разделитель, что над «Удалить все серверы».
                 Divider()
                 Button { Task { await refreshAll() } } label: {
                     item("Обновить серверы", "arrow.triangle.2.circlepath")

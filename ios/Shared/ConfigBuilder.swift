@@ -143,6 +143,18 @@ enum ConfigBuilder {
             if let final = layer.final ?? RouteCompiler.finalTag(plan: plan, context: context) {
                 route["final"] = final
             }
+            // Цепочка: выход по умолчанию зовётся `proxy`, а такого outbound в конфиге нет —
+            // трафик должен уходить в первое звено. Иначе ядро падает с «outbound not found».
+            if profile.kind == .chain, Self.chainEntryTag(profile.payload) != nil {
+                let entry = "c0"
+                if (route["final"] as? String) == "proxy" { route["final"] = entry }
+                if var rules = route["rules"] as? [[String: Any]] {
+                    for index in rules.indices where (rules[index]["outbound"] as? String) == "proxy" {
+                        rules[index]["outbound"] = entry
+                    }
+                    route["rules"] = rules
+                }
+            }
             let used = RouteCompiler.usedRuleSets(in: quickRules + planRules)
             if !used.isEmpty {
                 let defs = RouteCompiler.ruleSetDefinitions(used, context: context)
@@ -247,6 +259,15 @@ enum ConfigBuilder {
               let text = String(data: out, encoding: .utf8)
         else { throw BuildError.encodingFailed }
         return text
+    }
+
+    /// Тег первого звена цепочки — он же точка входа трафика.
+    static func chainEntryTag(_ payload: String) -> String? {
+        guard let data = payload.data(using: .utf8),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let links = root["links"] as? [[String: Any]], links.count >= 2
+        else { return nil }
+        return "c0"
     }
 
     /// Цепочка: звенья собираются в один конфиг, каждое следующее — через `detour`.
