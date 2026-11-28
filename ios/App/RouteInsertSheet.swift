@@ -27,6 +27,17 @@ struct RouteInsertSheet: View {
     /// Папки и профили, созданные в этом окне: только у них выход можно поменять.
     /// У давних папок плашка неактивна — иначе смена выхода молча перевела бы
     /// туда все уже лежащие в папке значения.
+    /// Что именно меняем в открытом списке выходов: папку или профиль.
+    /// Через `confirmationDialog`, а не `Menu`: у Menu в строке списка
+    /// появляется лишняя стрелка справа от плашки.
+    private struct OutboundTarget: Identifiable {
+        let id = UUID()
+        let planID: UUID
+        let folderID: UUID?
+    }
+
+    @State private var picker: OutboundTarget?
+
     @State private var freshFolders = Set<UUID>()
     @State private var freshPlans = Set<UUID>()
 
@@ -83,6 +94,24 @@ struct RouteInsertSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) { confirmButton }
+            .confirmationDialog("Куда направить",
+                                isPresented: Binding(get: { picker != nil },
+                                                     set: { if !$0 { picker = nil } }),
+                                titleVisibility: .visible) {
+                ForEach(targets, id: \.self) { target in
+                    Button(target) {
+                        if let choice = picker {
+                            if choice.folderID == nil {
+                                setProfileOutbound(target)
+                            } else {
+                                setFolderOutbound(target, folderID: choice.folderID)
+                            }
+                        }
+                        picker = nil
+                    }
+                }
+                Button("Отмена", role: .cancel) { picker = nil }
+            }
             .alert(isPresented: Binding(get: { !failure.isEmpty },
                                        set: { if !$0 { failure = "" } })) {
                 Alert(title: Text("Не добавилось"),
@@ -187,10 +216,8 @@ struct RouteInsertSheet: View {
                 .scaleEffect(0.8)
             } else if planID == plan.id, freshPlans.contains(plan.id) {
                 // Выход профиля меняем только у созданного в этом окне.
-                Menu {
-                    ForEach(targets, id: \.self) { target in
-                        Button(target) { setProfileOutbound(target) }
-                    }
+                Button {
+                    picker = OutboundTarget(planID: plan.id, folderID: nil)
                 } label: {
                     Text(plan.finalTarget)
                         .font(.caption2.weight(.medium))
@@ -283,10 +310,8 @@ struct RouteInsertSheet: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
             } else if freshFolders.contains(folder.id) {
-                Menu {
-                    ForEach(targets, id: \.self) { target in
-                        Button(target) { setFolderOutbound(target, folder: folder) }
-                    }
+                Button {
+                    picker = OutboundTarget(planID: planID ?? folder.id, folderID: folder.id)
                 } label: {
                     Text(folder.outbound)
                         .font(.caption2.weight(.medium))
@@ -423,9 +448,9 @@ struct RouteInsertSheet: View {
         if !showNewFolder { newFolderOutbound = target }
     }
 
-    private func setFolderOutbound(_ target: String, folder: RoutePlanRule) {
-        guard var plan = current else { return }
-        guard let index = plan.rules.firstIndex(where: { $0.id == folder.id }) else { return }
+    private func setFolderOutbound(_ target: String, folderID: UUID?) {
+        guard let folderID, var plan = current else { return }
+        guard let index = plan.rules.firstIndex(where: { $0.id == folderID }) else { return }
         plan.rules[index].outbound = target
         plan.rules[index].action = target == "reject" ? "reject" : "route"
         if let attrIndex = plan.rules[index].attrs.firstIndex(where: { $0.attr == "outbound" }) {
