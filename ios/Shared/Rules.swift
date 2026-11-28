@@ -1151,6 +1151,22 @@ final class RuleStore: ObservableObject {
                   FileManager.default.fileExists(atPath: url.path) else { continue }
             paths[set.name] = url.path
         }
+        // Вложенные наборы: работают сразу после установки, без скачивания.
+        // Ключи те же, что ждёт preferenceLayer в ConfigBuilder.
+        let bundled: [String: String] = [
+            "geosite-ads": "geosite-category-ads-all",
+            "geosite-ru": "geosite-category-ru",
+            "geoip-ru": "geoip-ru",
+        ]
+        for (key, file) in bundled where paths[key] == nil {
+            for bundle in [Bundle.main, Bundle(for: ProfileStore.self)] {
+                if let url = bundle.url(forResource: file, withExtension: "srs", subdirectory: "rules")
+                    ?? bundle.url(forResource: file, withExtension: "srs") {
+                    paths[key] = url.path
+                    break
+                }
+            }
+        }
         return paths
     }
 

@@ -258,6 +258,22 @@ final class ProfileStore: ObservableObject {
         return profile
     }
 
+    /// Копия сервера в другой папке: payload тот же, запись своя — можно задать
+    /// ей другие атрибуты в маршрутизации.
+    @discardableResult
+    func copy(_ profile: Profile, to folderID: UUID) -> Profile {
+        var copy = Profile(name: profile.name,
+                           kind: profile.kind,
+                           payload: profile.payload,
+                           note: profile.note,
+                           badge: profile.badge)
+        copy.folderID = folderID
+        profiles.append(copy)
+        save()
+        status = "скопировано в «" + folderName(folderID) + "»"
+        return copy
+    }
+
     /// WARP как обычный профиль AmneziaWG: его видно в списке, можно выбрать и пинговать.
     @discardableResult
     func addWARP(payload: String, endpoint: String, folderID: UUID?, folderName: String = "WARP") -> Profile {

@@ -88,6 +88,18 @@ struct ServerDetailsView: View {
                             .multilineTextAlignment(.trailing)
                     }
                     HStack(spacing: 8) {
+                        // Звезда — по центру строки, чуть левее кнопок замера.
+                        Button {
+                            store.toggleFavorite(profile)
+                        } label: {
+                            Image(systemName: profile.favorite ? "star.fill" : "star")
+                                .font(.system(size: 17))
+                                .foregroundColor(profile.favorite ? .yellow : Color(uiColor: .tertiaryLabel))
+                                .frame(width: 30, height: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
                         PlaqueButton(title: "Пинг", icon: "waveform.path.ecg") {
                             engine.runCheck(profile: profile)
                         }

@@ -38,6 +38,9 @@ struct ProfilesView: View {
     @State private var createFolderPicker = false
     /// Сколько проверок WARP подряд не прошло — на третьей меняем эндпоинт.
     @State private var warpFailures = 0
+    /// Сервер, который переносим или копируем в другую папку.
+    @State private var movingProfile: Profile?
+    @State private var copyingProfile: Profile?
     private let warpWatchdog = Timer.publish(every: 45, on: .main, in: .common).autoconnect()
     /// Пользователь явно выбрал «＋ Новая папка» — показываем поле имени даже без ссылки.
     @State private var customFolder = false
@@ -166,6 +169,41 @@ struct ProfilesView: View {
             }
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
+            .overlay(
+                Group {
+                    if let moving = movingProfile ?? copyingProfile {
+                        let isCopy = copyingProfile != nil
+                        FolderChoiceSheet(
+                            title: isCopy ? "Куда скопировать" : "Куда переместить",
+                            defaultTitle: "В новую папку",
+                            defaultDetail: moving.name,
+                            options: store.folders.map { folder in
+                                FolderChoiceSheet.Option(id: folder.id,
+                                                         title: folder.name,
+                                                         detail: String(store.count(in: folder.id)),
+                                                         isDefault: false)
+                            },
+                            onDefault: {
+                                let folder = store.addFolder(name: moving.name).id
+                                finishMove(moving, to: folder, copy: isCopy)
+                            },
+                            onPick: { option in
+                                finishMove(moving, to: option.id, copy: isCopy)
+                            },
+                            onNew: {
+                                let folder = store.addFolder(name: moving.name).id
+                                finishMove(moving, to: folder, copy: isCopy)
+                            },
+                            onCancel: {
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    movingProfile = nil
+                                    copyingProfile = nil
+                                }
+                            }
+                        )
+                    }
+                }
+            )
             .sheet(item: $sheet) { item in
                 switch item {
                 case .add:
@@ -466,7 +504,19 @@ struct ProfilesView: View {
                 Button { engine.runSpeedAll(profiles: [profile]) } label: {
                     Label("Скорость", systemImage: "speedometer")
                 }
-                Button { store.toggleFavorite(profile) } label: {
+                Button {
+                    movingProfile = profile
+                } label: {
+                    Label("Переместить в папку", systemImage: "folder")
+                }
+                Button {
+                    copyingProfile = profile
+                } label: {
+                    Label("Скопировать в папку", systemImage: "doc.on.doc")
+                }
+                Button {
+                    store.toggleFavorite(profile)
+                } label: {
                     Label(profile.favorite ? "Убрать из избранного" : "В избранное",
                           systemImage: profile.favorite ? "star.slash" : "star")
                 }
@@ -881,6 +931,19 @@ struct ProfilesView: View {
     }
 
     /// Раз в 45 секунд смотрим, живёт ли WARP. Три неудачи подряд — переезжаем на другой эндпоинт.
+    /// Завершает перенос или копирование и закрывает панель.
+    private func finishMove(_ profile: Profile, to folderID: UUID, copy: Bool) {
+        if copy {
+            store.copy(profile, to: folderID)
+        } else {
+            store.move(profile, to: folderID)
+        }
+        withAnimation(.easeOut(duration: 0.15)) {
+            movingProfile = nil
+            copyingProfile = nil
+        }
+    }
+
     private func checkWARPHealth() async {
         guard prefs.autoEndpoint,
               engine.running, !engine.transportOnly,
@@ -982,9 +1045,6 @@ struct ServerRow: View {
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                    if profile.favorite {
-                        Image(systemName: "star.fill").font(.caption2).foregroundColor(.yellow)
-                    }
                 }
 
                 HStack(spacing: 6) {
@@ -1006,6 +1066,12 @@ struct ServerRow: View {
 
             Spacer(minLength: 6)
 
+            HStack(spacing: 6) {
+                if profile.favorite {
+                    Image(systemName: "star.fill")
+                        .font(.caption2)
+                        .foregroundColor(.yellow)
+                }
             VStack(alignment: .trailing, spacing: 4) {
                 pingControl
                 if let speed {
@@ -1016,6 +1082,7 @@ struct ServerRow: View {
                         .minimumScaleFactor(0.7)
                         .frame(width: Self.pillWidth, alignment: .trailing)
                 }
+            }
             }
         }
         .padding(.vertical, 8)
