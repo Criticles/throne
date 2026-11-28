@@ -1158,13 +1158,23 @@ final class RuleStore: ObservableObject {
             "geosite-ru": "geosite-category-ru",
             "geoip-ru": "geoip-ru",
         ]
+        // Наборы лежат в бандле приложения. Расширение видит их через ../../
+        // (Throne.app/PlugIns/PacketTunnel.appex → Throne.app), поэтому проверяем оба места.
+        let appBundleURL = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
         for (key, file) in bundled where paths[key] == nil {
+            var candidates: [URL] = []
             for bundle in [Bundle.main, Bundle(for: ProfileStore.self)] {
                 if let url = bundle.url(forResource: file, withExtension: "srs", subdirectory: "rules")
                     ?? bundle.url(forResource: file, withExtension: "srs") {
-                    paths[key] = url.path
-                    break
+                    candidates.append(url)
                 }
+            }
+            candidates.append(appBundleURL.appendingPathComponent("rules/\(file).srs"))
+            candidates.append(appBundleURL.appendingPathComponent("\(file).srs"))
+            if let found = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+                paths[key] = found.path
             }
         }
         return paths

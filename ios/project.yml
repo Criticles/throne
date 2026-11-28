@@ -88,8 +88,6 @@ targets:
     sources:
       - path: PacketTunnel
       - path: Shared
-      - path: Resources
-        type: folder
     dependencies:
       - framework: Frameworks/Libbox.xcframework
         embed: false
