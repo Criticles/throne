@@ -285,8 +285,8 @@ struct RouteInsertSheet: View {
     }
 
     /// «значений: 3» — коротко, чтобы строка не разрасталась.
+    /// Одинаково для обычных и служебных папок: подписи про «выход задан названием» нет.
     private func valueCount(_ folder: RoutePlanRule) -> String {
-        if folder.locked { return "выход задан названием" }
         let values = folder.attrs.filter { $0.attr != "outbound" }.count
         return values == 0 ? "значений нет" : "значений: " + String(values)
     }
