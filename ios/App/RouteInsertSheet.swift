@@ -128,45 +128,54 @@ struct RouteInsertSheet: View {
     }
 
     private func profileRow(_ plan: RoutePlan) -> some View {
-        Button {
-            planID = plan.id
-            folderID = nil
-            showNewProfile = false
-            showNewFolder = false
-            newFolderOutbound = plan.isSystem ? "proxy" : plan.finalTarget
-        } label: {
-            HStack(spacing: 10) {
-                // «Быстрые правила» не выбирают — они активны всегда. Кружок
-                // у них не рисуем: выбрать можно только папку внутри.
-                if plan.isSystem {
-                    Image(systemName: "bolt.horizontal.circle")
-                        .font(.system(size: 15))
-                        .foregroundColor(Color(uiColor: .tertiaryLabel))
-                        .frame(width: 18, height: 18)
-                } else {
-                    radio(planID == plan.id)
+        // Кнопка и переключатель разделены: внутри `Button` переключатель не ловит тап.
+        HStack(spacing: 10) {
+            Button {
+                planID = plan.id
+                folderID = nil
+                showNewProfile = false
+                showNewFolder = false
+                newFolderOutbound = plan.isSystem ? "proxy" : plan.finalTarget
+            } label: {
+                HStack(spacing: 10) {
+                    // «Быстрые правила» не выбирают кружком: они стоят над профилем.
+                    // Кружок есть только у обычных профилей.
+                    if plan.isSystem {
+                        Image(systemName: "bolt.horizontal.circle")
+                            .font(.system(size: 15))
+                            .foregroundColor(Color(uiColor: .tertiaryLabel))
+                            .frame(width: 18, height: 18)
+                    } else {
+                        radio(planID == plan.id)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(plan.name)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.primary)
+                        Text(plan.isSystem
+                             ? (plan.isEnabled
+                                ? "проверяются раньше основного профиля"
+                                : "выключены — трафик идёт по основному профилю")
+                             : "папок: " + String(plan.rules.count))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer(minLength: 6)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(plan.name)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(.primary)
-                    Text(plan.isSystem
-                         ? "всегда активен · выше основного"
-                         : "папок: " + String(plan.rules.count))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                Spacer(minLength: 6)
-                if plan.isSystem {
-                    Text("всегда активен")
-                        .font(.caption2)
-                        .foregroundColor(Color(uiColor: .tertiaryLabel))
-                }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.plain)
+
+            if plan.isSystem {
+                Toggle("", isOn: Binding(
+                    get: { plan.isEnabled },
+                    set: { rules.setEnabled(plan.id, $0) }
+                ))
+                .labelsHidden()
+                .tint(Theme.accent)
+                .scaleEffect(0.8)
+            }
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Папки
@@ -202,9 +211,13 @@ struct RouteInsertSheet: View {
         } header: {
             Text("Папки · " + (current?.name ?? ""))
         } footer: {
-            Text(current?.isSystem == true
-                 ? "Reject, Direct и Proxy менять нельзя — выход задан названием. Свои папки создаются как обычно."
-                 : "Выход папки меняется нажатием на плашку справа.")
+            if current?.isSystem == true {
+                Text(current?.isEnabled == true
+                     ? "Reject, Direct и Proxy менять нельзя — выход задан названием. Свои папки создаются как обычно."
+                     : "Профиль выключен: правило добавится в папку, но применится, только когда включишь «Быстрые правила».")
+            } else {
+                Text("Выход папки меняется нажатием на плашку справа.")
+            }
         }
     }
 

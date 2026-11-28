@@ -17,6 +17,8 @@ struct AdvancedRouteView: View {
     /// Служебный профиль: у него нет своего final, и флаг нельзя потерять
     /// при сохранении — иначе «Быстрые правила» станут обычным профилем.
     @State private var isSystem = false
+    /// Включён ли профиль: у «Быстрых правил» это переключатель, у обычных — тоже.
+    @State private var isEnabled = true
     @State private var finalTarget = "proxy"
     @State private var directList = ""
     @State private var proxyList = ""
@@ -62,6 +64,7 @@ struct AdvancedRouteView: View {
         RoutePlan(id: planID,
                   name: name,
                   isSystem: isSystem,
+                  isEnabled: isEnabled,
                   finalTarget: finalTarget,
                   rules: folders,
                   directList: directList,
@@ -126,17 +129,21 @@ struct AdvancedRouteView: View {
             // У «Быстрых правил» выхода по умолчанию нет: всё, что не поймала
             // ни одна папка, уходит в активный профиль — там уже его final.
             if isSystem {
-                HStack(spacing: 10) {
+                // У «Быстрых правил» нет своего выхода, зато есть выключатель:
+                // пока он выключен, папки в конфиг не попадают.
+                Toggle(isOn: $isEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Outbound по умолчанию")
+                        Text("Быстрые правила включены")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.primary)
-                        Text("нет — уходит в активный профиль")
+                        Text(isEnabled
+                             ? "их папки проверяются раньше основного профиля"
+                             : "выключены — трафик идёт по основному профилю")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .tint(Theme.accent)
             } else {
                 // Тот же вид, что у атрибутов папки: имя, значение и «Выбрать» с окном.
                 HStack(spacing: 10) {
@@ -333,6 +340,7 @@ struct AdvancedRouteView: View {
         guard let stored = rules.plan(with: planID) else { return }
         name = stored.name
         isSystem = stored.isSystem
+        isEnabled = stored.isEnabled
         finalTarget = stored.finalTarget
         directList = stored.directList
         proxyList = stored.proxyList

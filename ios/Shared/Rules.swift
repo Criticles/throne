@@ -508,6 +508,9 @@ struct RoutePlan: Codable, Identifiable {
     /// Служебный профиль «Быстрые правила»: всегда активен, удалить нельзя,
     /// своего final не имеет — непойманное уходит в выбранный профиль.
     var isSystem = false
+    /// Включён ли профиль. У «Быстрых правил» это переключатель: выключили —
+    /// их папки не попадают в конфиг, и трафик идёт по основному профилю.
+    var isEnabled = true
     var finalTarget = "proxy"
     /// Папки с атрибутами. Порядок = порядок применения, первая сверху срабатывает первой.
     var rules: [RoutePlanRule] = []
@@ -518,13 +521,15 @@ struct RoutePlan: Codable, Identifiable {
     var warpList = ""
     var updated: Date?
 
-    init(id: UUID = UUID(), name: String = "Маршрут", isSystem: Bool = false, finalTarget: String = "proxy",
+    init(id: UUID = UUID(), name: String = "Маршрут", isSystem: Bool = false,
+         isEnabled: Bool = true, finalTarget: String = "proxy",
          rules: [RoutePlanRule] = [], directList: String = "",
          proxyList: String = "", blockList: String = "", warpList: String = "",
          updated: Date? = nil) {
         self.id = id
         self.name = name
         self.isSystem = isSystem
+        self.isEnabled = isEnabled
         self.finalTarget = finalTarget
         self.rules = rules
         self.directList = directList
@@ -535,7 +540,7 @@ struct RoutePlan: Codable, Identifiable {
     }
 
     private enum Keys: String, CodingKey {
-        case id, name, isSystem, finalTarget, rules, entries, directList, proxyList, blockList, warpList, updated
+        case id, name, isSystem, isEnabled, finalTarget, rules, entries, directList, proxyList, blockList, warpList, updated
         case defaultOutbound = "default_outbound"
         case kind, v
     }
@@ -550,6 +555,8 @@ struct RoutePlan: Codable, Identifiable {
         }
         name = (try container.decodeIfPresent(String.self, forKey: .name)) ?? "Маршрут"
         isSystem = (try container.decodeIfPresent(Bool.self, forKey: .isSystem)) ?? false
+        // Старые сохранения поля не знают — профиль считается включённым.
+        isEnabled = (try container.decodeIfPresent(Bool.self, forKey: .isEnabled)) ?? true
         // Документ Throne зовёт это `default_outbound`, наш прежний вид — `finalTarget`.
         // Отдельные строки: `try` внутри автозамыкания `??` компилятор не пропускает.
         let storedTarget = try container.decodeIfPresent(String.self, forKey: .finalTarget)
@@ -590,6 +597,9 @@ struct RoutePlan: Codable, Identifiable {
         try container.encode(1, forKey: .v)
         try container.encode(id.uuidString, forKey: .id)
         try container.encode(name, forKey: .name)
+        try container.encode(isSystem, forKey: .isSystem)
+        // Пишем только «выключено»: включённый профиль — состояние по умолчанию.
+        if !isEnabled { try container.encode(false, forKey: .isEnabled) }
         try container.encode(finalTarget, forKey: .defaultOutbound)
         try container.encode(rules, forKey: .rules)
         if !directList.isEmpty { try container.encode(directList, forKey: .directList) }
@@ -681,7 +691,22 @@ final class RuleStore: ObservableObject {
     /// Активный профиль: к нему обращаются список маршрутов и редактор.
     /// Служебный профиль «Быстрые правила»: всегда активен, стоит первым.
     var quickPlan: RoutePlan? {
+        plans.first { $0.isSystem && $0.isEnabled }
+    }
+
+    /// Служебный профиль независимо от того, включён он или нет, — нужен интерфейсу.
+    var systemPlan: RoutePlan? {
         plans.first { $0.isSystem }
+    }
+
+    /// Переключатель «Быстрых правил»: выключить можно, удалить нельзя.
+    func setEnabled(_ id: UUID, _ enabled: Bool) {
+        guard var plan = plans.first(where: { $0.id == id }) else { return }
+        plan.isEnabled = enabled
+        plan.updated = Date()
+        savePlan(plan)
+        status = (plan.isSystem ? "быстрые правила: " : "профиль: ")
+            + (enabled ? "включены" : "выключены")
     }
 
     var plan: RoutePlan {
