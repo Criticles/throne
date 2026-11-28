@@ -94,8 +94,8 @@ struct RouteInsertSheet: View {
         Section {
             ForEach(plans) { plan in
                 profileRow(plan)
-                    // Подсветка «выбрано» — только у обычных профилей.
-                    .listRowBackground(!plan.isSystem && planID == plan.id
+                    // Подсветка = «этот профиль открыт», в том числе у «Быстрых правил».
+                    .listRowBackground(planID == plan.id
                                        ? Theme.accent.opacity(0.14) : nil)
             }
 
@@ -383,9 +383,10 @@ struct RouteInsertSheet: View {
     // MARK: - Действия
 
     private func prepare() {
+        // Профиль намеренно не выбран: папки появляются только после нажатия,
+        // иначе «Быстрые правила» выглядели открытыми сами по себе.
         guard planID == nil else { return }
-        planID = rules.activePlanID ?? plans.first(where: { !$0.isSystem })?.id
-        newFolderOutbound = current?.finalTarget ?? "proxy"
+        newFolderOutbound = "proxy"
     }
 
     private func setProfileOutbound(_ target: String) {
