@@ -1,8 +1,15 @@
 import SwiftUI
 
 /// Куда положить значение из «Соединений»: профиль → папка → значение.
-/// Профиль выбирается явно: пока он не выбран, папок не видно.
-/// В служебных «Быстрых правилах» три папки-выхода (Reject/Direct/Proxy) не удаляются.
+///
+/// Схема (по макету):
+///  • сверху только профили; папок не видно, пока профиль не выбран;
+///  • у выбранного обычного профиля под списком появляется строка
+///    «Outbound по умолчанию» — её можно заменить;
+///  • у «Быстрых правил» такой строки нет: это служебный профиль;
+///  • папки выбранного профиля идут ниже, у каждой свой выход (кроме
+///    предустановленных Reject/Direct/Proxy — у них выход задан названием);
+///  • «Добавить папку» раскрывает форму: название, кружок-галочка, выход.
 struct RouteInsertSheet: View {
     @EnvironmentObject private var rules: RuleStore
     @EnvironmentObject private var store: ProfileStore
@@ -12,25 +19,27 @@ struct RouteInsertSheet: View {
 
     @State private var planID: UUID?
     @State private var folderID: UUID?
-    @State private var newFolder = ""
-    @State private var newProfile = ""
-    @State private var showNewFolder = false
+
     @State private var showNewProfile = false
+    @State private var newProfileName = ""
+    @State private var newProfileOutbound = "proxy"
+
+    @State private var showNewFolder = false
+    @State private var newFolderName = ""
+    @State private var newFolderOutbound = "proxy"
 
     private var plans: [RoutePlan] { rules.plans }
 
     private var current: RoutePlan? {
         guard let planID else { return nil }
-        for plan in plans where plan.id == planID { return plan }
-        return nil
+        return plans.first { $0.id == planID }
     }
 
     private var folders: [RoutePlanRule] { current?.rules ?? [] }
 
     private var selectedFolder: RoutePlanRule? {
         guard let folderID else { return nil }
-        for folder in folders where folder.id == folderID { return folder }
-        return nil
+        return folders.first { $0.id == folderID }
     }
 
     private var targets: [String] {
@@ -49,135 +58,94 @@ struct RouteInsertSheet: View {
                         .font(.system(.footnote, design: .monospaced))
                 } header: {
                     Text(prefill.title.isEmpty ? "Из соединения" : prefill.title)
-                } footer: {
-                    Text("Значение добавляется выбранной папке.")
                 }
 
-                Section {
-                    ForEach(plans) { plan in
-                        planRow(plan)
-                    }
-                    if showNewProfile {
-                        TextField("Название профиля", text: $newProfile)
-                        Button {
-                            createProfile()
-                        } label: {
-                            Label("Создать профиль", systemImage: "plus.circle")
-                        }
-                        .disabled(newProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    } else {
-                        Button {
-                            newProfile = ""
-                            showNewProfile = true
-                        } label: {
-                            Label("Новый профиль", systemImage: "plus.circle")
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                } header: {
-                    Text("Профиль")
-                } footer: {
-                    if current == nil {
-                        Text("Выберите профиль — ниже появятся его папки.")
-                    } else if current?.isSystem == true {
-                        Text("Быстрые правила всегда активны и приоритетнее основного профиля; "
-                             + "своего outbound по умолчанию у них нет.")
-                    }
-                }
+                profileSection
 
                 if current != nil {
-                    Section {
-                        ForEach(folders) { folder in
-                            folderRow(folder)
-                        }
-                        if showNewFolder {
-                            TextField("Название папки", text: $newFolder)
-                            Menu {
-                                ForEach(targets, id: \.self) { target in
-                                    Button(target) { createFolder(outbound: target) }
-                                }
-                            } label: {
-                                Label("Создать папку и задать выход",
-                                      systemImage: "folder.badge.plus")
-                            }
-                        } else {
-                            Button {
-                                newFolder = ""
-                                showNewFolder = true
-                            } label: {
-                                Label("Новая папка", systemImage: "folder.badge.plus")
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                    } header: {
-                        Text("Папки")
-                    } footer: {
-                        Text("Папка без значений в конфиг ядра не попадает.")
-                    }
-                }
-
-                if let folder = selectedFolder, !folder.locked {
-                    Section {
-                        Menu {
-                            ForEach(targets, id: \.self) { target in
-                                Button(target) { setOutbound(target, folder: folder) }
-                            }
-                        } label: {
-                            HStack {
-                                Text("Outbound папки")
-                                Spacer()
-                                Text(folder.outbound).foregroundColor(.secondary)
-                            }
-                        }
-                    } header: {
-                        Text("Выход выбранной папки")
-                    } footer: {
-                        Text("Меняется и для обычных профилей, и для своих папок быстрых правил.")
-                    }
+                    folderSection
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("В правило")
+            .navigationTitle("Маршрутизация")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { presentation.wrappedValue.dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") { save() }
-                        .disabled(selectedFolder == nil)
-                }
             }
-            .onAppear {
-                if planID == nil { planID = rules.activePlanID }
-            }
+            .safeAreaInset(edge: .bottom) { confirmButton }
+            .onAppear(perform: prepare)
         }
         .navigationViewStyle(.stack)
     }
 
-    // MARK: - Строки
+    // MARK: - Профили
 
-    private func planRow(_ plan: RoutePlan) -> some View {
+    private var profileSection: some View {
+        Section {
+            ForEach(plans) { plan in
+                profileRow(plan)
+                    .listRowBackground(planID == plan.id ? Theme.accent.opacity(0.07) : nil)
+            }
+
+            // Выход по умолчанию — только у обычного профиля и сразу под списком.
+            if let plan = current, !plan.isSystem {
+                outboundRow(title: "Outbound по умолчанию",
+                            value: plan.finalTarget) { target in
+                    setProfileOutbound(target)
+                }
+            }
+
+            if showNewProfile {
+                creationForm(name: $newProfileName,
+                             placeholder: "Название профиля",
+                             outbound: $newProfileOutbound) { createProfile() }
+            } else {
+                Button {
+                    newProfileName = ""
+                    newProfileOutbound = current?.finalTarget ?? "proxy"
+                    showNewProfile = true
+                    showNewFolder = false
+                } label: {
+                    Label("Добавить профиль", systemImage: "plus")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.borderless)
+            }
+        } header: {
+            Text("Профили")
+        } footer: {
+            if current == nil {
+                Text("Выбери профиль — ниже появятся его папки.")
+            } else if current?.isSystem == true {
+                Text("Быстрые правила всегда активны и приоритетнее основного профиля; "
+                     + "своего outbound по умолчанию у них нет.")
+            }
+        }
+    }
+
+    private func profileRow(_ plan: RoutePlan) -> some View {
         Button {
             planID = plan.id
             folderID = nil
-            showNewFolder = false
             showNewProfile = false
+            showNewFolder = false
+            newFolderOutbound = plan.isSystem ? "proxy" : plan.finalTarget
         } label: {
             HStack(spacing: 10) {
+                radio(planID == plan.id)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(plan.name)
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(.primary)
                     Text(plan.isSystem
                          ? "всегда активен · выше основного"
-                         : "папок: " + String(plan.rules.count) + " · по умолчанию: " + plan.finalTarget)
+                         : "папок: " + String(plan.rules.count))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
                 Spacer(minLength: 6)
-                Image(systemName: planID == plan.id ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(planID == plan.id ? Theme.accent : Color(uiColor: .tertiaryLabel))
             }
             .contentShape(Rectangle())
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -185,61 +153,226 @@ struct RouteInsertSheet: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Папки
+
+    private var folderSection: some View {
+        Section {
+            ForEach(folders) { folder in
+                folderRow(folder)
+                    .listRowBackground(folderID == folder.id ? Theme.accent.opacity(0.07) : nil)
+            }
+
+            if showNewFolder {
+                creationForm(name: $newFolderName,
+                             placeholder: "Название папки",
+                             outbound: $newFolderOutbound) { createFolder() }
+            } else {
+                Button {
+                    newFolderName = ""
+                    newFolderOutbound = current?.isSystem == true
+                        ? "proxy"
+                        : (current?.finalTarget ?? "proxy")
+                    showNewFolder = true
+                    showNewProfile = false
+                } label: {
+                    Label(current?.isSystem == true
+                          ? "Добавить папку с атрибутами"
+                          : "Добавить папку",
+                          systemImage: "folder.badge.plus")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.borderless)
+            }
+        } header: {
+            Text("Папки · " + (current?.name ?? ""))
+        } footer: {
+            Text(current?.isSystem == true
+                 ? "Reject, Direct и Proxy менять нельзя — выход задан названием. Свои папки создаются как обычно."
+                 : "Выход папки меняется нажатием на плашку справа.")
+        }
+    }
+
     private func folderRow(_ folder: RoutePlanRule) -> some View {
-        Button {
-            folderID = folder.id
+        HStack(spacing: 10) {
+            Button {
+                folderID = folder.id
+            } label: {
+                HStack(spacing: 10) {
+                    radio(folderID == folder.id)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(folder.name)
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                        Text(valueCount(folder))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer(minLength: 6)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if folder.locked {
+                Text(folder.outbound)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                Menu {
+                    ForEach(targets, id: \.self) { target in
+                        Button(target) { setFolderOutbound(target, folder: folder) }
+                    }
+                } label: {
+                    Text(folder.outbound)
+                        .font(.caption2.weight(.medium))
+                        .foregroundColor(Theme.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Theme.accent.opacity(0.16))
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    /// «значений: 3» — коротко, чтобы строка не разрасталась.
+    private func valueCount(_ folder: RoutePlanRule) -> String {
+        if folder.locked { return "выход задан названием" }
+        let values = folder.attrs.filter { $0.attr != "outbound" }.count
+        return values == 0 ? "значений нет" : "значений: " + String(values)
+    }
+
+    // MARK: - Формы
+
+    /// Название, кружок-галочка, выход — ровно как в макете.
+    private func creationForm(name: Binding<String>, placeholder: String,
+                              outbound: Binding<String>,
+                              action: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            VStack(spacing: 0) {
+                TextField(placeholder, text: name)
+                    .font(.subheadline)
+                    .padding(.vertical, 9)
+                Divider()
+                Menu {
+                    ForEach(targets, id: \.self) { target in
+                        Button(target) { outbound.wrappedValue = target }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Outbound")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Text(outbound.wrappedValue)
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(Theme.accent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Theme.accent.opacity(0.16))
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+
+            Button(action: action) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Theme.accent))
+            }
+            .buttonStyle(.borderless)
+            .disabled(name.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(name.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
+        }
+    }
+
+    private func outboundRow(title: String, value: String,
+                             action: @escaping (String) -> Void) -> some View {
+        Menu {
+            ForEach(targets, id: \.self) { target in
+                Button(target) { action(target) }
+            }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(folder.name)
+                    Text(title)
                         .font(.subheadline)
                         .foregroundColor(.primary)
-                    Text("выход: " + folder.outbound + " · значений: "
-                         + String(folder.attrs.filter { $0.attr != "outbound" }.count))
+                    Text("нажми, чтобы заменить")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
                 Spacer(minLength: 6)
-                if folder.locked {
-                    Image(systemName: "lock.fill")
-                        .font(.caption2)
-                        .foregroundColor(Color(uiColor: .tertiaryLabel))
-                }
-                Image(systemName: folderID == folder.id ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(folderID == folder.id ? Theme.accent : Color(uiColor: .tertiaryLabel))
+                Text(value)
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(Theme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Theme.accent.opacity(0.16))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
             .contentShape(Rectangle())
-            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Тонкое кольцо; у выбранного — акцентная точка внутри (без заливки строки).
+    private func radio(_ selected: Bool) -> some View {
+        ZStack {
+            Circle()
+                .strokeBorder(selected ? Theme.accent : Color(uiColor: .tertiaryLabel),
+                              lineWidth: 1)
+                .frame(width: 18, height: 18)
+            if selected {
+                Circle()
+                    .fill(Theme.accent)
+                    .frame(width: 8, height: 8)
+            }
+        }
+    }
+
+    // MARK: - Кнопка внизу
+
+    private var confirmButton: some View {
+        Button {
+            save()
+        } label: {
+            Text(selectedFolder.map { "Добавить в «" + $0.name + "»" } ?? "Выбери папку")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selectedFolder == nil ? Theme.accent.opacity(0.25) : Theme.accent))
+                .foregroundColor(selectedFolder == nil ? .secondary : .white)
         }
         .buttonStyle(.plain)
+        .disabled(selectedFolder == nil)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+        .padding(.top, 6)
+        .background(.ultraThinMaterial)
     }
 
     // MARK: - Действия
 
-    private func createProfile() {
-        let name = newProfile.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let plan = rules.addPlan(name: name)
-        planID = plan.id
-        folderID = nil
-        newProfile = ""
-        showNewProfile = false
+    private func prepare() {
+        guard planID == nil else { return }
+        planID = rules.activePlanID ?? plans.first(where: { !$0.isSystem })?.id
+        newFolderOutbound = current?.finalTarget ?? "proxy"
     }
 
-    private func createFolder(outbound: String) {
-        guard let plan = current else { return }
-        let name = newFolder.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        var updated = plan
-        let folder = RoutePlanRule(name: name, outbound: outbound)
-        updated.rules.append(folder)
-        rules.savePlan(updated)
-        folderID = folder.id
-        newFolder = ""
-        showNewFolder = false
+    private func setProfileOutbound(_ target: String) {
+        guard var plan = current else { return }
+        plan.finalTarget = target
+        plan.updated = Date()
+        rules.savePlan(plan)
+        if !showNewFolder { newFolderOutbound = target }
     }
 
-    private func setOutbound(_ target: String, folder: RoutePlanRule) {
+    private func setFolderOutbound(_ target: String, folder: RoutePlanRule) {
         guard var plan = current else { return }
         guard let index = plan.rules.firstIndex(where: { $0.id == folder.id }) else { return }
         plan.rules[index].outbound = target
@@ -247,7 +380,37 @@ struct RouteInsertSheet: View {
         if let attrIndex = plan.rules[index].attrs.firstIndex(where: { $0.attr == "outbound" }) {
             plan.rules[index].attrs[attrIndex].values = [target]
         }
+        plan.updated = Date()
         rules.savePlan(plan)
+    }
+
+    private func createProfile() {
+        let name = newProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        var plan = rules.addPlan(name: name)
+        plan.finalTarget = newProfileOutbound
+        plan.updated = Date()
+        rules.savePlan(plan)
+        planID = plan.id
+        folderID = nil
+        newProfileName = ""
+        showNewProfile = false
+        newFolderOutbound = newProfileOutbound
+    }
+
+    private func createFolder() {
+        guard let plan = current else { return }
+        var updated = plan
+        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        var folder = RoutePlanRule(name: name, outbound: newFolderOutbound)
+        folder.action = newFolderOutbound == "reject" ? "reject" : "route"
+        updated.rules.append(folder)
+        updated.updated = Date()
+        rules.savePlan(updated)
+        folderID = folder.id
+        newFolderName = ""
+        showNewFolder = false
     }
 
     private func save() {
