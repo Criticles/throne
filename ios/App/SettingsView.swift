@@ -31,7 +31,7 @@ struct SettingsView: View {
         .navigationViewStyle(.stack)
         // Лист висит на корне: у `.sheet`, приклеенного к Section внутри List, первый показ
         // закрывается сам — Section пересоздаётся вместе с модификатором.
-        .sheet(isPresented: $showProtocols) { protocolsSheet }
+        .overlay(Group { if showProtocols { protocolsSheet } })
     }
 
     // MARK: - Ядро
@@ -73,7 +73,7 @@ struct SettingsView: View {
     private var protocolsSection: some View {
         Section {
             Button {
-                showProtocols = true
+                withAnimation(.easeOut(duration: 0.15)) { showProtocols = true }
             } label: {
                 HStack {
                     Text("Протоколы при импорте")
@@ -109,35 +109,79 @@ struct SettingsView: View {
         return allowed == total ? "Все" : String(allowed) + " из " + String(total)
     }
 
+    /// Протоколы: панель снизу со списком и галочками. Ничего не закрывается по тапу —
+    /// можно отметить несколько, внизу «Готово».
     private var protocolsSheet: some View {
-        NavigationView {
-            List {
-                Section {
-                    ForEach(ProfileKind.allCases, id: \.self) { kind in
-                        Toggle(kind.title, isOn: Binding(
-                            get: { store.allowedKinds.contains(kind) },
-                            set: { isOn in
-                                if isOn {
-                                    store.allowedKinds.insert(kind)
-                                } else {
-                                    store.allowedKinds.remove(kind)
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture { closeProtocols() }
+
+            VStack(spacing: 0) {
+                Text("Протоколы при импорте")
+                    .font(.headline)
+                    .padding(.top, 14)
+                    .padding(.bottom, 10)
+
+                ScrollView {
+                    VStack(spacing: 7) {
+                        ForEach(ProfileKind.allCases, id: \.self) { kind in
+                            Button {
+                                toggle(kind)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Text(kind.title)
+                                        .font(.subheadline)
+                                        .foregroundColor(store.allowedKinds.contains(kind) ? .primary : .secondary)
+                                    Spacer(minLength: 6)
+                                    if store.allowedKinds.contains(kind) {
+                                        Text("✓")
+                                            .font(.subheadline.weight(.bold))
+                                            .foregroundColor(Theme.accent)
+                                    }
                                 }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 13)
+                                .frame(maxWidth: .infinity)
+                                .background(store.allowedKinds.contains(kind)
+                                            ? Theme.accent.opacity(0.14)
+                                            : Color(uiColor: .tertiarySystemFill))
+                                .clipShape(Capsule())
                             }
-                        ))
+                            .buttonStyle(.plain)
+                        }
                     }
-                } footer: {
-                    Text("sing-box держит VLESS, VMess, Trojan, Shadowsocks, TUIC, Hysteria2, Mieru, MasterDNS, WireGuard, AmneziaWG и JSON-конфиг. Xray — VLESS + XHTTP. WireTurn/Turnable — TURN/SRTP с ключами WireGuard.")
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 6)
                 }
+                .frame(maxHeight: 320)
+
+                Button("Готово") { closeProtocols() }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
             }
-            .navigationTitle("Протоколы")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { showProtocols = false }
-                }
-            }
+            .background(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+            )
+            .padding(.horizontal, 8)
+            .padding(.bottom, 8)
         }
-        .navigationViewStyle(.stack)
+        .transition(.opacity)
+    }
+
+    private func toggle(_ kind: ProfileKind) {
+        if store.allowedKinds.contains(kind) {
+            store.allowedKinds.remove(kind)
+        } else {
+            store.allowedKinds.insert(kind)
+        }
+    }
+
+    private func closeProtocols() {
+        withAnimation(.easeOut(duration: 0.15)) { showProtocols = false }
     }
 
     // MARK: - Подписки

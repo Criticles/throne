@@ -227,7 +227,7 @@ struct RouteInsertSheet: View {
                 .labelsHidden()
                 .tint(Theme.accent)
                 .scaleEffect(0.8)
-                .frame(width: Theme.tailWidth, alignment: .center)
+                .frame(maxWidth: Theme.tailWidth, alignment: .trailing)
             } else if planID == plan.id, freshPlans.contains(plan.id) {
                 // Выход профиля меняем только у созданного в этом окне.
                 Button {
@@ -240,7 +240,7 @@ struct RouteInsertSheet: View {
                         .padding(.vertical, 4)
                         .background(Theme.accent.opacity(0.16))
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .frame(width: Theme.tailWidth, alignment: .center)
+                        .frame(maxWidth: Theme.tailWidth, alignment: .trailing)
                 }
                 .buttonStyle(.borderless)
             } else if planID == plan.id {
@@ -250,7 +250,7 @@ struct RouteInsertSheet: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color(uiColor: .tertiarySystemFill))
-                    .frame(width: Theme.tailWidth, alignment: .center)
+                    .frame(maxWidth: Theme.tailWidth, alignment: .trailing)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
         }
@@ -333,19 +333,19 @@ struct RouteInsertSheet: View {
 
         if folder.locked {
             tailLabel(text, accent: false, boxed: false)
-                .frame(width: Theme.tailWidth, alignment: .center)
+                .frame(maxWidth: Theme.tailWidth, alignment: .trailing)
         } else if freshFolders.contains(folder.id) {
             Button {
                 picker = OutboundTarget(planID: planID ?? folder.id, folderID: folder.id)
             } label: {
                 tailLabel(text, accent: true, boxed: true)
-                    .frame(width: Theme.tailWidth, alignment: .center)
+                    .frame(maxWidth: Theme.tailWidth, alignment: .trailing)
             }
             .buttonStyle(.borderless)
         } else {
             // Давняя папка: выход зафиксирован, чтобы не перевести разом все её значения.
             tailLabel(text, accent: false, boxed: true)
-                .frame(width: Theme.tailWidth, alignment: .center)
+                .frame(maxWidth: Theme.tailWidth, alignment: .trailing)
         }
     }
 
@@ -353,13 +353,13 @@ struct RouteInsertSheet: View {
     private func tailLabel(_ text: String, accent: Bool, boxed: Bool) -> some View {
         Text(text)
             .font(accent ? .caption2.weight(.medium) : .caption2)
-            .foregroundColor(accent ? Theme.accent : .secondary)
+            .foregroundColor(accent ? Theme.accent : Color(uiColor: .secondaryLabel))
             .lineLimit(1)
             .truncationMode(.tail)
             .padding(.horizontal, boxed ? 8 : 0)
             .padding(.vertical, boxed ? 4 : 0)
             .background(boxed
-                        ? (accent ? Theme.accent.opacity(0.16) : Color(uiColor: .tertiarySystemFill))
+                        ? (accent ? Theme.accent.opacity(0.16) : Color(uiColor: .secondarySystemFill))
                         : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
