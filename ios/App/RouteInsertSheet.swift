@@ -239,6 +239,7 @@ struct RouteInsertSheet: View {
                         .padding(.vertical, 4)
                         .background(Theme.accent.opacity(0.16))
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .frame(width: Self.tailWidth, alignment: .center)
                 }
                 .buttonStyle(.borderless)
             } else if planID == plan.id {
@@ -248,6 +249,7 @@ struct RouteInsertSheet: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color(uiColor: .tertiarySystemFill))
+                    .frame(width: Self.tailWidth, alignment: .center)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
         }
