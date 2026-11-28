@@ -114,6 +114,11 @@ final class Prefs: ObservableObject {
         didSet { defaults.set(favoriteFirst, forKey: "prefs.favoriteFirst") }
     }
     /// Автовыбор быстрейшего сервера после параллельного пинга.
+    /// WARP: если эндпоинт перестал отвечать — пробовать следующий из списка.
+    @Published var autoEndpoint: Bool {
+        didSet { defaults.set(autoEndpoint, forKey: "prefs.autoEndpoint") }
+    }
+
     @Published var autoFastest: Bool {
         didSet { defaults.set(autoFastest, forKey: "prefs.autoFastest") }
     }
@@ -164,6 +169,7 @@ final class Prefs: ObservableObject {
         sortOrder = SortOrder(rawValue: defaults.string(forKey: "prefs.sort") ?? "") ?? .name
         favoriteFirst = defaults.object(forKey: "prefs.favoriteFirst") as? Bool ?? true
         autoFastest = defaults.object(forKey: "prefs.autoFastest") as? Bool ?? false
+        autoEndpoint = defaults.object(forKey: "prefs.autoEndpoint") as? Bool ?? true
         finalAction = RuleAction(rawValue: defaults.string(forKey: "prefs.finalAction") ?? "") ?? .proxy
         dnsMode = DNSMode(rawValue: defaults.string(forKey: "prefs.dnsMode") ?? "") ?? .system
         dnsServer = defaults.string(forKey: "prefs.dnsServer") ?? "https://1.1.1.1/dns-query"

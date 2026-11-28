@@ -151,20 +151,21 @@ struct SubscriptionEditorView: View {
 
                 // 3. Куда добавить — кнопка с тем же диалогом, что «Куда направить».
                 Section {
-                    // Название по умолчанию — над кнопкой, и только когда ссылка уже есть.
-                    if !addToExisting,
-                       customFolder || !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        TextField(defaultFolderName, text: $addName)
-                    }
+                    // Имя папки — всегда активно, даже пока ссылки нет.
+                    TextField(defaultFolderName, text: $addName)
                     Button {
                         withAnimation(.easeOut(duration: 0.15)) { choosingFolder = true }
                     } label: {
                         HStack {
-                            Text(addToExisting
-                                 ? store.folderName(addTargetFolder)
-                                 : (customFolder ? "Новая папка" : "По умолчанию"))
+                            Text("Или выбрать существующую")
                                 .foregroundColor(.primary)
                             Spacer()
+                            if addToExisting {
+                                Text(store.folderName(addTargetFolder))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
                             Image(systemName: "chevron.up.chevron.down")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)

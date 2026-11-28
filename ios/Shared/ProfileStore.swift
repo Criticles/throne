@@ -260,9 +260,9 @@ final class ProfileStore: ObservableObject {
 
     /// WARP как обычный профиль AmneziaWG: его видно в списке, можно выбрать и пинговать.
     @discardableResult
-    func addWARP(payload: String, endpoint: String, folderID: UUID?) -> Profile {
+    func addWARP(payload: String, endpoint: String, folderID: UUID?, folderName: String = "WARP") -> Profile {
         var target = folderID
-        if target == nil { target = addFolder(name: "WARP").id }
+        if target == nil { target = addFolder(name: folderName).id }
         var profile = Profile(name: "WARP · Cloudflare",
                               kind: .amneziawg,
                               payload: payload,

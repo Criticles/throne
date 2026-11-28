@@ -78,6 +78,18 @@ enum WARPCreator {
                        peerPublicKey: peerPublic)
     }
 
+    /// WARP ли это: тот же AmneziaWG, но наш пресет Cloudflare.
+    static func isWARP(_ profile: Profile) -> Bool {
+        profile.kind == .amneziawg && (profile.badge == "WARP" || profile.name.hasPrefix("WARP"))
+    }
+
+    /// Индекс текущего эндпоинта в списке кандидатов (0, если не нашли).
+    static func endpointIndex(in payload: String) -> Int {
+        guard let wg = WireGuardConfig.parse(payload) else { return 0 }
+        let host = "\(wg.host):\(wg.port)"
+        return endpoints.firstIndex(of: host) ?? 0
+    }
+
     /// Ключи уже созданного профиля — чтобы сменить эндпоинт, не регистрируясь заново.
     static func account(from payload: String) -> Account? {
         guard let wg = WireGuardConfig.parse(payload) else { return nil }

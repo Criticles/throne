@@ -138,13 +138,22 @@ struct ChainSheet: View {
             }
 
             Section {
+                // Имя новой папки — всегда активно и первым, как в «Новой подписке».
+                TextField(defaultFolderName, text: $newFolderName)
+
                 Button {
                     withAnimation(.easeOut(duration: 0.15)) { choosingFolder = true }
                 } label: {
                     HStack {
-                        Text(folderChoiceTitle)
+                        Text("Или выбрать существующую")
                             .foregroundColor(.primary)
                         Spacer()
+                        if case .existing(let id) = mode {
+                            Text(store.folder(id)?.name ?? "")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.caption2)
                             .foregroundColor(.secondary)
@@ -152,11 +161,6 @@ struct ChainSheet: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-
-                // Имя папки — под кнопкой, а не вместо неё.
-                if showsNameField {
-                    TextField(defaultFolderName, text: $newFolderName)
-                }
             } header: {
                 Text("Папка")
             } footer: {

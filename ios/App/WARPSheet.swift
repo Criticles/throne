@@ -4,6 +4,7 @@ import SwiftUI
 /// Эндпоинт можно сменить — на этой сети отдельные адреса периодически перестают отвечать.
 struct WARPSheet: View {
     @EnvironmentObject private var store: ProfileStore
+    @EnvironmentObject private var prefs: Prefs
     @Environment(\.presentationMode) private var presentation
 
     @State private var busy = false
@@ -11,6 +12,10 @@ struct WARPSheet: View {
     @State private var error = ""
     @State private var endpointIndex = 0
     @State private var created: Profile?
+    /// Куда положить профиль: своя папка с именем или существующая.
+    @State private var folderName = "WARP"
+    @State private var targetFolder: UUID?
+    @State private var choosingFolder = false
 
     private var endpoint: String { WARPCreator.endpoints[endpointIndex] }
 
@@ -46,6 +51,39 @@ struct WARPSheet: View {
                     Text("Эндпоинт")
                 } footer: {
                     Text("Список проверен на этой сети: все адреса поднимали туннель через узел HEL. Если один перестал работать — выбери другой.")
+                }
+
+                Section {
+                    Toggle("Искать эндпоинт автоматически", isOn: $prefs.autoEndpoint)
+                } footer: {
+                    Text("Пока WARP включён, приложение проверяет связь каждые 45 секунд. Три неудачи подряд — переход на следующий адрес из списка.")
+                }
+
+                Section {
+                    // Как в «Новой подписке»: имя всегда активно, ниже выбор существующей папки.
+                    TextField("WARP", text: $folderName)
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) { choosingFolder = true }
+                    } label: {
+                        HStack {
+                            Text("Или выбрать существующую")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            if let targetFolder {
+                                Text(store.folderName(targetFolder))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } header: {
+                    Text("Куда добавить")
                 }
 
                 Section {
@@ -85,6 +123,36 @@ struct WARPSheet: View {
             }
         }
         .navigationViewStyle(.stack)
+        .overlay(
+            Group {
+                if choosingFolder {
+                    FolderChoiceSheet(
+                        title: "Куда добавить",
+                        defaultTitle: "Новая папка",
+                        defaultDetail: folderName,
+                        options: store.folders.map { folder in
+                            FolderChoiceSheet.Option(id: folder.id,
+                                                     title: folder.name,
+                                                     detail: String(store.count(in: folder.id)),
+                                                     isDefault: false)
+                        },
+                        onDefault: {
+                            targetFolder = nil
+                            withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false }
+                        },
+                        onPick: { option in
+                            targetFolder = option.id
+                            withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false }
+                        },
+                        onNew: {
+                            targetFolder = nil
+                            withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false }
+                        },
+                        onCancel: { withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false } }
+                    )
+                }
+            }
+        )
     }
 
     private func create() async {
@@ -94,7 +162,11 @@ struct WARPSheet: View {
         do {
             let account = try await WARPCreator.register()
             let payload = WARPCreator.payload(account: account, endpoint: endpoint)
-            let profile = store.addWARP(payload: payload, endpoint: endpoint, folderID: nil)
+            let profile = store.addWARP(payload: payload,
+                                        endpoint: endpoint,
+                                        folderID: targetFolder,
+                                        folderName: folderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                            ? "WARP" : folderName)
             created = profile
             store.select(profile.id)
             status = "профиль создан · эндпоинт " + endpoint

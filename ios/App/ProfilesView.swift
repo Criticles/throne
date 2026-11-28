@@ -36,6 +36,9 @@ struct ProfilesView: View {
 
     @State private var sheet: Sheet?
     @State private var createFolderPicker = false
+    /// Сколько проверок WARP подряд не прошло — на третьей меняем эндпоинт.
+    @State private var warpFailures = 0
+    private let warpWatchdog = Timer.publish(every: 45, on: .main, in: .common).autoconnect()
     /// Пользователь явно выбрал «＋ Новая папка» — показываем поле имени даже без ссылки.
     @State private var customFolder = false
     @State private var addText = ""
@@ -158,6 +161,9 @@ struct ProfilesView: View {
             }
             .listStyle(.plain)
             .searchable(text: $query, prompt: "Сервер или протокол")
+            .onReceive(warpWatchdog) { _ in
+                Task { await checkWARPHealth() }
+            }
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
             .sheet(item: $sheet) { item in
@@ -572,20 +578,22 @@ struct ProfilesView: View {
                         .keyboardType(.URL)
                 }
                 Section {
-                    // Имя папки — только когда ссылка уже есть и папка новая.
-                    if showsFolderName {
-                        TextField(defaultFolderTitle, text: $addTitle)
-                    }
-                    // Одна кнопка вместо «новой/существующей» — своя панель снизу.
+                    // Имя папки — всегда активно и всегда на виду: его видно до вставки ссылки.
+                    TextField(defaultFolderTitle, text: $addTitle)
+                    // Кнопка открывает панель выбора папки.
                     Button {
                         withAnimation(.easeOut(duration: 0.15)) { createFolderPicker = true }
                     } label: {
                         HStack {
-                            Text(createFolder
-                                 ? (customFolder ? "Новая папка" : "По умолчанию")
-                                 : store.folderName(targetFolderID))
+                            Text("Или выбрать существующую")
                                 .foregroundColor(.primary)
                             Spacer()
+                            if !createFolder {
+                                Text(store.folderName(targetFolderID))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
                             Image(systemName: "chevron.up.chevron.down")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
@@ -843,13 +851,57 @@ struct ProfilesView: View {
         engine.start(profile: profile, pool: store.profiles, plan: rules.plan,
                      quickPlan: rules.quickPlan,
                      ruleSetPaths: rules.ruleSetPaths())
+
+        let isWARP = WARPCreator.isWARP(profile)
+        var working: Profile? = profile
         if engine.running, !engine.transportOnly {
             probeLine = "определяю выход…"
             await engine.probeActive(profile: profile)
-            probeLine = ""
+            let ok = engine.bulk.first(where: { $0.id == profile.id })?.result?.ok ?? false
+            // WARP: эндпоинты у Cloudflare «протухают» — молча берём следующий рабочий.
+            if !ok, isWARP, prefs.autoEndpoint {
+                probeLine = "ищу рабочий эндпоинт WARP…"
+                working = await WARPRotator.shared.findWorking(
+                    profile: profile,
+                    store: store,
+                    engine: engine,
+                    plan: rules.plan,
+                    quickPlan: rules.quickPlan,
+                    ruleSetPaths: rules.ruleSetPaths()
+                )
+                if working == nil { probeLine = "ни один эндпоинт WARP не ответил" }
+            }
+            if working != nil { probeLine = "" }
         } else {
             probeLine = engine.lastError ?? ""
         }
+
+        // Соединение, которое не поднялось, не оставляем «висящим» в статусе.
+        if working == nil, engine.running { engine.stop() }
+    }
+
+    /// Раз в 45 секунд смотрим, живёт ли WARP. Три неудачи подряд — переезжаем на другой эндпоинт.
+    private func checkWARPHealth() async {
+        guard prefs.autoEndpoint,
+              engine.running, !engine.transportOnly,
+              let selected = store.selected,
+              WARPCreator.isWARP(selected)
+        else { warpFailures = 0; return }
+
+        await engine.probeActive(profile: selected)
+        let ok = engine.bulk.first(where: { $0.id == selected.id })?.result?.ok ?? false
+        if ok {
+            warpFailures = 0
+            return
+        }
+        warpFailures += 1
+        guard warpFailures >= 3 else { return }
+        warpFailures = 0
+        probeLine = "WARP не отвечает — ищу другой эндпоинт…"
+        _ = await WARPRotator.shared.findWorking(profile: selected, store: store, engine: engine,
+                                                 plan: rules.plan, quickPlan: rules.quickPlan,
+                                                 ruleSetPaths: rules.ruleSetPaths())
+        probeLine = ""
     }
 
     private func toggle() async {
