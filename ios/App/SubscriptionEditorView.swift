@@ -147,19 +147,12 @@ struct SubscriptionEditorView: View {
                     Text("Ссылка на подписку")
                 }
 
-                // 2. Название — только когда ссылка уже есть, и сразу с именем по умолчанию.
-                if !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Section {
-                        TextField(defaultFolderName, text: $addName)
-                    } header: {
-                        Text("Название")
-                    } footer: {
-                        Text("подставлено из ссылки — можно поменять")
-                    }
-                }
-
                 // 3. Куда добавить — кнопка с тем же диалогом, что «Куда направить».
                 Section {
+                    // Название по умолчанию — над кнопкой, и только когда ссылка уже есть.
+                    if !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !addToExisting {
+                        TextField(defaultFolderName, text: $addName)
+                    }
                     Button {
                         choosingFolder = true
                     } label: {

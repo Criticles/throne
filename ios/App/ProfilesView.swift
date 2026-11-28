@@ -35,6 +35,7 @@ struct ProfilesView: View {
     }
 
     @State private var sheet: Sheet?
+    @State private var createFolderPicker = false
     @State private var addText = ""
     @State private var addTitle = ""
     @State private var createFolder = true
@@ -157,6 +158,16 @@ struct ProfilesView: View {
             .searchable(text: $query, prompt: "Сервер или протокол")
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
+            .confirmationDialog("Куда добавить", isPresented: $createFolderPicker, titleVisibility: .visible) {
+                Button("По умолчанию") { createFolder = true }
+                ForEach(store.folders) { folder in
+                    Button(folder.name + " · " + String(store.count(in: folder.id))) {
+                        createFolder = false
+                        targetFolderID = folder.id
+                    }
+                }
+                Button("＋ Новая папка") { createFolder = true }
+            }
             .sheet(item: $sheet) { item in
                 switch item {
                 case .add:
@@ -569,28 +580,29 @@ struct ProfilesView: View {
                         .keyboardType(.URL)
                 }
                 Section {
-                    Picker("Куда добавить", selection: $createFolder) {
-                        Text("Новая папка").tag(true)
-                        Text("В существующую").tag(false)
-                    }
-                    .pickerStyle(.segmented)
                     if createFolder {
                         TextField("Имя папки", text: $addTitle)
-                        if !addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text("По умолчанию: " + ProfileStore.folderName(for: addText))
+                    }
+                    // Одна кнопка вместо «новой/существующей» — с тем же диалогом, что «Куда направить».
+                    Button {
+                        createFolderPicker = true
+                    } label: {
+                        HStack {
+                            Text(createFolder ? "По умолчанию" : store.folderName(targetFolderID))
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
-                    } else {
-                        Picker("Папка", selection: $targetFolderID) {
-                            ForEach(store.folders) { item in
-                                Text(item.name + " · " + String(store.count(in: item.id))).tag(Optional(item.id))
-                            }
-                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                } header: {
+                    Text("Куда добавить")
                 } footer: {
                     Text(createFolder
-                         ? "Серверы лягут в свою новую папку — имя можно изменить. Одну и ту же подписку можно добавить сколько угодно раз: папки не сольются, даже если назвать их одинаково."
+                         ? "По умолчанию — новая папка с именем подписки. Одну и ту же подписку можно добавить сколько угодно раз: папки не сольются."
                          : "Серверы добавятся в выбранную папку рядом с теми, что там уже есть.")
                 }
                 Section {

@@ -17,10 +17,15 @@ struct ChainSheet: View {
     @State private var name = ""
     @State private var links: [Link] = []
     @State private var createFolder = true
-    @State private var folderName = ""
     @State private var targetFolderID: UUID?
     @State private var picking = false
     @State private var choosingFolder = false
+
+    /// Что показать в строке: «По умолчанию» или имя выбранной папки.
+    private var folderChoiceTitle: String {
+        if createFolder { return "По умолчанию" }
+        return store.folder(targetFolderID)?.name ?? "Куда добавить"
+    }
 
     private var canSave: Bool {
         links.count >= 2 && (createFolder || targetFolderID != nil)
@@ -82,32 +87,27 @@ struct ChainSheet: View {
                 }
 
                 Section {
-                    Picker("Куда сохранить", selection: $createFolder) {
-                        Text("В новую папку").tag(true)
-                        Text("В существующую").tag(false)
-                    }
-                    .pickerStyle(.segmented)
-
-                    if createFolder {
-                        TextField("Имя папки", text: $folderName)
-                    } else {
-                        // Тот же вид выбора, что у «Куда направить»: крупные строки в диалоге.
-                        Button {
-                            choosingFolder = true
-                        } label: {
-                            HStack {
-                                Text(store.folder(targetFolderID)?.name ?? "Выберите папку")
-                                Spacer()
-                                Text(String(store.count(in: targetFolderID)))
-                                    .foregroundColor(.secondary)
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
+                    // Вместо «новой/существующей» — одна кнопка с тем же диалогом, что «Куда направить».
+                    Button {
+                        choosingFolder = true
+                    } label: {
+                        HStack {
+                            Text(folderChoiceTitle)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 } header: {
                     Text("Папка")
+                } footer: {
+                    Text(createFolder
+                         ? "По умолчанию — новая папка с именем цепочки."
+                         : "Цепочка ляжет в выбранную папку, имя папки не меняется.")
                 }
             }
             .navigationTitle("Создать цепочку")
@@ -124,13 +124,15 @@ struct ChainSheet: View {
             .sheet(isPresented: $picking) {
                 linkPicker
             }
-            .confirmationDialog("Куда сохранить", isPresented: $choosingFolder, titleVisibility: .visible) {
+            .confirmationDialog("Куда добавить", isPresented: $choosingFolder, titleVisibility: .visible) {
+                Button("По умолчанию") { createFolder = true }
                 ForEach(store.folders) { folder in
                     Button(folder.name + " · " + String(store.count(in: folder.id))) {
+                        createFolder = false
                         targetFolderID = folder.id
                     }
                 }
-                Button("Новая папка") { createFolder = true }
+                Button("＋ Новая папка") { createFolder = true }
             }
         }
         .navigationViewStyle(.stack)
@@ -173,10 +175,7 @@ struct ChainSheet: View {
         let payloads = links.map { ["name": $0.name, "payload": $0.payload] }
         var folder: UUID?
         if createFolder {
-            let title = folderName.trimmingCharacters(in: .whitespacesAndNewlines)
-            folder = store.addFolder(name: title.isEmpty
-                                     ? (name.isEmpty ? "Цепочка" : name)
-                                     : title).id
+            folder = store.addFolder(name: name.isEmpty ? "Цепочка" : name).id
         } else {
             folder = targetFolderID
         }
