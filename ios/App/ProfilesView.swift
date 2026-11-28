@@ -15,7 +15,7 @@ struct ProfilesView: View {
     /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки, остальные
     /// молча не открываются.
     private enum Sheet: Identifiable {
-        case add, scanner, subscriptions, log, newFolder, chain
+        case add, scanner, subscriptions, log, newFolder, chain, warp
         case qr(Profile), note(Profile), details(Profile)
 
         var id: String {
@@ -26,6 +26,7 @@ struct ProfilesView: View {
             case .log: return "log"
             case .newFolder: return "newFolder"
             case .chain: return "chain"
+            case .warp: return "warp"
             case .qr(let profile): return "qr-\(profile.id.uuidString)"
             case .note(let profile): return "note-\(profile.id.uuidString)"
             case .details(let profile): return "details-\(profile.id.uuidString)"
@@ -164,6 +165,8 @@ struct ProfilesView: View {
                     newFolderSheet
                 case .chain:
                     ChainSheet()
+                case .warp:
+                    WARPSheet()
                 case .scanner:
                     scannerSheet
                 case .subscriptions:
@@ -509,11 +512,20 @@ struct ProfilesView: View {
                 } label: {
                     Label("Создать цепочку", systemImage: "link")
                 }
-                if !store.subscriptions.isEmpty {
-                    Divider()
-                    Button { Task { await refreshAll() } } label: {
-                        Label("Обновить все подписки", systemImage: "arrow.triangle.2.circlepath")
-                    }
+                Button {
+                    sheet = .warp
+                } label: {
+                    Label("Создать WARP", systemImage: "circle.grid.cross")
+                }
+                Divider()
+                Button { Task { await refreshAll() } } label: {
+                    Label("Обновить серверы", systemImage: "arrow.triangle.2.circlepath")
+                }
+                Button { checkAll() } label: {
+                    Label("Замерить пинг", systemImage: "waveform.path.ecg")
+                }
+                Button { speedAll() } label: {
+                    Label("Замерить скорость", systemImage: "speedometer")
                 }
                 Divider()
                 Button(role: .destructive) {

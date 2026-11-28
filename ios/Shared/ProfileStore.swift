@@ -258,6 +258,33 @@ final class ProfileStore: ObservableObject {
         return profile
     }
 
+    /// WARP как обычный профиль AmneziaWG: его видно в списке, можно выбрать и пинговать.
+    @discardableResult
+    func addWARP(payload: String, endpoint: String, folderID: UUID?) -> Profile {
+        var target = folderID
+        if target == nil { target = addFolder(name: "WARP").id }
+        var profile = Profile(name: "WARP · Cloudflare",
+                              kind: .amneziawg,
+                              payload: payload,
+                              note: "эндпоинт " + endpoint,
+                              badge: "WARP")
+        profile.folderID = target
+        profiles.append(profile)
+        selectedID = profile.id
+        save()
+        status = "WARP готов: " + endpoint
+        return profile
+    }
+
+    /// Смена эндпоинта у существующего WARP-профиля.
+    func updateWARP(profile: Profile, payload: String, endpoint: String) {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        profiles[index].payload = payload
+        profiles[index].note = "эндпоинт " + endpoint
+        save()
+        status = "эндпоинт WARP: " + endpoint
+    }
+
     /// Удалить подписку вместе с её папкой и серверами.
     func remove(_ subscription: Subscription) {
         SubscriptionAlerts.cancel(subscription)
