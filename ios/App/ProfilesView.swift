@@ -35,6 +35,7 @@ struct ProfilesView: View {
     }
 
     @State private var sheet: Sheet?
+    @State private var choosingServer = false
     @State private var addText = ""
     @State private var addTitle = ""
     @State private var createFolder = true
@@ -157,6 +158,11 @@ struct ProfilesView: View {
             .searchable(text: $query, prompt: "Сервер или протокол")
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
+            .confirmationDialog("Выбор сервера", isPresented: $choosingServer, titleVisibility: .visible) {
+                ForEach(visible) { profile in
+                    Button(profile.name) { Task { await connect(profile) } }
+                }
+            }
             .sheet(item: $sheet) { item in
                 switch item {
                 case .add:
@@ -191,9 +197,24 @@ struct ProfilesView: View {
         Section {
             HStack(alignment: .center, spacing: 14) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(store.selected?.name ?? "Не подключено")
-                        .font(.headline)
-                        .lineLimit(2)
+                    // Тап по имени — выбор сервера тем же крупным списком, что «Куда направить».
+                    Button {
+                        choosingServer = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(store.selected?.name ?? "Не подключено")
+                                .font(.headline)
+                                .lineLimit(2)
+                            if !visible.isEmpty {
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(visible.isEmpty)
                     if let profile = store.selected {
                         ProtocolBadge(text: profile.badge ?? profile.kind.title)
                     }

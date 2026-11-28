@@ -37,6 +37,7 @@ struct RouteInsertSheet: View {
     }
 
     @State private var picker: OutboundTarget?
+    @State private var formTargetPicker = false
 
     @State private var freshFolders = Set<UUID>()
     @State private var freshPlans = Set<UUID>()
@@ -375,10 +376,9 @@ struct RouteInsertSheet: View {
 
                 Divider()
 
-                Menu {
-                    ForEach(targets, id: \.self) { target in
-                        Button(target) { outbound.wrappedValue = target }
-                    }
+                // Тот же выбор, что «Куда направить»: крупные строки вместо мелкого меню.
+                Button {
+                    formTargetPicker = true
                 } label: {
                     HStack(spacing: 8) {
                         Text("Outbound")
@@ -395,6 +395,12 @@ struct RouteInsertSheet: View {
                     }
                     .padding(.vertical, 10)
                     .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .confirmationDialog("Куда направить", isPresented: $formTargetPicker, titleVisibility: .visible) {
+                    ForEach(targets, id: \.self) { target in
+                        Button(target) { outbound.wrappedValue = target }
+                    }
                 }
             }
 

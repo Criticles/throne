@@ -20,6 +20,7 @@ struct ChainSheet: View {
     @State private var folderName = ""
     @State private var targetFolderID: UUID?
     @State private var picking = false
+    @State private var choosingFolder = false
 
     private var canSave: Bool {
         links.count >= 2 && (createFolder || targetFolderID != nil)
@@ -90,10 +91,18 @@ struct ChainSheet: View {
                     if createFolder {
                         TextField("Имя папки", text: $folderName)
                     } else {
-                        Picker("Папка", selection: $targetFolderID) {
-                            ForEach(store.folders) { folder in
-                                Text(folder.name + " · " + String(store.count(in: folder.id)))
-                                    .tag(Optional(folder.id))
+                        // Тот же вид выбора, что у «Куда направить»: крупные строки в диалоге.
+                        Button {
+                            choosingFolder = true
+                        } label: {
+                            HStack {
+                                Text(store.folder(targetFolderID)?.name ?? "Выберите папку")
+                                Spacer()
+                                Text(String(store.count(in: targetFolderID)))
+                                    .foregroundColor(.secondary)
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
                             }
                         }
                     }
@@ -114,6 +123,14 @@ struct ChainSheet: View {
             }
             .sheet(isPresented: $picking) {
                 linkPicker
+            }
+            .confirmationDialog("Куда сохранить", isPresented: $choosingFolder, titleVisibility: .visible) {
+                ForEach(store.folders) { folder in
+                    Button(folder.name + " · " + String(store.count(in: folder.id))) {
+                        targetFolderID = folder.id
+                    }
+                }
+                Button("Новая папка") { createFolder = true }
             }
         }
         .navigationViewStyle(.stack)
