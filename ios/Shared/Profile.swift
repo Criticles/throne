@@ -7,6 +7,8 @@ enum ProfileKind: String, Codable, CaseIterable {
     case shadowsocks
     case tuic
     case masterdns
+    /// Цепочка: несколько серверов, где трафик идёт по порядку звеньев.
+    case chain
     case xray
     case hysteria2
     case mieru
@@ -31,6 +33,7 @@ enum ProfileKind: String, Codable, CaseIterable {
         case .shadowsocks: return "Shadowsocks"
         case .tuic: return "TUIC"
         case .masterdns: return "MasterDNS"
+        case .chain: return "Цепочка"
         case .custom: return "JSON подписки"
         }
     }

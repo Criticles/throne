@@ -5,6 +5,9 @@ import Foundation
 enum ServerInfo {
     static func rows(for profile: Profile) -> [(String, String)] {
         let payload = profile.payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        if profile.kind == .chain {
+            return chainRows(payload)
+        }
         if payload.hasPrefix("{") {
             return jsonRows(payload, kind: profile.kind)
         }
@@ -256,6 +259,24 @@ enum ServerInfo {
             if let value = parts.query[key.lowercased()], !value.isEmpty {
                 rows.append((key, value))
             }
+        }
+        return rows
+    }
+
+    private static func chainRows(_ payload: String) -> [(String, String)] {
+        guard let data = payload.data(using: .utf8),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let links = root["links"] as? [[String: Any]]
+        else { return [("Цепочка", "не разобрать")] }
+        var rows: [(String, String)] = [("Звеньев", String(links.count))]
+        for (index, item) in links.enumerated() {
+            let name = (item["name"] as? String) ?? "звено \(index + 1)"
+            var proto = ""
+            if let link = item["payload"] as? String,
+               let parsed = ProfileParser.parse(link: link) {
+                proto = parsed.badge ?? parsed.kind.title
+            }
+            rows.append(("Звено \(index + 1)", proto.isEmpty ? name : name + " · " + proto))
         }
         return rows
     }

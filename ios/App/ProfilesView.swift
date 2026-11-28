@@ -15,7 +15,7 @@ struct ProfilesView: View {
     /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки, остальные
     /// молча не открываются.
     private enum Sheet: Identifiable {
-        case add, scanner, subscriptions, log, newFolder
+        case add, scanner, subscriptions, log, newFolder, chain
         case qr(Profile), note(Profile), details(Profile)
 
         var id: String {
@@ -25,6 +25,7 @@ struct ProfilesView: View {
             case .subscriptions: return "subscriptions"
             case .log: return "log"
             case .newFolder: return "newFolder"
+            case .chain: return "chain"
             case .qr(let profile): return "qr-\(profile.id.uuidString)"
             case .note(let profile): return "note-\(profile.id.uuidString)"
             case .details(let profile): return "details-\(profile.id.uuidString)"
@@ -161,6 +162,8 @@ struct ProfilesView: View {
                     addSheet
                 case .newFolder:
                     newFolderSheet
+                case .chain:
+                    ChainSheet()
                 case .scanner:
                     scannerSheet
                 case .subscriptions:
@@ -500,6 +503,11 @@ struct ProfilesView: View {
                     sheet = .add
                 } label: {
                     Label("Добавить подписку", systemImage: "plus.circle")
+                }
+                Button {
+                    sheet = .chain
+                } label: {
+                    Label("Создать цепочку", systemImage: "link")
                 }
                 if !store.subscriptions.isEmpty {
                     Divider()

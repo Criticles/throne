@@ -65,6 +65,8 @@ enum ConfigBuilder {
                 throw BuildError.badPayload("masterdns://")
             }
             config = try directConfig(outbound: masterdnsOutbound(link))
+        case .chain:
+            config = try chainConfig(profile.payload)
         case .hysteria2:
             guard let link = Hysteria2Link.parse(profile.payload) else {
                 throw BuildError.badPayload("hysteria2://")
@@ -245,6 +247,123 @@ enum ConfigBuilder {
               let text = String(data: out, encoding: .utf8)
         else { throw BuildError.encodingFailed }
         return text
+    }
+
+    /// Цепочка: звенья собираются в один конфиг, каждое следующее — через `detour`.
+    /// Трафик входит в звено 0 и выходит из последнего, поэтому `final` = тег первого.
+    static func chainConfig(_ payload: String) throws -> [String: Any] {
+        guard let data = payload.data(using: .utf8),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let raw = root["links"] as? [[String: Any]], raw.count >= 2
+        else { throw BuildError.badPayload("цепочка: нужно минимум два звена") }
+
+        var outbounds: [[String: Any]] = []
+        var endpoints: [[String: Any]] = []
+        var tags: [String] = []
+
+        for (index, item) in raw.enumerated() {
+            guard let link = item["payload"] as? String,
+                  let parsed = ProfileParser.parse(link: link)
+            else { throw BuildError.badPayload("цепочка: звено \(index + 1) не разобрать") }
+            let tag = "c\(index)"
+            switch parsed.kind {
+            case .vless:
+                guard let parsedLink = try? VLESSLink.parse(link) else {
+                    throw BuildError.badPayload("цепочка: VLESS")
+                }
+                var outbound = vlessOutbound(parsedLink)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .hysteria2:
+                guard let parsedLink = Hysteria2Link.parse(link) else {
+                    throw BuildError.badPayload("цепочка: Hysteria2")
+                }
+                var outbound = hysteria2Outbound(parsedLink)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .mieru:
+                guard let parsedLink = MieruLink.parse(link) else {
+                    throw BuildError.badPayload("цепочка: Mieru")
+                }
+                var outbound = mieruOutbound(parsedLink)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .vmess:
+                guard let parsedLink = VMessLink.parse(link) else {
+                    throw BuildError.badPayload("цепочка: VMess")
+                }
+                var outbound = vmessOutbound(parsedLink)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .trojan:
+                guard let parsedLink = TrojanLink.parse(link) else {
+                    throw BuildError.badPayload("цепочка: Trojan")
+                }
+                var outbound = trojanOutbound(parsedLink)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .shadowsocks:
+                guard let parsedLink = ShadowsocksLink.parse(link) else {
+                    throw BuildError.badPayload("цепочка: Shadowsocks")
+                }
+                var outbound = shadowsocksOutbound(parsedLink)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .tuic:
+                guard let parsedLink = TUICLink.parse(link) else {
+                    throw BuildError.badPayload("цепочка: TUIC")
+                }
+                var outbound = tuicOutbound(parsedLink)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .masterdns:
+                guard let parsedLink = MasterDNSLink.parse(link) else {
+                    throw BuildError.badPayload("цепочка: MasterDNS")
+                }
+                var outbound = masterdnsOutbound(parsedLink)
+                outbound["tag"] = tag
+                outbounds.append(outbound)
+            case .wireguard, .amneziawg:
+                guard let wg = WireGuardConfig.parse(link) else {
+                    throw BuildError.badPayload("цепочка: WireGuard")
+                }
+                endpoints.append(wireguardEndpoint(
+                    tag: tag,
+                    privateKey: wg.privateKey,
+                    publicKey: wg.publicKey,
+                    addresses: wg.addresses,
+                    mtu: wg.mtu,
+                    keepAlive: wg.keepAlive,
+                    peerHost: wg.host,
+                    peerPort: wg.port,
+                    amnezia: wg.amnezia
+                ))
+            default:
+                throw BuildError.unsupported("в цепочку нельзя поставить " + parsed.kind.title)
+            }
+            tags.append(tag)
+        }
+
+        // Каждое звено отправляет свой трафик в следующее.
+        for index in 0..<(tags.count - 1) {
+            let next = tags[index + 1]
+            if let slot = outbounds.firstIndex(where: { ($0["tag"] as? String) == tags[index] }) {
+                outbounds[slot]["detour"] = next
+            } else if let slot = endpoints.firstIndex(where: { ($0["tag"] as? String) == tags[index] }) {
+                endpoints[slot]["detour"] = next
+            }
+        }
+
+        var config: [String: Any] = [
+            "log": ["level": "info", "timestamp": true],
+            "dns": dnsConfig().block,
+            "inbounds": [inbound()],
+            "outbounds": outbounds + [["type": "direct", "tag": "direct"]],
+            "route": ["final": tags[0], "auto_detect_interface": false],
+            "experimental": clashAPI(),
+        ]
+        if !endpoints.isEmpty { config["endpoints"] = endpoints }
+        return config
     }
 
     /// Живой конфиг: все серверы внутри одного ядра, `final` — выбранный.

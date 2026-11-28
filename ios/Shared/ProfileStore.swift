@@ -227,6 +227,37 @@ final class ProfileStore: ObservableObject {
         await importFromURL(subscription.url, folderID: folderID)
     }
 
+    /// Цепочка: сохраняем список звеньев и кладём результат в папку.
+    /// Если папки нет — создаём её с тем же именем, что у цепочки.
+    @discardableResult
+    func addChain(name: String, links: [[String: String]], folderID: UUID?) -> Profile? {
+        guard links.count >= 2 else {
+            status = "в цепочке нужно хотя бы два звена"
+            return nil
+        }
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payloadRoot: [String: Any] = ["links": links]
+        guard let data = try? JSONSerialization.data(withJSONObject: payloadRoot, options: [.sortedKeys]),
+              let payload = String(data: data, encoding: .utf8)
+        else { return nil }
+
+        var target = folderID
+        if target == nil { target = addFolder(name: title.isEmpty ? "Цепочка" : title).id }
+        guard let folderID = target else { return nil }
+
+        var profile = Profile(name: title.isEmpty ? "Цепочка" : title,
+                              kind: .chain,
+                              payload: payload,
+                              note: nil,
+                              badge: "Цепочка · " + String(links.count))
+        profile.folderID = folderID
+        profiles.append(profile)
+        if selectedID == nil { selectedID = profile.id }
+        save()
+        status = "цепочка создана: " + profile.name
+        return profile
+    }
+
     /// Удалить подписку вместе с её папкой и серверами.
     func remove(_ subscription: Subscription) {
         SubscriptionAlerts.cancel(subscription)

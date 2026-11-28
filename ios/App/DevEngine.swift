@@ -229,7 +229,7 @@ final class DevEngine: ObservableObject {
             // Всё, что ядро умеет держать вместе, кладём в один конфиг: final = выбранный сервер.
             let candidates = pool.filter { Self.singboxKinds.contains($0.kind) }
             let config: String
-            if !Self.needsTransport(profile), candidates.count > 1,
+            if !Self.needsTransport(profile), profile.kind != .chain, candidates.count > 1,
                let built = try? ConfigBuilder.buildLive(profiles: candidates, selected: profile,
                                                         plan: routePlan, quickPlan: routeQuickPlan,
                                                         ruleSetPaths: routeRuleSetPaths) {
