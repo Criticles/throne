@@ -320,6 +320,7 @@ struct SettingsView: View {
 
     private var vpnSection: some View {
         Section {
+            Toggle("Подключаться при запуске", isOn: $prefs.autoConnect)
             NavigationLink {
                 ContentView()
             } label: {
@@ -328,7 +329,7 @@ struct SettingsView: View {
         } header: {
             Text("Системный VPN")
         } footer: {
-            Text("В LiveContainer без entitlement расширение не запускается: для проверки используйте dev-режим на экране «Серверы».")
+            Text("Автоподключение поднимает туннель при запуске приложения, если выбран сервер. В LiveContainer без entitlement расширение не запускается: для проверки используйте dev-режим на экране «Серверы».")
         }
     }
 

@@ -88,6 +88,9 @@ final class TunnelController: ObservableObject {
         manager.isEnabled = true
         // Always-on: iOS сам поднимает туннель при появлении сети и перезапускает его
         // после падения. Без on-demand VPN остаётся выключенным до ручного включения.
+        // `disconnectOnSleep` по умолчанию false, но выставляем явно: иначе iOS
+        // может погасить туннель при блокировке экрана.
+        proto.disconnectOnSleep = false
         manager.isOnDemandEnabled = true
         manager.onDemandRules = [NEOnDemandRuleConnect()]
         do {

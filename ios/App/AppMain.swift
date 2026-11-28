@@ -19,6 +19,9 @@ struct RootView: View {
     @StateObject private var traffic = TrafficMonitor()
     @StateObject private var updater = UpdateChecker()
     @StateObject private var router = AppRouter()
+    /// Один контроллер туннеля на всё приложение: нужен и экрану «Системный VPN»,
+    /// и автоподключению при запуске.
+    @StateObject private var tunnel = TunnelController()
     private let upkeep = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -43,6 +46,7 @@ struct RootView: View {
         .environmentObject(traffic)
         .environmentObject(updater)
         .environmentObject(router)
+        .environmentObject(tunnel)
         .task {
             // Сбор статистики трафика стартует вместе с приложением: иначе при
             // закрытой вкладке «Соединения» ничего не копилось.
@@ -71,11 +75,27 @@ struct RootView: View {
             await rules.autoUpdateIfNeeded()
             await updater.check()
             await scheduleExpiryAlerts()
+            await autoConnectIfNeeded()
         }
     }
 }
 
 extension RootView {
+    /// Автоподключение: если включено и сервер выбран, поднимаем системный туннель
+    /// с реальным конфигом. В LiveContainer расширения нет — там запуск не пройдёт,
+    /// это ожидаемо и в лог просто попадёт ошибка.
+    private func autoConnectIfNeeded() async {
+        guard prefs.autoConnect, !tunnel.isConnected, let profile = store.selected else { return }
+        guard let config = try? ConfigBuilder.systemConfig(
+            profile: profile,
+            plan: rules.plan,
+            quickPlan: rules.quickPlan,
+            ruleSetPaths: rules.ruleSetPaths()
+        ) else { return }
+        TunnelLog.write("autoConnect: \(profile.name)")
+        await tunnel.toggle(config: config)
+    }
+
     /// Напоминания о конце подписки: одно уведомление на подписку, за 3 дня.
     private func scheduleExpiryAlerts() async {
         guard prefs.notifyExpiry else { return }
@@ -91,7 +111,7 @@ extension RootView {
 struct ContentView: View {
     @EnvironmentObject private var store: ProfileStore
     @EnvironmentObject private var rules: RuleStore
-    @StateObject private var tunnel = TunnelController()
+    @EnvironmentObject private var tunnel: TunnelController
     @State private var log = ""
     @State private var configError = ""
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()

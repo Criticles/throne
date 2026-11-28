@@ -89,6 +89,10 @@ final class Prefs: ObservableObject {
     @Published var routingMode: RoutingMode {
         didSet { defaults.set(routingMode.rawValue, forKey: "prefs.routing") }
     }
+    /// Поднимать туннель при запуске приложения, если выбран сервер.
+    @Published var autoConnect: Bool {
+        didSet { defaults.set(autoConnect, forKey: "prefs.autoConnect") }
+    }
     @Published var bypassLocalNetwork: Bool {
         didSet { defaults.set(bypassLocalNetwork, forKey: "prefs.bypassLAN") }
     }
@@ -147,6 +151,7 @@ final class Prefs: ObservableObject {
 
     init() {
         routingMode = RoutingMode(rawValue: defaults.string(forKey: "prefs.routing") ?? "") ?? .rules
+        autoConnect = defaults.object(forKey: "prefs.autoConnect") as? Bool ?? true
         bypassLocalNetwork = defaults.object(forKey: "prefs.bypassLAN") as? Bool ?? true
         blockAds = defaults.object(forKey: "prefs.blockAds") as? Bool ?? false
         xrayPreference = XrayPreference(rawValue: defaults.string(forKey: "prefs.xray") ?? "") ?? .xhttpAndReality
