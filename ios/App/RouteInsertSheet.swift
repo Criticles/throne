@@ -293,35 +293,40 @@ struct RouteInsertSheet: View {
 
     // MARK: - Формы
 
-    /// Название, кружок-галочка, выход — ровно как в макете.
+    /// Название, кружок-галочка, выход.
+    /// Оба поля одной высоты и с одинаковыми отступами, содержимое — по центру поля,
+    /// а слово «Outbound» больше не дублируется: подсказка есть в самом поле ввода.
     private func creationForm(name: Binding<String>, placeholder: String,
                               outbound: Binding<String>,
                               action: @escaping () -> Void) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             VStack(spacing: 0) {
                 TextField(placeholder, text: name)
                     .font(.subheadline)
-                    .padding(.vertical, 9)
+                    .multilineTextAlignment(.center)
+                    .padding(.vertical, 10)
+
                 Divider()
+
                 Menu {
                     ForEach(targets, id: \.self) { target in
                         Button(target) { outbound.wrappedValue = target }
                     }
                 } label: {
-                    HStack(spacing: 6) {
-                        Text("Outbound")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                    HStack {
+                        Spacer(minLength: 0)
                         Text(outbound.wrappedValue)
                             .font(.caption.weight(.medium))
                             .foregroundColor(Theme.accent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
                             .background(Theme.accent.opacity(0.16))
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
                 }
             }
 
