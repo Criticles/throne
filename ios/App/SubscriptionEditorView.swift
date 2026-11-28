@@ -11,6 +11,7 @@ struct SubscriptionEditorView: View {
     /// Куда класть серверы: новая папка или уже существующая.
     @State private var addToExisting = false
     @State private var addTargetFolder: UUID?
+    @State private var choosingFolder = false
     /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки.
     private enum Sheet: Identifiable {
         case add
@@ -136,38 +137,52 @@ struct SubscriptionEditorView: View {
     private var addSheet: some View {
         NavigationView {
             Form {
+                // 1. Ссылка.
                 Section {
                     TextField("https://…/sub/<токен>", text: $addURL)
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .keyboardType(.URL)
+                } header: {
+                    Text("Ссылка на подписку")
                 }
-                Section {
-                    Picker("Куда добавить", selection: $addToExisting) {
-                        Text("Новая папка").tag(false)
-                        Text("В существующую").tag(true)
+
+                // 2. Название — только когда ссылка уже есть, и сразу с именем по умолчанию.
+                if !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Section {
+                        TextField(defaultFolderName, text: $addName)
+                    } header: {
+                        Text("Название")
+                    } footer: {
+                        Text("подставлено из ссылки — можно поменять")
                     }
-                    .pickerStyle(.segmented)
-                    if addToExisting {
-                        Picker("Папка", selection: $addTargetFolder) {
-                            ForEach(store.folders) { folder in
-                                Text(folder.name + " · " + String(store.count(in: folder.id)))
-                                    .tag(Optional(folder.id))
-                            }
-                        }
-                    } else {
-                        TextField("Имя папки", text: $addName)
-                        if !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text("По умолчанию: " + ProfileStore.folderName(for: addURL))
+                }
+
+                // 3. Куда добавить — кнопка с тем же диалогом, что «Куда направить».
+                Section {
+                    Button {
+                        choosingFolder = true
+                    } label: {
+                        HStack {
+                            Text(addToExisting ? store.folderName(addTargetFolder) : "По умолчанию")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                } header: {
+                    Text("Куда добавить")
                 } footer: {
                     Text(addToExisting
                          ? "Серверы добавятся в выбранную папку рядом с теми, что там уже есть."
-                         : "Каждый импорт создаёт папку: имя можно оставить любым, даже совпадающим с другой папкой.")
+                         : "По умолчанию — новая папка с именем выше. Кнопка открывает выбор папки.")
                 }
+
+                // 4. Импорт.
                 Section {
                     Button {
                         let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -182,14 +197,28 @@ struct SubscriptionEditorView: View {
                     } label: {
                         Label("Сканировать QR", systemImage: "qrcode.viewfinder")
                     }
+                } header: {
+                    Text("Импорт")
                 } footer: {
                     Text("QR подписки или сервера — то же, что ссылка в поле выше.")
                 }
             }
             .navigationTitle("Новая подписка")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                if addTargetFolder == nil { addTargetFolder = store.lastFolderID }
+            .confirmationDialog("Куда добавить", isPresented: $choosingFolder, titleVisibility: .visible) {
+                Button("По умолчанию") {
+                    addToExisting = false
+                }
+                ForEach(store.folders) { folder in
+                    Button(folder.name + " · " + String(store.count(in: folder.id))) {
+                        addToExisting = true
+                        addTargetFolder = folder.id
+                    }
+                }
+                Button("Новая папка") {
+                    addToExisting = false
+                    addName = ""
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -199,13 +228,12 @@ struct SubscriptionEditorView: View {
                     Button("Добавить") {
                         let url = addURL.trimmingCharacters(in: .whitespacesAndNewlines)
                         let typed = addName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        // «В существующую» — кладём в выбранную папку; иначе создаём новую,
-                        // имя можно оставить и таким же, как у другой.
+                        // «В существующую» — кладём в выбранную папку; иначе создаём новую.
                         let target: UUID
-                        if addToExisting, let chosen = addTargetFolder ?? store.lastFolderID {
+                        if addToExisting, let chosen = addTargetFolder {
                             target = chosen
                         } else {
-                            target = store.addFolder(name: typed.isEmpty ? ProfileStore.folderName(for: url) : typed).id
+                            target = store.addFolder(name: typed.isEmpty ? defaultFolderName : typed).id
                         }
                         sheet = nil
                         Task { await store.importFromURL(url, folderID: target) }
@@ -218,6 +246,11 @@ struct SubscriptionEditorView: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    /// Имя папки, которое подставится, если ничего не менять.
+    private var defaultFolderName: String {
+        ProfileStore.folderName(for: addURL)
     }
 }
 
