@@ -36,12 +36,12 @@ struct WARPSheet: View {
                 }
 
                 Section {
+                    // .navigationLink есть только с iOS 16, а проект собирается с 15.0.
                     Picker("Эндпоинт", selection: $endpointIndex) {
                         ForEach(Array(WARPCreator.endpoints.enumerated()), id: \.offset) { index, item in
                             Text(item).tag(index)
                         }
                     }
-                    .pickerStyle(.navigationLink)
                 } header: {
                     Text("Эндпоинт")
                 } footer: {
