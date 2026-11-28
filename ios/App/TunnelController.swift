@@ -41,7 +41,9 @@ final class TunnelController: ObservableObject {
         }
     }
 
-    func toggle() async {
+    /// `config` — готовый конфиг sing-box. Без него поднимаем P0-заглушку
+    /// (tun + direct): это только проверка, что дескриптор utun доходит до ядра.
+    func toggle(config: String? = nil) async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
@@ -50,7 +52,7 @@ final class TunnelController: ObservableObject {
             return
         }
         do {
-            let manager = try await prepareManager()
+            let manager = try await prepareManager(config: config)
             try manager.connection.startVPNTunnel()
         } catch {
             let described = Self.describe(error)
@@ -70,15 +72,17 @@ final class TunnelController: ObservableObject {
         manager?.connection.status == .connecting || manager?.connection.status == .reasserting
     }
 
-    private func prepareManager() async throws -> NETunnelProviderManager {
+    private func prepareManager(config: String? = nil) async throws -> NETunnelProviderManager {
+        let payload = (config?.isEmpty == false ? config : nil) ?? P0Config.json
         P0Config.prepareInContainer()
+        TunnelLog.write("config: " + (config == nil ? "P0-заглушка" : "профиль, \(payload.count) байт"))
         TunnelLog.clear()
 
         let manager = self.manager ?? NETunnelProviderManager()
         let proto = NETunnelProviderProtocol()
         proto.providerBundleIdentifier = Shared.tunnelBundleID
         proto.serverAddress = "127.0.0.1"
-        proto.providerConfiguration = [Shared.configKey: P0Config.json]
+        proto.providerConfiguration = [Shared.configKey: payload]
         manager.protocolConfiguration = proto
         manager.localizedDescription = "Throne"
         manager.isEnabled = true

@@ -89,8 +89,11 @@ extension RootView {
 /// Системный VPN через Network Extension. Открывается из настроек, поэтому своего
 /// NavigationView не держит — иначе внутри стека получился бы второй.
 struct ContentView: View {
+    @EnvironmentObject private var store: ProfileStore
+    @EnvironmentObject private var rules: RuleStore
     @StateObject private var tunnel = TunnelController()
     @State private var log = ""
+    @State private var configError = ""
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -107,13 +110,18 @@ struct ContentView: View {
                     .font(.footnote)
                     .foregroundColor(.secondary)
                 Button {
-                    Task { await tunnel.toggle() }
+                    Task { await startTunnel() }
                 } label: {
                     Text(tunnel.isConnected ? "Отключить" : "Подключить")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(tunnel.busy)
+                if !configError.isEmpty {
+                    Text(configError)
+                        .font(.footnote)
+                        .foregroundColor(Theme.accent)
+                }
             }
 
             Section("Лог расширения") {
@@ -128,4 +136,25 @@ struct ContentView: View {
         .onAppear { Task { await tunnel.reload() } }
         .onReceive(timer) { _ in log = TunnelLog.read() }
     }
+    /// Туннель поднимаем с настоящим конфигом профиля: TUN + его сервер + маршрут.
+    /// P0-заглушка осталась только как запасной вариант, если профиль не выбран.
+    private func startTunnel() async {
+        guard let profile = store.selected else {
+            configError = "Сначала выбери сервер на вкладке «Серверы»."
+            return
+        }
+        do {
+            let config = try ConfigBuilder.systemConfig(
+                profile: profile,
+                plan: rules.plan,
+                quickPlan: rules.quickPlan,
+                ruleSetPaths: rules.ruleSetPaths())
+            configError = ""
+            TunnelLog.write("systemConfig: \(profile.name), \(config.count) байт")
+            await tunnel.toggle(config: config)
+        } catch {
+            configError = "Не собрать конфиг: \(error.localizedDescription)"
+        }
+    }
+
 }

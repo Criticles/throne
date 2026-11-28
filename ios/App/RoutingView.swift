@@ -75,39 +75,54 @@ struct RoutingView: View {
         }
     }
 
+    /// Наборы правил `.srs`: их читает ядро, на них ссылаются правила и режимы
+    /// «Кроме России» / «Блокировать рекламу». Раньше здесь висели `.dat` от Loyalsoldier,
+    /// которые sing-box не понимает.
     private var geoSection: some View {
         Section {
-            ForEach(rules.assets) { asset in
+            ForEach(rules.ruleSets) { set in
                 HStack(spacing: 12) {
                     Image(systemName: "square.and.arrow.down")
                         .foregroundColor(.secondary)
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(asset.name).font(.subheadline)
-                        Text(detail(for: asset))
+                        Text(set.name).font(.subheadline)
+                        Text(set.bytes > 0
+                             ? Format.size(Int64(set.bytes)) + " · " + Self.dateText(set.updated)
+                             : "не скачан")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Button(asset.bytes > 0 ? "Обновить" : "Скачать") {
-                        Task { await rules.download(asset) }
+                    Button(set.bytes > 0 ? "Обновить" : "Скачать") {
+                        Task { await rules.download(set) }
                     }
                     .buttonStyle(.borderless)
                     .font(.caption)
                 }
+            }
+            .onDelete { offsets in
+                for index in offsets { rules.deleteRuleSet(rules.ruleSets[index]) }
             }
             Button {
                 geoName = ""
                 geoURL = ""
                 showGeoSheet = true
             } label: {
-                Label("Добавить свой список", systemImage: "plus.circle")
+                Label("Добавить свой набор", systemImage: "plus.circle")
             }
         } header: {
-            Text("Гео-списки")
+            Text("Наборы правил")
         } footer: {
-            Text("Списки Loyalsoldier: страны и категории доменов для правил geosite/geoip. " + rules.status)
+            Text("Бинарные .srs: «Кроме России» и «Блокировать рекламу» работают, когда соответствующий набор скачан. " + rules.status)
         }
+    }
+
+    private static func dateText(_ date: Date?) -> String {
+        guard let date else { return "нет даты" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd.MM HH:mm"
+        return formatter.string(from: date)
     }
 
     private var geoSheet: some View {
@@ -115,13 +130,13 @@ struct RoutingView: View {
             Form {
                 Section {
                     TextField("Имя списка", text: $geoName)
-                    TextField("https://…/geoip.dat", text: $geoURL)
+                    TextField("https://…/geosite-ads.srs", text: $geoURL)
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .keyboardType(.URL)
                         .font(.system(.footnote, design: .monospaced))
                 } footer: {
-                    Text("Любой .dat/.srs по ссылке: скачается в приложение и появится в этом списке.")
+                    Text("Ссылка на .srs от sing-geosite или sing-geoip: файл скачается, и на него можно ссылаться атрибутом rule_set.")
                 }
             }
             .navigationTitle("Свой список")
@@ -132,7 +147,9 @@ struct RoutingView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Добавить") {
-                        rules.addAsset(name: geoName, url: geoURL)
+                        let title = geoName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        rules.addRuleSet(RuleSet(name: title.isEmpty ? "набор" : title,
+                                                 url: geoURL.trimmingCharacters(in: .whitespacesAndNewlines)))
                         showGeoSheet = false
                     }
                     .disabled(geoURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

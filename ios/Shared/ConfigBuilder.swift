@@ -207,6 +207,46 @@ enum ConfigBuilder {
         return (pre, post, final, skipPlan)
     }
 
+    /// Конфиг для системного VPN: тот же маршрут, но вход — `tun`, а не `mixed`.
+    /// MTU, стек и IPv6 берём из «Настроек» — раньше они лежали в UserDefaults
+    /// и на расширение не влияли: там запускался фиксированный P0-конфиг.
+    static func systemConfig(profile: Profile, plan: RoutePlan? = nil,
+                             quickPlan: RoutePlan? = nil,
+                             ruleSetPaths: [String: String] = [:]) throws -> String {
+        let json = try build(profile: profile, plan: plan, quickPlan: quickPlan,
+                             ruleSetPaths: ruleSetPaths)
+        guard let data = json.data(using: .utf8),
+              var config = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw BuildError.encodingFailed }
+
+        let defaults = UserDefaults.standard
+        let storedMTU = defaults.integer(forKey: "prefs.tunMTU")
+        let mtu = storedMTU == 0 ? 9000 : storedMTU
+        let stack = defaults.string(forKey: "prefs.tunStack") ?? "gvisor"
+        let ipv6 = defaults.object(forKey: "prefs.ipv6") as? Bool ?? true
+
+        var addresses = ["172.19.0.1/30"]
+        if ipv6 { addresses.append("fdfe:dcba:9876::1/126") }
+
+        config["inbounds"] = [[
+            "type": "tun",
+            "tag": "tun-in",
+            "address": addresses,
+            "mtu": mtu,
+            "auto_route": true,
+            "strict_route": false,
+            "stack": stack,
+        ]]
+        // Clash API в расширении не нужен: он открывал порт, к которому из приложения
+        // всё равно не достучаться (свой сетевой стек у процесса расширения).
+        config.removeValue(forKey: "experimental")
+
+        guard let out = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
+              let text = String(data: out, encoding: .utf8)
+        else { throw BuildError.encodingFailed }
+        return text
+    }
+
     /// Живой конфиг: все серверы внутри одного ядра, `final` — выбранный.
     ///
     /// Зачем: тогда пинг любого сервера не требует перезапуска ядра и не рвёт текущее

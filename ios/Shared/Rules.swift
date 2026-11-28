@@ -1219,6 +1219,9 @@ final class RuleStore: ObservableObject {
            let stored = try? JSONDecoder().decode([RuleSet].self, from: data) {
             ruleSets = stored
         }
+        // Пресеты .srs нужны сразу: без них режимы «Кроме России» и «Блокировать рекламу»
+        // нечего применять — ядро читает rule_set только с диска.
+        if ruleSets.isEmpty { ruleSets = RuleSet.presets }
         loadPlans()
         if let stored = defaults.array(forKey: "rules.assets") as? [[String: String]] {
             for item in stored {
