@@ -128,9 +128,7 @@ struct RouteInsertSheet: View {
     }
 
     private func profileRow(_ plan: RoutePlan) -> some View {
-        // Кнопка и переключатель разделены: внутри `Button` тумблер не ловит тап.
-        // Все управляющие элементы — в одной правой колонке шириной с тумблер,
-        // поэтому кружки профилей стоят ровно по его оси.
+        // Кнопка и переключатель разделены: внутри `Button` переключатель не ловит тап.
         HStack(spacing: 10) {
             Button {
                 planID = plan.id
@@ -140,11 +138,15 @@ struct RouteInsertSheet: View {
                 newFolderOutbound = plan.isSystem ? "proxy" : plan.finalTarget
             } label: {
                 HStack(spacing: 10) {
+                    // «Быстрые правила» не выбирают кружком: они стоят над профилем.
+                    // Кружок есть только у обычных профилей.
                     if plan.isSystem {
                         Image(systemName: "bolt.horizontal.circle")
                             .font(.system(size: 15))
                             .foregroundColor(Color(uiColor: .tertiaryLabel))
                             .frame(width: 18, height: 18)
+                    } else {
+                        radio(planID == plan.id)
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plan.name)
@@ -172,10 +174,6 @@ struct RouteInsertSheet: View {
                 .labelsHidden()
                 .tint(Theme.accent)
                 .scaleEffect(0.8)
-                .frame(width: 40, alignment: .center)
-            } else {
-                radio(planID == plan.id)
-                    .frame(width: 40, alignment: .center)
             }
         }
     }
