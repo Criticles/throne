@@ -35,7 +35,6 @@ struct ProfilesView: View {
     }
 
     @State private var sheet: Sheet?
-    @State private var plusDialog = false
     @State private var addText = ""
     @State private var addTitle = ""
     @State private var createFolder = true
@@ -158,9 +157,6 @@ struct ProfilesView: View {
             .searchable(text: $query, prompt: "Сервер или протокол")
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
-            .confirmationDialog("Добавить", isPresented: $plusDialog, titleVisibility: .visible) {
-                plusActions
-            }
             .sheet(item: $sheet) { item in
                 switch item {
                 case .add:
@@ -500,64 +496,64 @@ struct ProfilesView: View {
             Button("Изм") { sheet = .subscriptions }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
-            // Обычный Menu система перерисовывает при открытии — подписи «моргают»
-            // белым. Поэтому плюс открывает диалог: он рисуется один раз, без анимации.
-            Button {
-                plusDialog = true
+            // Пункты меню рисуем через item(): у Label без явного цвета система при
+            // открытии меню перекрашивает подписи и они «моргают» белым.
+            Menu {
+                Button {
+                    // Буфер не читаем сами: вставка — только по кнопке в открывшемся окне.
+                    addText = ""
+                    addTitle = ""
+                    targetFolderID = folderID
+                    createFolder = true
+                    sheet = .add
+                } label: {
+                    item("Добавить подписку", "plus.circle")
+                }
+                Button {
+                    sheet = .chain
+                } label: {
+                    item("Создать цепочку", "link")
+                }
+                Button {
+                    sheet = .warp
+                } label: {
+                    item("Создать WARP", "circle.grid.cross")
+                }
+                Divider()
+                Button { Task { await refreshAll() } } label: {
+                    item("Обновить серверы", "arrow.triangle.2.circlepath")
+                }
+                Button { checkAll() } label: {
+                    item("Замерить пинг", "waveform.path.ecg")
+                }
+                Button { speedAll() } label: {
+                    item("Замерить скорость", "speedometer")
+                }
+                Divider()
+                Button(role: .destructive) {
+                    store.removeAll()
+                    folderID = nil
+                    probeLine = ""
+                } label: {
+                    item("Удалить все серверы", "trash")
+                }
             } label: {
                 Image(systemName: "plus.circle.fill")
                     .font(.title3)
                     .foregroundColor(Theme.accent)
             }
+            .transaction { $0.animation = nil }
         }
     }
 
-    /// Пункты «＋»: подписка, цепочка, WARP, обновление, замеры и полная очистка.
-    private var plusActions: some View {
-        Group {
-            Button {
-                // Буфер не читаем сами: вставка — только по кнопке в открывшемся окне.
-                addText = ""
-                addTitle = ""
-                targetFolderID = folderID
-                createFolder = true
-                sheet = .add
-            } label: {
-                Label("Добавить подписку", systemImage: "plus.circle")
-            }
-            Button {
-                sheet = .chain
-            } label: {
-                Label("Создать цепочку", systemImage: "link")
-            }
-            Button {
-                sheet = .warp
-            } label: {
-                Label("Создать WARP", systemImage: "circle.grid.cross")
-            }
-            Button {
-                Task { await refreshAll() }
-            } label: {
-                Label("Обновить серверы", systemImage: "arrow.triangle.2.circlepath")
-            }
-            Button {
-                checkAll()
-            } label: {
-                Label("Замерить пинг", systemImage: "waveform.path.ecg")
-            }
-            Button {
-                speedAll()
-            } label: {
-                Label("Замерить скорость", systemImage: "speedometer")
-            }
-            Button(role: .destructive) {
-                store.removeAll()
-                folderID = nil
-                probeLine = ""
-            } label: {
-                Label("Удалить все серверы", systemImage: "trash")
-            }
+    /// Пункт меню с постоянным цветом: подпись не перекрашивается при открытии меню.
+    private func item(_ title: String, _ symbol: String) -> some View {
+        Label {
+            Text(title).foregroundColor(Color.primary)
+        } icon: {
+            Image(systemName: symbol)
         }
+        .labelStyle(StaticMenuLabelStyle())
     }
 
     // MARK: - Шторки
@@ -956,6 +952,18 @@ struct ServerRow: View {
             }
             .buttonStyle(.borderless)
             .disabled(busy)
+        }
+    }
+}
+
+/// Подпись пункта меню без системной перекраски: иконка слева фиксированной ширины,
+/// текст всегда того же цвета, что и до открытия меню.
+private struct StaticMenuLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 10) {
+            configuration.icon
+                .frame(width: 22, alignment: .center)
+            configuration.title
         }
     }
 }
