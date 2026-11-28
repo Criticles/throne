@@ -131,11 +131,14 @@ enum ConfigBuilder {
             let context = RouteCompiler.Context(tagsByName: [profile.name: tag],
                                                 selectedTag: tag,
                                                 ruleSetPaths: ruleSetPaths)
-            let quickRules = quickPlan.map { RouteCompiler.rules(plan: $0, context: context) } ?? []
-            let planRules = RouteCompiler.rules(plan: plan, context: context)
-            let allRules = quickRules + planRules
+            let layer = preferenceLayer(ruleSetPaths: ruleSetPaths, selectedTag: tag)
+            let quickRules = layer.skipPlan
+                ? []
+                : (quickPlan.map { RouteCompiler.rules(plan: $0, context: context) } ?? [])
+            let planRules = layer.skipPlan ? [] : RouteCompiler.rules(plan: plan, context: context)
+            let allRules = layer.pre + quickRules + planRules + layer.post
             if !allRules.isEmpty { route["rules"] = allRules }
-            if let final = RouteCompiler.finalTag(plan: plan, context: context) {
+            if let final = layer.final ?? RouteCompiler.finalTag(plan: plan, context: context) {
                 route["final"] = final
             }
             let used = RouteCompiler.usedRuleSets(in: quickRules + planRules)
@@ -150,6 +153,58 @@ enum ConfigBuilder {
               let json = String(data: data, encoding: .utf8)
         else { throw BuildError.encodingFailed }
         return json
+    }
+
+    /// Слой из экрана «Маршрутизация»: режим, локальная сеть, реклама и действие по умолчанию.
+    /// Раньше эти настройки только сохранялись в UserDefaults и на конфиг не влияли.
+    /// `pre` — правила до профиля, `post` — после (ловушка для reject), `final` — переопределение.
+    private static func preferenceLayer(ruleSetPaths: [String: String], selectedTag: String?)
+        -> (pre: [[String: Any]], post: [[String: Any]], final: String?, skipPlan: Bool) {
+        let defaults = UserDefaults.standard
+        let mode = defaults.string(forKey: "prefs.routing") ?? "rules"
+        let action = defaults.string(forKey: "prefs.finalAction") ?? "proxy"
+        let bypassLAN = defaults.object(forKey: "prefs.bypassLAN") as? Bool ?? true
+        let blockAds = defaults.object(forKey: "prefs.blockAds") as? Bool ?? false
+
+        var pre: [[String: Any]] = []
+        var post: [[String: Any]] = []
+        var final: String?
+
+        // Локальная сеть — напрямую: иначе принтер и роутер уезжают в туннель.
+        if bypassLAN {
+            pre.append(["ip_is_private": true, "outbound": "direct"])
+        }
+        // Реклама: только если набор скачан, иначе правило сошлётся на несуществующий файл.
+        if blockAds, ruleSetPaths["geosite-ads"] != nil {
+            pre.append(["rule_set": ["geosite-ads"], "action": "reject"])
+        }
+
+        var skipPlan = false
+        switch mode {
+        case "global":
+            // «Всё в VPN»: папки профиля не применяем, всё идёт в выбранный сервер.
+            skipPlan = true
+            final = selectedTag
+        case "bypassRU":
+            var russian: [String] = []
+            if ruleSetPaths["geosite-ru"] != nil { russian.append("geosite-ru") }
+            if ruleSetPaths["geoip-ru"] != nil { russian.append("geoip-ru") }
+            if !russian.isEmpty { pre.append(["rule_set": russian, "outbound": "direct"]) }
+        default:
+            break
+        }
+
+        switch action {
+        case "direct":
+            final = "direct"
+        case "block":
+            // reject как `final` ядро не умеет — ловим всё правилом в конце.
+            post.append(["action": "reject"])
+            final = "direct"
+        default:
+            if final == nil { final = nil }
+        }
+        return (pre, post, final, skipPlan)
     }
 
     /// Живой конфиг: все серверы внутри одного ядра, `final` — выбранный.
@@ -311,11 +366,14 @@ enum ConfigBuilder {
                                                 ruleSetPaths: ruleSetPaths)
             // Служебные папки «Быстрых правил» идут ПЕРВЫМИ: они приоритетнее
             // выбранного профиля, но своего final не задают.
-            let quickRules = quickPlan.map { RouteCompiler.rules(plan: $0, context: context) } ?? []
-            let planRules = RouteCompiler.rules(plan: plan, context: context)
+            let layer = preferenceLayer(ruleSetPaths: ruleSetPaths, selectedTag: selectedTag)
+            let quickRules = layer.skipPlan
+                ? []
+                : (quickPlan.map { RouteCompiler.rules(plan: $0, context: context) } ?? [])
+            let planRules = layer.skipPlan ? [] : RouteCompiler.rules(plan: plan, context: context)
             var route = (config["route"] as? [String: Any]) ?? [:]
-            route["rules"] = rules + quickRules + planRules
-            if let final = RouteCompiler.finalTag(plan: plan, context: context) {
+            route["rules"] = rules + layer.pre + quickRules + planRules + layer.post
+            if let final = layer.final ?? RouteCompiler.finalTag(plan: plan, context: context) {
                 route["final"] = final
             }
             // Наборы правил объявляем только для тех тегов, на которые сослались правила,
