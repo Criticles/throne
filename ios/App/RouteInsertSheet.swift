@@ -102,8 +102,10 @@ struct RouteInsertSheet: View {
             if showNewProfile {
                 creationForm(name: $newProfileName,
                              placeholder: "Название профиля",
-                             outbound: $newProfileOutbound) { createProfile() }
-            } else {
+                             outbound: $newProfileOutbound,
+                             action: { createProfile() },
+                             onCancel: { newProfileName = ""; showNewProfile = false })
+            } else if !showNewFolder {
                 Button {
                     newProfileName = ""
                     newProfileOutbound = current?.finalTarget ?? "proxy"
@@ -209,8 +211,10 @@ struct RouteInsertSheet: View {
             if showNewFolder {
                 creationForm(name: $newFolderName,
                              placeholder: "Название папки",
-                             outbound: $newFolderOutbound) { createFolder() }
-            } else {
+                             outbound: $newFolderOutbound,
+                             action: { createFolder() },
+                             onCancel: { newFolderName = ""; showNewFolder = false })
+            } else if !showNewProfile {
                 Button {
                     newFolderName = ""
                     newFolderOutbound = current?.isSystem == true
@@ -297,7 +301,8 @@ struct RouteInsertSheet: View {
     /// Поля выровнены влево, у выхода снова есть подпись «Outbound».
     private func creationForm(name: Binding<String>, placeholder: String,
                               outbound: Binding<String>,
-                              action: @escaping () -> Void) -> some View {
+                              action: @escaping () -> Void,
+                              onCancel: @escaping () -> Void) -> some View {
         HStack(spacing: 10) {
             VStack(spacing: 0) {
                 TextField(placeholder, text: name)
@@ -329,16 +334,16 @@ struct RouteInsertSheet: View {
                 }
             }
 
-            Button(action: action) {
-                Image(systemName: "checkmark")
+            // Пустое поле — крестик: нажатие отменяет создание. Заполнили — галочка.
+            let filled = !name.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            Button(action: filled ? action : onCancel) {
+                Image(systemName: filled ? "checkmark" : "xmark")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white)
                     .frame(width: 30, height: 30)
-                    .background(Circle().fill(Theme.accent))
+                    .background(Circle().fill(filled ? Theme.accent : Color(uiColor: .systemGray2)))
             }
             .buttonStyle(.borderless)
-            .disabled(name.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .opacity(name.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
         }
     }
 
