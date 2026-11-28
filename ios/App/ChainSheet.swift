@@ -14,128 +14,175 @@ struct ChainSheet: View {
         let badge: String
     }
 
+    /// Куда положить цепочку: в новую папку (имя правится) или в существующую.
+    private enum FolderMode: Equatable {
+        case new
+        case existing(UUID)
+        case custom
+    }
+
     @State private var name = ""
     @State private var links: [Link] = []
-    @State private var createFolder = true
-    @State private var targetFolderID: UUID?
+    @State private var mode: FolderMode = .new
+    @State private var newFolderName = ""
     @State private var picking = false
     @State private var choosingFolder = false
 
-    /// Что показать в строке: «По умолчанию» или имя выбранной папки.
-    private var folderChoiceTitle: String {
-        if createFolder { return "По умолчанию" }
-        return store.folder(targetFolderID)?.name ?? "Куда добавить"
+    private var defaultFolderName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Цепочка" : name
     }
 
-    private var canSave: Bool {
-        links.count >= 2 && (createFolder || targetFolderID != nil)
+    private var folderChoiceTitle: String {
+        switch mode {
+        case .new: return "По умолчанию"
+        case .existing(let id): return store.folder(id)?.name ?? "Куда добавить"
+        case .custom: return "Новая папка"
+        }
     }
+
+    /// Имя новой папки показываем, пока выбрано «по умолчанию» или «новая папка».
+    private var showsNameField: Bool {
+        if case .existing = mode { return false }
+        return true
+    }
+
+    private var canSave: Bool { links.count >= 2 }
 
     var body: some View {
         NavigationView {
-            Form {
-                Section {
-                    TextField("Название цепочки", text: $name)
-                } header: {
-                    Text("Название")
-                } footer: {
-                    Text("Например: «DE → FI · чистый выход». Имя можно не заполнять — подставится «Цепочка».")
+            ZStack(alignment: .bottom) {
+                form
+                if choosingFolder {
+                    FolderChoiceSheet(
+                        title: "Куда добавить",
+                        defaultTitle: "По умолчанию",
+                        defaultDetail: defaultFolderName,
+                        options: store.folders.map { folder in
+                            FolderChoiceSheet.Option(id: folder.id,
+                                                     title: folder.name,
+                                                     detail: String(store.count(in: folder.id)),
+                                                     isDefault: false)
+                        },
+                        onDefault: {
+                            mode = .new
+                            closeFolderSheet()
+                        },
+                        onPick: { option in
+                            mode = .existing(option.id)
+                            closeFolderSheet()
+                        },
+                        onNew: {
+                            mode = .custom
+                            closeFolderSheet()
+                        },
+                        onCancel: { closeFolderSheet() }
+                    )
                 }
-
-                Section {
-                    ForEach(links) { link in
-                        // Индекс считаем по месту в массиве: ключевые пути к элементам
-                        // кортежа Swift не поддерживает, поэтому enumerate тут не годится.
-                        let index = links.firstIndex(of: link) ?? 0
-                        HStack(spacing: 10) {
-                            Text(String(index + 1))
-                                .font(.caption2.weight(.bold))
-                                .foregroundColor(Theme.accent)
-                                .frame(width: 20, height: 20)
-                                .background(Theme.accent.opacity(0.16))
-                                .clipShape(Circle())
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(link.name).font(.subheadline)
-                                Text(link.badge).font(.caption2).foregroundColor(.secondary)
-                            }
-                            Spacer(minLength: 6)
-                            if index == 0 {
-                                Text("вход").font(.caption2).foregroundColor(.secondary)
-                            } else if index == links.count - 1 {
-                                Text("выход").font(.caption2).foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                    .onDelete { offsets in
-                        links.remove(atOffsets: offsets)
-                    }
-                    .onMove { source, destination in
-                        links.move(fromOffsets: source, toOffset: destination)
-                    }
-
-                    Button {
-                        picking = true
-                    } label: {
-                        Label("Добавить звено", systemImage: "plus")
-                            .font(.subheadline)
-                    }
-                    .buttonStyle(.borderless)
-                } header: {
-                    Text("Звенья · " + String(links.count))
-                } footer: {
-                    Text("Порядок важен: первое звено — то, к чему подключается телефон, последнее — откуда трафик выходит в интернет. Переставить можно долгим нажатием.")
-                }
-
-                Section {
-                    // Вместо «новой/существующей» — одна кнопка с тем же диалогом, что «Куда направить».
-                    Button {
-                        choosingFolder = true
-                    } label: {
-                        HStack {
-                            Text(folderChoiceTitle)
-                                .foregroundColor(.primary)
-                            Spacer()
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                } header: {
-                    Text("Папка")
-                } footer: {
-                    Text(createFolder
-                         ? "По умолчанию — новая папка с именем цепочки."
-                         : "Цепочка ляжет в выбранную папку, имя папки не меняется.")
-                }
-            }
-            .navigationTitle("Создать цепочку")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { presentation.wrappedValue.dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") { save() }
-                        .disabled(!canSave)
-                }
-            }
-            .sheet(isPresented: $picking) {
-                linkPicker
-            }
-            .confirmationDialog("Куда добавить", isPresented: $choosingFolder, titleVisibility: .visible) {
-                Button("По умолчанию") { createFolder = true }
-                ForEach(store.folders) { folder in
-                    Button(folder.name + " · " + String(store.count(in: folder.id))) {
-                        createFolder = false
-                        targetFolderID = folder.id
-                    }
-                }
-                Button("＋ Новая папка") { createFolder = true }
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private var form: some View {
+        Form {
+            Section {
+                TextField("Название цепочки", text: $name)
+            } header: {
+                Text("Название")
+            } footer: {
+                Text("Например: «DE → FI · чистый выход». Имя можно не заполнять — подставится «Цепочка».")
+            }
+
+            Section {
+                ForEach(links) { link in
+                    // Индекс считаем по месту в массиве: ключевые пути к элементам
+                    // кортежа Swift не поддерживает, поэтому enumerate тут не годится.
+                    let index = links.firstIndex(of: link) ?? 0
+                    HStack(spacing: 10) {
+                        Text(String(index + 1))
+                            .font(.caption2.weight(.bold))
+                            .foregroundColor(Theme.accent)
+                            .frame(width: 20, height: 20)
+                            .background(Theme.accent.opacity(0.16))
+                            .clipShape(Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(link.name).font(.subheadline)
+                            Text(link.badge).font(.caption2).foregroundColor(.secondary)
+                        }
+                        Spacer(minLength: 6)
+                        if index == 0 {
+                            Text("вход").font(.caption2).foregroundColor(.secondary)
+                        } else if index == links.count - 1 {
+                            Text("выход").font(.caption2).foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .onDelete { offsets in
+                    links.remove(atOffsets: offsets)
+                }
+                .onMove { source, destination in
+                    links.move(fromOffsets: source, toOffset: destination)
+                }
+
+                Button {
+                    picking = true
+                } label: {
+                    Label("Добавить звено", systemImage: "plus")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.borderless)
+            } header: {
+                Text("Звенья · " + String(links.count))
+            } footer: {
+                Text("Порядок важен: первое звено — то, к чему подключается телефон, последнее — откуда трафик выходит в интернет. Переставить можно долгим нажатием.")
+            }
+
+            Section {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { choosingFolder = true }
+                } label: {
+                    HStack {
+                        Text(folderChoiceTitle)
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                // Имя папки — под кнопкой, а не вместо неё.
+                if showsNameField {
+                    TextField(defaultFolderName, text: $newFolderName)
+                }
+            } header: {
+                Text("Папка")
+            } footer: {
+                Text(showsNameField
+                     ? "По умолчанию — новая папка с именем цепочки. Имя можно поменять прямо здесь."
+                     : "Цепочка ляжет в выбранную папку, её имя не меняется.")
+            }
+        }
+        .navigationTitle("Создать цепочку")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Отмена") { presentation.wrappedValue.dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Сохранить") { save() }
+                    .disabled(!canSave)
+            }
+        }
+        .sheet(isPresented: $picking) {
+            linkPicker
+        }
+    }
+
+    private func closeFolderSheet() {
+        withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false }
     }
 
     /// Список серверов, из которых собираем цепочку.
@@ -174,10 +221,12 @@ struct ChainSheet: View {
     private func save() {
         let payloads = links.map { ["name": $0.name, "payload": $0.payload] }
         var folder: UUID?
-        if createFolder {
-            folder = store.addFolder(name: name.isEmpty ? "Цепочка" : name).id
-        } else {
-            folder = targetFolderID
+        switch mode {
+        case .existing(let id):
+            folder = id
+        case .new, .custom:
+            let typed = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+            folder = store.addFolder(name: typed.isEmpty ? defaultFolderName : typed).id
         }
         guard let created = store.addChain(name: name, links: payloads, folderID: folder) else { return }
         store.select(created.id)

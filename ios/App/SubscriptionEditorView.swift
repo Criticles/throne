@@ -12,6 +12,8 @@ struct SubscriptionEditorView: View {
     @State private var addToExisting = false
     @State private var addTargetFolder: UUID?
     @State private var choosingFolder = false
+    /// Явно выбрана «Новая папка» — поле имени показываем даже без ссылки.
+    @State private var customFolder = false
     /// Один лист на экран: iOS 15 держит только последний `.sheet` из цепочки.
     private enum Sheet: Identifiable {
         case add
@@ -150,14 +152,17 @@ struct SubscriptionEditorView: View {
                 // 3. Куда добавить — кнопка с тем же диалогом, что «Куда направить».
                 Section {
                     // Название по умолчанию — над кнопкой, и только когда ссылка уже есть.
-                    if !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !addToExisting {
+                    if !addToExisting,
+                       customFolder || !addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         TextField(defaultFolderName, text: $addName)
                     }
                     Button {
-                        choosingFolder = true
+                        withAnimation(.easeOut(duration: 0.15)) { choosingFolder = true }
                     } label: {
                         HStack {
-                            Text(addToExisting ? store.folderName(addTargetFolder) : "По умолчанию")
+                            Text(addToExisting
+                                 ? store.folderName(addTargetFolder)
+                                 : (customFolder ? "Новая папка" : "По умолчанию"))
                                 .foregroundColor(.primary)
                             Spacer()
                             Image(systemName: "chevron.up.chevron.down")
@@ -198,21 +203,41 @@ struct SubscriptionEditorView: View {
             }
             .navigationTitle("Новая подписка")
             .navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("Куда добавить", isPresented: $choosingFolder, titleVisibility: .visible) {
-                Button("По умолчанию") {
-                    addToExisting = false
-                }
-                ForEach(store.folders) { folder in
-                    Button(folder.name + " · " + String(store.count(in: folder.id))) {
-                        addToExisting = true
-                        addTargetFolder = folder.id
+            .overlay(
+                Group {
+                    if choosingFolder {
+                        FolderChoiceSheet(
+                            title: "Куда добавить",
+                            defaultTitle: "По умолчанию",
+                            defaultDetail: defaultFolderName,
+                            options: store.folders.map { folder in
+                                FolderChoiceSheet.Option(id: folder.id,
+                                                         title: folder.name,
+                                                         detail: String(store.count(in: folder.id)),
+                                                         isDefault: false)
+                            },
+                            onDefault: {
+                                addToExisting = false
+                                customFolder = false
+                                addName = ""
+                                withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false }
+                            },
+                            onPick: { option in
+                                addToExisting = true
+                                addTargetFolder = option.id
+                                withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false }
+                            },
+                            onNew: {
+                                addToExisting = false
+                                customFolder = true
+                                addName = ""
+                                withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false }
+                            },
+                            onCancel: { withAnimation(.easeOut(duration: 0.15)) { choosingFolder = false } }
+                        )
                     }
                 }
-                Button("Новая папка") {
-                    addToExisting = false
-                    addName = ""
-                }
-            }
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { sheet = nil }

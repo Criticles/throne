@@ -72,6 +72,7 @@ struct RouteInsertSheet: View {
 
     var body: some View {
         NavigationView {
+            ZStack(alignment: .bottom) {
             List {
                 Section {
                     Text(prefill.value)
@@ -95,24 +96,34 @@ struct RouteInsertSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) { confirmButton }
-            .confirmationDialog("Куда направить",
-                                isPresented: Binding(get: { picker != nil },
-                                                     set: { if !$0 { picker = nil } }),
-                                titleVisibility: .visible) {
-                ForEach(targets, id: \.self) { target in
-                    Button(target) {
-                        if let choice = picker {
-                            if choice.folderID == nil {
-                                setProfileOutbound(target)
-                            } else {
-                                setFolderOutbound(target, folderID: choice.folderID)
-                            }
-                        }
-                        picker = nil
+            .overlay(
+                Group {
+                    if picker != nil {
+                        PillChoiceSheet(
+                            title: "Куда направить",
+                            items: targets.map { target in
+                                PillChoiceSheet.Item(id: target,
+                                                     title: target,
+                                                     detail: nil,
+                                                     accent: ["proxy", "direct", "reject"].contains(target))
+                            },
+                            extraTitle: nil,
+                            onPick: { item in
+                                if let choice = picker {
+                                    if choice.folderID == nil {
+                                        setProfileOutbound(item.title)
+                                    } else {
+                                        setFolderOutbound(item.title, folderID: choice.folderID)
+                                    }
+                                }
+                                withAnimation(.easeOut(duration: 0.15)) { picker = nil }
+                            },
+                            onExtra: {},
+                            onCancel: { withAnimation(.easeOut(duration: 0.15)) { picker = nil } }
+                        )
                     }
                 }
-                Button("Отмена", role: .cancel) { picker = nil }
-            }
+            )
             .alert(isPresented: Binding(get: { !failure.isEmpty },
                                        set: { if !$0 { failure = "" } })) {
                 Alert(title: Text("Не добавилось"),
@@ -120,6 +131,7 @@ struct RouteInsertSheet: View {
                       dismissButton: .default(Text("Понятно")))
             }
             .onAppear(perform: prepare)
+            }
         }
         .navigationViewStyle(.stack)
     }

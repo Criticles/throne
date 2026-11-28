@@ -36,6 +36,8 @@ struct ProfilesView: View {
 
     @State private var sheet: Sheet?
     @State private var createFolderPicker = false
+    /// Пользователь явно выбрал «＋ Новая папка» — показываем поле имени даже без ссылки.
+    @State private var customFolder = false
     @State private var addText = ""
     @State private var addTitle = ""
     @State private var createFolder = true
@@ -158,16 +160,6 @@ struct ProfilesView: View {
             .searchable(text: $query, prompt: "Сервер или протокол")
             .navigationTitle("Серверы")
             .toolbar { toolbarContent }
-            .confirmationDialog("Куда добавить", isPresented: $createFolderPicker, titleVisibility: .visible) {
-                Button("По умолчанию") { createFolder = true }
-                ForEach(store.folders) { folder in
-                    Button(folder.name + " · " + String(store.count(in: folder.id))) {
-                        createFolder = false
-                        targetFolderID = folder.id
-                    }
-                }
-                Button("＋ Новая папка") { createFolder = true }
-            }
             .sheet(item: $sheet) { item in
                 switch item {
                 case .add:
@@ -580,15 +572,18 @@ struct ProfilesView: View {
                         .keyboardType(.URL)
                 }
                 Section {
-                    if createFolder {
-                        TextField("Имя папки", text: $addTitle)
+                    // Имя папки — только когда ссылка уже есть и папка новая.
+                    if showsFolderName {
+                        TextField(defaultFolderTitle, text: $addTitle)
                     }
-                    // Одна кнопка вместо «новой/существующей» — с тем же диалогом, что «Куда направить».
+                    // Одна кнопка вместо «новой/существующей» — своя панель снизу.
                     Button {
-                        createFolderPicker = true
+                        withAnimation(.easeOut(duration: 0.15)) { createFolderPicker = true }
                     } label: {
                         HStack {
-                            Text(createFolder ? "По умолчанию" : store.folderName(targetFolderID))
+                            Text(createFolder
+                                 ? (customFolder ? "Новая папка" : "По умолчанию")
+                                 : store.folderName(targetFolderID))
                                 .foregroundColor(.primary)
                             Spacer()
                             Image(systemName: "chevron.up.chevron.down")
@@ -625,6 +620,39 @@ struct ProfilesView: View {
             }
             .navigationTitle("Новая подписка")
             .navigationBarTitleDisplayMode(.inline)
+            .overlay(
+                Group {
+                    if createFolderPicker {
+                        FolderChoiceSheet(
+                            title: "Куда добавить",
+                            defaultTitle: "По умолчанию",
+                            defaultDetail: defaultFolderTitle,
+                            options: store.folders.map { folder in
+                                FolderChoiceSheet.Option(id: folder.id,
+                                                         title: folder.name,
+                                                         detail: String(store.count(in: folder.id)),
+                                                         isDefault: false)
+                            },
+                            onDefault: {
+                                createFolder = true
+                                customFolder = false
+                                withAnimation(.easeOut(duration: 0.15)) { createFolderPicker = false }
+                            },
+                            onPick: { option in
+                                createFolder = false
+                                targetFolderID = option.id
+                                withAnimation(.easeOut(duration: 0.15)) { createFolderPicker = false }
+                            },
+                            onNew: {
+                                createFolder = true
+                                customFolder = true
+                                withAnimation(.easeOut(duration: 0.15)) { createFolderPicker = false }
+                            },
+                            onCancel: { withAnimation(.easeOut(duration: 0.15)) { createFolderPicker = false } }
+                        )
+                    }
+                }
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { sheet = nil }
@@ -781,6 +809,19 @@ struct ProfilesView: View {
             addText = text
         }
         sheet = .add
+    }
+
+    /// Имя новой папки по умолчанию — из ссылки на подписку.
+    private var defaultFolderTitle: String {
+        let name = ProfileStore.folderName(for: addText)
+        return name.isEmpty ? "Имя папки" : name
+    }
+
+    /// Поле имени нужно только для новой папки и только когда ссылка уже вставлена.
+    private var showsFolderName: Bool {
+        guard createFolder else { return false }
+        if customFolder { return true }
+        return !addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func refreshCurrent() async {
