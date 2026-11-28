@@ -192,6 +192,42 @@ jobs:
           (cd build && zip -qry Throne-unsigned.ipa Payload)
           ls -lh build/Throne-unsigned.ipa
 
+      - name: Сборка под симулятор (для предпросмотра в браузере)
+        working-directory: ios
+        run: |+
+          set -euo pipefail
+          xcodebuild \
+            -project Throne.xcodeproj \
+            -scheme Throne \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/dd-sim \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build/xcodebuild-sim.log 2>&1 || STATUS=$?
+          STATUS=${STATUS:-0}
+          grep -E "error:|Undefined symbols|\*\* BUILD" build/xcodebuild-sim.log | head -40 || true
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::warning::сборка под симулятор не удалась (на .ipa это не влияет)"
+            exit 0
+          fi
+          APP="build/dd-sim/Build/Products/Release-iphonesimulator/Throne.app"
+          test -d "$APP"
+          SHA="$(git rev-parse --short HEAD)"
+          /usr/libexec/PlistBuddy -c "Delete :ThroneBuild" "$APP/Info.plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :ThroneBuild string $SHA" "$APP/Info.plist"
+          rm -f build/Throne-simulator.zip
+          ditto -c -k --sequesterRsrc --keepParent "$APP" build/Throne-simulator.zip
+          ls -lh build/Throne-simulator.zip
+
+      - name: Артефакт .app для симулятора
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Throne-simulator
+          path: ios/build/Throne-simulator.zip
+          if-no-files-found: ignore
+
       - name: Лог сборки
         if: always()
         uses: actions/upload-artifact@v4
