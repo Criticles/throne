@@ -496,6 +496,8 @@ struct ProfilesView: View {
             Button("Изм") { sheet = .subscriptions }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
+            // Пункты меню рисуем через item(): у Label без явного цвета система при
+            // открытии меню перекрашивает подписи и они «моргают» белым.
             Menu {
                 Button {
                     // Буфер не читаем сами: вставка — только по кнопке в открывшемся окне.
@@ -505,27 +507,27 @@ struct ProfilesView: View {
                     createFolder = true
                     sheet = .add
                 } label: {
-                    Label("Добавить подписку", systemImage: "plus.circle")
+                    item("Добавить подписку", "plus.circle")
                 }
                 Button {
                     sheet = .chain
                 } label: {
-                    Label("Создать цепочку", systemImage: "link")
+                    item("Создать цепочку", "link")
                 }
                 Button {
                     sheet = .warp
                 } label: {
-                    Label("Создать WARP", systemImage: "circle.grid.cross")
+                    item("Создать WARP", "circle.grid.cross")
                 }
                 Divider()
                 Button { Task { await refreshAll() } } label: {
-                    Label("Обновить серверы", systemImage: "arrow.triangle.2.circlepath")
+                    item("Обновить серверы", "arrow.triangle.2.circlepath")
                 }
                 Button { checkAll() } label: {
-                    Label("Замерить пинг", systemImage: "waveform.path.ecg")
+                    item("Замерить пинг", "waveform.path.ecg")
                 }
                 Button { speedAll() } label: {
-                    Label("Замерить скорость", systemImage: "speedometer")
+                    item("Замерить скорость", "speedometer")
                 }
                 Divider()
                 Button(role: .destructive) {
@@ -533,12 +535,25 @@ struct ProfilesView: View {
                     folderID = nil
                     probeLine = ""
                 } label: {
-                    Label("Удалить все серверы", systemImage: "trash")
+                    item("Удалить все серверы", "trash")
                 }
             } label: {
-                Image(systemName: "plus.circle.fill").font(.title3)
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(Theme.accent)
             }
+            .transaction { $0.animation = nil }
         }
+    }
+
+    /// Пункт меню с постоянным цветом: подпись не перекрашивается при открытии меню.
+    private func item(_ title: String, _ symbol: String) -> some View {
+        Label {
+            Text(title).foregroundColor(Color.primary)
+        } icon: {
+            Image(systemName: symbol)
+        }
+        .labelStyle(StaticMenuLabelStyle())
     }
 
     // MARK: - Шторки
@@ -937,6 +952,18 @@ struct ServerRow: View {
             }
             .buttonStyle(.borderless)
             .disabled(busy)
+        }
+    }
+}
+
+/// Подпись пункта меню без системной перекраски: иконка слева фиксированной ширины,
+/// текст всегда того же цвета, что и до открытия меню.
+private struct StaticMenuLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 10) {
+            configuration.icon
+                .frame(width: 22, alignment: .center)
+            configuration.title
         }
     }
 }
