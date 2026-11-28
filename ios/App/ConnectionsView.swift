@@ -286,14 +286,6 @@ struct ConnectionsView: View {
                 TrafficGraph(points: windowSamples.map { ($0.at, $0.down, $0.up) },
                              start: windowStart, end: windowEnd)
 
-                // Итог с запуска ядра — сразу под графиком, без отдельной секции:
-                // раньше он висел между карточками и давал двойной отступ.
-                Text("С включения ядра: ↓ " + Self.size(sampler.sessionDown)
-                     + " · ↑ " + Self.size(sampler.sessionUp))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .padding(.top, 2)
-
             }
             .padding(.vertical, 2)
         }
@@ -325,13 +317,24 @@ struct ConnectionsView: View {
                 }
             }
         } header: {
-            HStack(spacing: 6) {
-                Text("Соединения · " + String(activeIDs.count) + " активных")
-                Spacer(minLength: 6)
-                Text("↓ " + Self.rate(lastDown))
-                    .foregroundColor(Theme.accent)
-                Text("↑ " + Self.rate(lastUp))
-                    .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
+                // Итог с запуска ядра — отдельной строкой в том же стиле, что и «Соединения».
+                HStack(spacing: 6) {
+                    Text("С включения ядра")
+                    Spacer(minLength: 6)
+                    Text("↓ " + Self.size(sampler.sessionDown))
+                        .foregroundColor(Theme.accent)
+                    Text("↑ " + Self.size(sampler.sessionUp))
+                        .foregroundColor(.secondary)
+                }
+                HStack(spacing: 6) {
+                    Text("Соединения · " + String(activeIDs.count) + " активных")
+                    Spacer(minLength: 6)
+                    Text("↓ " + Self.rate(lastDown))
+                        .foregroundColor(Theme.accent)
+                    Text("↑ " + Self.rate(lastUp))
+                        .foregroundColor(.secondary)
+                }
             }
         } footer: {
             Text("Остановленные висят десять секунд и гаснут, если трафик не возобновился; возобновился — снова активны.")
